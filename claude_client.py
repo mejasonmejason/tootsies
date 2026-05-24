@@ -13,7 +13,9 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic
 
@@ -21,6 +23,25 @@ from persona import system_prompt
 from utils.events import emit
 
 log = logging.getLogger(__name__)
+
+# Tootsies runs on PT-based schedules and the user base is US-leaning, so we also
+# surface PT alongside UTC so Toots can talk about "tonight" / "tomorrow" sensibly.
+PT = ZoneInfo("America/Los_Angeles")
+
+
+def _time_context() -> str:
+    """One-line current-time prefix injected into every user message.
+
+    Claude's training cutoff means it has no idea what day it is. Without this,
+    Toots will confidently call a Sunday a Tuesday, claim a game from last week
+    is "tonight", etc. We pay ~25 tokens per call to fix that.
+    """
+    now_utc = datetime.now(UTC)
+    now_pt = now_utc.astimezone(PT)
+    return (
+        f"[ctx — current time: {now_utc.strftime('%Y-%m-%d %H:%M')} UTC, "
+        f"{now_pt.strftime('%Y-%m-%d %H:%M %Z')}, weekday: {now_utc.strftime('%A')}]\n\n"
+    )
 
 HAIKU = "claude-haiku-4-5-20251001"
 SONNET = "claude-sonnet-4-6"
@@ -65,7 +86,9 @@ class ClaudeClient:
             "model": model,
             "max_tokens": max_tokens,
             "system": system,
-            "messages": [{"role": "user", "content": user_message}],
+            # Prefix every user message with the current time so date/weekday
+            # references in Toots's output don't drift from reality.
+            "messages": [{"role": "user", "content": _time_context() + user_message}],
         }
         if tools:
             kwargs["tools"] = tools
