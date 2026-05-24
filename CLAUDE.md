@@ -92,7 +92,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `rate_limit_hit` | utils/rate_limits.py | scope, command, user_id, guild_id, count, cap |
 | `deploy_event` | bot.py | kind (boot/shutdown), guilds |
 | `error` | cogs/* + bot.py error handler | source (e.g. `ask`, `order_preflight`, `undo`), error (exception class), guild_id, user_id, optional context |
-| `recap_deflected` | cogs/recap.py | guild_id, user_id, period, channel_id, channel_name, reason (`no_permission`/`no_messages`/`messages_too_short`/`below_threshold`), can_read_history, total_messages, substantive_messages |
+| `recap_deflected` | cogs/recap.py | guild_id, user_id, period, channel_id, channel_name, reason (`no_permission`/`no_messages`), can_read_history, total_messages |
 | `discourse_fallback` | cogs/discourse.py | guild_id, user_id, category, source_count, recent_topic_count, reason |
 
 **Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to

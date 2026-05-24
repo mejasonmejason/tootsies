@@ -66,39 +66,39 @@ def format_for_prompt(messages: list[discord.Message], include_reactions: bool =
     return "\n".join(lines)
 
 
-def is_channel_dead(messages: list[discord.Message], min_messages: int = 3) -> bool:
-    """Heuristic for /recap deflection."""
-    real = [m for m in messages if len(m.content) > 5]
-    return len(real) < min_messages
+def is_channel_dead(messages: list[discord.Message]) -> bool:
+    """Hard floor only: deflect when the channel is *literally* empty over the period.
+
+    Previously this required 3+ messages of >5 chars each, which filtered out reactions,
+    short replies, link drops, and one-word chat. In a real channel that's everyone.
+    The Claude /recap prompt already instructs Toots to quip when the content is thin,
+    so we trust her judgment for anything non-zero.
+    """
+    return not messages
 
 
 def channel_dead_diagnostic(
     channel: discord.TextChannel | discord.Thread,
     me: discord.Member,
     messages: list[discord.Message],
-    min_messages: int = 3,
 ) -> dict[str, object]:
     """Why did the channel look dead? Returns structured fields for events + bot-logs.
 
-    Bot/webhook messages are kept (since /recap passes include_bots=True), so this is
-    just total vs. substantive (>5 char) message counts plus the bot's read permission.
+    Always called only when `is_channel_dead(messages)` is True, so we know
+    `messages` is empty. The interesting question is whether that's because the
+    period was empty or because the bot couldn't read.
     """
     perms = channel.permissions_for(me) if isinstance(
         channel, discord.TextChannel | discord.Thread
     ) else None
-    substantive = [m for m in messages if len(m.content) > 5]
     return {
         "channel_id": channel.id,
         "channel_name": channel.name,
         "can_view": bool(perms and perms.view_channel),
         "can_read_history": bool(perms and perms.read_message_history),
         "total_messages": len(messages),
-        "substantive_messages": len(substantive),
-        "min_required": min_messages,
         "reason": (
             "no_permission" if perms and not perms.read_message_history
-            else "no_messages" if not messages
-            else "messages_too_short" if not substantive
-            else "below_threshold"
+            else "no_messages"
         ),
     }

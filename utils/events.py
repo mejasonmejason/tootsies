@@ -24,10 +24,10 @@ Known kinds (keep this list in sync with what's emitted):
   - error              : caught exception in a cog or the global error handler
       source (e.g. `ask`, `order_preflight`, `undo`), error (exception class),
       guild_id, user_id, plus optional context (command, order_id, category, ...)
-  - recap_deflected    : /recap fell back to the "dead channel" quip
-      guild_id, user_id, period, channel_id, channel_name, reason
-      (`no_permission`/`no_messages`/`messages_too_short`/`below_threshold`),
-      can_read_history, total_messages, substantive_messages
+  - recap_deflected    : /recap fell back to the "dead channel" quip (truly zero messages)
+      guild_id, user_id, period, channel_id, channel_name,
+      reason (`no_permission` | `no_messages`),
+      can_read_history, total_messages
   - discourse_fallback : /discourse fell back to the canned fallback quip
       guild_id, user_id, category, source_count, recent_topic_count, reason
 

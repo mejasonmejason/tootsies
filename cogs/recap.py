@@ -99,7 +99,6 @@ class Recap(commands.Cog):
                     self.bot, self.bot.db, guild_id,
                     f"👀 `/recap` deflected in <#{channel.id}> (period={period.value}): "
                     f"reason=`{diag['reason']}`, total={diag['total_messages']}, "
-                    f"substantive={diag['substantive_messages']}, "
                     f"can_read_history={diag['can_read_history']}.",
                     level="full", verbosity=self.bot.config.bot_logs_verbosity,
                 )
