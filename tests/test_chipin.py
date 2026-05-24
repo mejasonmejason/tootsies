@@ -2,18 +2,19 @@
 
 Focused on the pure / mockable surface:
   - _parse_chipin_score (defensive JSON parser, tolerant of fence + drift)
-  - the cog's listen-set cache + buffer behavior
-  - the gate sequence in _maybe_chip_in_one (hours, cooldown, daily cap,
-    vibe, threshold, empty generation) using a stub DB + stub Claude.
+  - buffer maxlen + constant sanity
+  - the gate sequence in _maybe_chip_in_one (mood, hours, cooldown, daily cap,
+    vibe, threshold) using a stub DB + stub Claude.
 
-The Discord plumbing itself (slash command invocation, channel send) isn't
-exercised here, that's covered by test_commands.test_all_expected_commands_registered
-which load the cog into a real tree.
+Chip-in has no slash commands of its own (it rides on the discourse_channel
++ mood settings configured via /menu), so there's no command-registration
+surface to test here.
 """
 
 from __future__ import annotations
 
-from collections import deque
+from collections import defaultdict
+from collections import deque as _dq
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -23,6 +24,7 @@ import pytest
 
 from claude_client import _parse_chipin_score
 from cogs.chipin import (
+    BUFFER_MAX,
     BUFFER_MIN_FOR_SCORE,
     COOLDOWN,
     DAILY_CAP,
@@ -32,6 +34,7 @@ from cogs.chipin import (
     THRESHOLD,
     ChipIn,
 )
+from models import MoodMode, ScheduleState
 
 # ---- _parse_chipin_score ----------------------------------------------------
 
@@ -111,7 +114,7 @@ def test_parse_chipin_score_non_string_hook_coerced_to_empty() -> None:
     assert hook == ""
 
 
-# ---- ChipIn cog: listen cache + buffer --------------------------------------
+# ---- ChipIn cog: helpers --------------------------------------------------
 
 
 def _make_cog() -> ChipIn:
@@ -120,31 +123,11 @@ def _make_cog() -> ChipIn:
     bot.wait_until_ready = AsyncMock()
     cog = ChipIn.__new__(ChipIn)
     # Skip __init__ (which starts the tick loop). Wire up just the attrs we test.
-    from collections import defaultdict
-    from collections import deque as _dq
-
-    from cogs.chipin import BUFFER_MAX
     cog.bot = bot
     cog._buffers = defaultdict(lambda: _dq(maxlen=BUFFER_MAX))
     cog._new_since_eval = defaultdict(int)
-    cog._cached_listen_set = None
+    cog._listen_channels = {}
     return cog
-
-
-def test_listen_set_cache_starts_empty() -> None:
-    cog = _make_cog()
-    assert cog._listen_set_cache() == set()
-
-
-def test_invalidate_listen_cache_resets_to_none() -> None:
-    cog = _make_cog()
-    cog._cached_listen_set = {(1, 2), (3, 4)}
-    cog._invalidate_listen_cache()
-    assert cog._cached_listen_set is None
-    assert cog._listen_set_cache() == set()
-
-
-# ---- ChipIn cog: gate sequence ----------------------------------------------
 
 
 def _stub_message(content: str = "hello", author_id: int = 99) -> Any:
@@ -159,16 +142,25 @@ def _stub_message(content: str = "hello", author_id: int = 99) -> Any:
     return msg
 
 
+def _stub_schedule(mood: MoodMode = MoodMode.CHILL) -> ScheduleState:
+    return ScheduleState(
+        guild_id=1, mood=mood,
+        last_changed_by=None, last_changed_at=None,
+        posts_today=0, last_post_at=None,
+    )
+
+
 def _stub_db(
     *,
     last_chipin_at: datetime | None = None,
     count_today: int = 0,
+    mood: MoodMode = MoodMode.CHILL,
 ) -> Any:
     db = MagicMock()
     db.last_chipin_at = AsyncMock(return_value=last_chipin_at)
     db.chipin_count_today = AsyncMock(return_value=count_today)
     db.record_chipin = AsyncMock()
-    db.all_chipin_channels = AsyncMock(return_value=[])
+    db.get_schedule = AsyncMock(return_value=_stub_schedule(mood))
     return db
 
 
@@ -203,6 +195,21 @@ def _force_et_hour(monkeypatch: pytest.MonkeyPatch, hour: int) -> None:
             return fake_now
 
     monkeypatch.setattr("cogs.chipin.datetime", _FakeDT)
+
+
+# ---- ChipIn cog: gate sequence ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gate_skips_when_mood_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The simplest gate: if mood is off, chip-in never even checks the buffer."""
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.OFF)
+    claude = _stub_claude()
+    cog.bot.claude = claude
+    _force_et_hour(monkeypatch, 12)
+    await cog._maybe_chip_in_one(1, 2)
+    claude.chipin_score.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -298,10 +305,8 @@ def test_cooldown_and_cap_constants_sane() -> None:
 
 def test_buffer_respects_maxlen() -> None:
     """We never want the in-memory buffer to grow unbounded per channel."""
-    from cogs.chipin import BUFFER_MAX
     cog = _make_cog()
     key = (1, 2)
     for _ in range(BUFFER_MAX + 50):
         cog._buffers[key].append(_stub_message())
     assert len(cog._buffers[key]) == BUFFER_MAX
-    assert isinstance(cog._buffers[key], deque)

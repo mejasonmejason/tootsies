@@ -184,16 +184,19 @@ The cog then branches on the verdict for the user-facing message (different defl
 
 ---
 
-## /chipin (chime-in)
+## Chip-in (chime-in)
 
-Toots leans into the conversation when she has something real to say. Opt-in per channel; mods run `/chipin enable` in any channel they want her listening in.
+Toots leans into the conversation when she has something real to say. No commands of its own, it rides on two settings already in `/menu`:
+- **Listen channel:** the configured `discourse_channel`. Whatever room is your "chatter" / "general" channel is the one Toots will listen in on.
+- **On/off:** the discourse mood. `mood=off` silences chip-in too; `chill` or `yaps` enable it.
 
 ### Flow
 
 In [`cogs/chipin.py`](../cogs/chipin.py):
 
-1. **on_message listener** appends every qualifying human message (non-bot, non-empty or has attachments/embeds) in an enabled channel to a per-channel in-memory deque (max 50 messages).
-2. **`tasks.loop(seconds=60)` tick** walks every (guild, channel) with new buffered activity and runs the gate sequence in `_maybe_chip_in_one()`:
+1. **on_message listener** appends every qualifying human message (non-bot, non-empty or has attachments/embeds) posted in the guild's `discourse_channel` to an in-memory deque (max 50 messages).
+2. **`tasks.loop(seconds=60)` tick** refreshes each guild's listen channel from settings, then walks every (guild, channel) with new buffered activity and runs the gate sequence in `_maybe_chip_in_one()`:
+   - **mood_off_gate**: if the discourse mood is `off`, skip
    - **hours_gate**: only 9am-2am ET, else skip
    - **cooldown_gate**: no chip-in within 30 min of the last one in this channel
    - **daily_cap_gate**: max 5 chip-ins per channel per 24h

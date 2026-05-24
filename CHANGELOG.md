@@ -4,25 +4,25 @@ All notable changes to Tootsies. Dates in PT.
 
 ## [1.0.3], 2026-05-24 (chime-in)
 
-New feature: Toots can listen in on enabled channels and chip in when she has something real to say. Opt-in per channel via three new mod commands. No changes to existing surface.
+New feature: Toots can lean into the discourse channel and chip in when she has something real to say. No new commands and no new settings, it rides entirely on the existing `discourse_channel` + mood configured in `/menu`.
 
-### New commands
+### Behavior
 
-- `/chipin enable` (mods only): turn on chip-in for the current channel. Toots starts listening and may post unprompted when the conversation warrants.
-- `/chipin disable` (mods only): turn it off for the current channel. Drops the in-memory buffer too, so a re-enable won't fire on stale backlog.
-- `/chipin status` (mods only): list channels where chip-in is on plus today's chip-in count per channel.
+- **Listen channel:** Toots listens in on the guild's configured `discourse_channel` (the room you've already pointed `/discourse` at).
+- **On/off control:** The discourse mood doubles as chip-in's on/off. `mood=off` silences both scheduled posts and chip-in. `chill` or `yaps` enable it. Change moods in `/menu`.
+- **No new slash commands.** Less surface to remember, fewer permission gates to wire up.
 
 ### Algorithm
 
-Per-channel deque (max 50) populated by `on_message`; background tick every 60s walks channels with new buffered activity through a gate sequence: hours window (9am-2am ET) → cooldown (30 min) → daily cap (5/day) → Haiku scoring (returns score + vibe + hook) → vibe gate (skip `vulnerable`, `catchup`, `other`) → threshold gate (>= 0.7) → Sonnet generates the actual one-liner with web search + vision. Full details in `docs/ALGORITHMS.md`.
+Per-channel deque (max 50) populated by `on_message` for the listen channel only. Background tick every 60s refreshes the listen channels from settings, then walks channels with new buffered activity through a gate sequence: mood-off → hours window (9am-2am ET) → cooldown (30 min) → daily cap (5/day) → Haiku scoring (returns score + vibe + hook) → vibe gate (skip `vulnerable`, `catchup`, `other`) → threshold gate (>= 0.7) → Sonnet generates the actual one-liner with web search + vision. Full details in `docs/ALGORITHMS.md`.
 
 ### Storage
 
-Two new tables in `db.py`: `chipin_channels` (which channels are opted in) and `chipin_history` (per-post log for cooldown + daily cap enforcement). Both pruned by the existing 24h pruner task.
+One new table in `db.py`: `chipin_history` (per-post log for cooldown + daily cap enforcement). Pruned by the existing 24h pruner task.
 
 ### Observability
 
-Two new structured event kinds: `chipin_evaluated` (with `decision` field for which gate fired) and `chipin_posted` (with score, vibe, hook). Filter on `EVENT ` in Railway logs and group by `event` for a chip-in funnel dashboard.
+Two new structured event kinds: `chipin_evaluated` (with `decision` field for which gate fired, including `mood_off_gate`) and `chipin_posted` (with score, vibe, hook). Filter on `EVENT ` in Railway logs and group by `event` for a chip-in funnel dashboard.
 
 ### Knobs to tune
 

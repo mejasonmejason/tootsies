@@ -1,13 +1,14 @@
-"""/chipin: Toots leans into the conversation when she has something to say.
+"""Chip-in: Toots leans into the conversation when she has something to say.
 
-Three mod commands:
-  /chipin enable   turn chip-in on for the channel where it's run
-  /chipin disable  turn it off for the channel where it's run
-  /chipin status   show every channel where chip-in is on + today's stats
+No commands of its own. Wires into existing settings:
+
+  - Listen channel: the guild's `discourse_channel` (set via /menu).
+  - On/off control: the mood schedule (mood=off => no chip-in).
 
 Algorithm (also documented in docs/ALGORITHMS.md):
-  - on_message in any enabled channel appends to a per-channel deque (max 50).
-  - tasks.loop(seconds=60) walks each enabled channel:
+  - on_message in the discourse channel appends to a per-channel deque (max 50).
+  - tasks.loop(seconds=60) walks each guild with buffered activity:
+      * mood != off
       * Buffer has >= BUFFER_MIN_FOR_SCORE new messages since last evaluation
       * Outside cooldown (default 30 min since last chip-in this channel)
       * Within hours window (9am to 2am ET)
@@ -30,14 +31,12 @@ from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 
-from utils import voice
+from models import MoodMode
 from utils.events import emit
 from utils.feeds import format_for_prompt, recent_image_urls
-from utils.metrics import track_command
-from utils.permissions import can_send_in, is_mod
+from utils.permissions import can_send_in
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -77,11 +76,8 @@ SKIP_VIBES = {"vulnerable", "catchup", "other"}
 TICK_SECONDS = 60
 
 
-# ---- cog --------------------------------------------------------------------
-
-
-class ChipIn(commands.GroupCog, name="chipin"):
-    """/chipin enable | disable | status, plus the background listener + scorer."""
+class ChipIn(commands.Cog):
+    """Background chip-in listener + scorer. No slash commands of its own."""
 
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
@@ -93,7 +89,9 @@ class ChipIn(commands.GroupCog, name="chipin"):
         # We track this so we only score when there's *new* signal, not just on
         # the time interval.
         self._new_since_eval: defaultdict[tuple[int, int], int] = defaultdict(int)
-        super().__init__()
+        # guild_id -> discourse_channel_id. Refreshed each tick so /menu edits
+        # take effect within a tick instead of needing a restart.
+        self._listen_channels: dict[int, int] = {}
         self.tick.start()
 
     async def cog_unload(self) -> None:
@@ -108,105 +106,17 @@ class ChipIn(commands.GroupCog, name="chipin"):
             return
         if message.author.bot:
             # Skip bot/webhook posts: chip-in should react to humans, not feed bots.
-            # (Discourse already pulls feed content via its own path.)
             return
         # Pure-attachment messages get added too (vision picks them up).
         if not message.content.strip() and not message.attachments and not message.embeds:
             return
-        # Cheap path: only buffer if the channel is in our listen set. Hitting
-        # the DB on every message would be wasteful, so we cache the listen set
-        # on the cog and refresh it via on_chipin_change (called by the /chipin
-        # commands below) instead of polling.
-        if (message.guild.id, message.channel.id) not in self._listen_set_cache():
+        # Only buffer if this is the guild's configured discourse channel.
+        listen_channel = self._listen_channels.get(message.guild.id)
+        if listen_channel is None or listen_channel != message.channel.id:
             return
         key = (message.guild.id, message.channel.id)
         self._buffers[key].append(message)
         self._new_since_eval[key] += 1
-
-    # ---- /chipin commands -------------------------------------------------------
-
-    @app_commands.command(
-        name="enable",
-        description="turn chip-in on for this channel. mods only.",
-    )
-    @track_command("chipin enable")
-    async def enable(self, interaction: discord.Interaction) -> None:
-        if not await self._mod_gate(interaction):
-            return
-        assert interaction.guild is not None
-        if not isinstance(interaction.channel, discord.TextChannel | discord.Thread):
-            await interaction.response.send_message(
-                "can't do this in here. text channel only.", ephemeral=True,
-            )
-            return
-        await self.bot.db.enable_chipin(
-            interaction.guild.id, interaction.channel.id, interaction.user.id,
-        )
-        await self.bot.db.audit(
-            interaction.guild.id, interaction.user.id, "chipin_enable",
-            after={"channel_id": interaction.channel.id},
-        )
-        self._invalidate_listen_cache()
-        await interaction.response.send_message(
-            f"chip-in on for <#{interaction.channel.id}>. i'll lean in when "
-            "i've got something. you can `/chipin disable` anytime.",
-        )
-
-    @app_commands.command(
-        name="disable",
-        description="turn chip-in off for this channel. mods only.",
-    )
-    @track_command("chipin disable")
-    async def disable(self, interaction: discord.Interaction) -> None:
-        if not await self._mod_gate(interaction):
-            return
-        assert interaction.guild is not None
-        if not isinstance(interaction.channel, discord.TextChannel | discord.Thread):
-            await interaction.response.send_message(
-                "can't do this in here.", ephemeral=True,
-            )
-            return
-        await self.bot.db.disable_chipin(
-            interaction.guild.id, interaction.channel.id,
-        )
-        await self.bot.db.audit(
-            interaction.guild.id, interaction.user.id, "chipin_disable",
-            after={"channel_id": interaction.channel.id},
-        )
-        # Drop the buffer for this channel; saves memory + means we don't fire
-        # on backlog if re-enabled later.
-        self._buffers.pop((interaction.guild.id, interaction.channel.id), None)
-        self._new_since_eval.pop((interaction.guild.id, interaction.channel.id), None)
-        self._invalidate_listen_cache()
-        await interaction.response.send_message(
-            f"chip-in off for <#{interaction.channel.id}>. silent here.",
-        )
-
-    @app_commands.command(
-        name="status",
-        description="see which channels have chip-in on + today's chip-in count.",
-    )
-    @track_command("chipin status")
-    async def status(self, interaction: discord.Interaction) -> None:
-        if not await self._mod_gate(interaction):
-            return
-        assert interaction.guild is not None
-        channel_ids = await self.bot.db.chipin_channels(interaction.guild.id)
-        if not channel_ids:
-            await interaction.response.send_message(
-                "chip-in's off everywhere. run `/chipin enable` in a channel to turn it on.",
-                ephemeral=True,
-            )
-            return
-        lines = []
-        for cid in channel_ids:
-            count_today = await self.bot.db.chipin_count_today(interaction.guild.id, cid)
-            lines.append(
-                f"<#{cid}>: **{count_today}/{DAILY_CAP}** chip-ins today"
-            )
-        await interaction.response.send_message(
-            "chip-in on:\n" + "\n".join(lines), ephemeral=True,
-        )
 
     # ---- background tick --------------------------------------------------------
 
@@ -221,19 +131,31 @@ class ChipIn(commands.GroupCog, name="chipin"):
     async def before_tick(self) -> None:
         await self.bot.wait_until_ready()
 
+    async def _refresh_listen_channels(self) -> None:
+        """Pull the current discourse_channel setting for every guild we're in."""
+        fresh: dict[int, int] = {}
+        for guild in self.bot.guilds:
+            raw = await self.bot.db.get_setting(guild.id, "discourse_channel")
+            if not raw:
+                continue
+            try:
+                fresh[guild.id] = int(raw)
+            except (TypeError, ValueError):
+                continue
+        self._listen_channels = fresh
+
     async def _maybe_chip_in_all(self) -> None:
         """Walk every (guild, channel) with buffered activity and try to chip in."""
-        # Refresh listen set so newly enabled channels start being checked.
-        listen_pairs = await self.bot.db.all_chipin_channels()
-        listen_set = set(listen_pairs)
-        self._cached_listen_set = listen_set
-
+        await self._refresh_listen_channels()
         for key in list(self._buffers.keys()):
-            if key not in listen_set:
-                continue  # listen was disabled since the buffer accumulated
+            guild_id, channel_id = key
+            if self._listen_channels.get(guild_id) != channel_id:
+                # discourse_channel changed (or was cleared); drop the stale buffer.
+                self._buffers.pop(key, None)
+                self._new_since_eval.pop(key, None)
+                continue
             if self._new_since_eval[key] < BUFFER_MIN_FOR_SCORE:
                 continue
-            guild_id, channel_id = key
             try:
                 await self._maybe_chip_in_one(guild_id, channel_id)
             except Exception:
@@ -248,6 +170,15 @@ class ChipIn(commands.GroupCog, name="chipin"):
 
     async def _maybe_chip_in_one(self, guild_id: int, channel_id: int) -> None:
         # ---- Pre-flight gates --------------------------------------------------
+        # Mood gate: piggyback on the discourse mood setting. mood=off => silent.
+        schedule = await self.bot.db.get_schedule(guild_id)
+        if schedule.mood == MoodMode.OFF:
+            emit(
+                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
+                decision="mood_off_gate",
+            )
+            return
+
         # Hours window
         now_et = datetime.now(ET)
         et_hour_of_day = now_et.hour
@@ -347,37 +278,6 @@ class ChipIn(commands.GroupCog, name="chipin"):
             guild_id=guild_id, channel_id=channel_id,
             score=score, vibe=vibe, hook=hook[:200],
         )
-
-    # ---- helpers ----------------------------------------------------------------
-
-    _cached_listen_set: set[tuple[int, int]] | None = None
-
-    def _listen_set_cache(self) -> set[tuple[int, int]]:
-        """In-process cache of (guild, channel) pairs where chip-in is enabled.
-
-        Refreshed by the tick loop each minute. Lets on_message skip the DB on
-        every message: at any reasonable message rate this matters.
-        """
-        return self._cached_listen_set or set()
-
-    def _invalidate_listen_cache(self) -> None:
-        """Drop the cache so the next tick reloads from DB. Called by enable/disable
-        commands so toggles take effect within a tick instead of at next minute."""
-        self._cached_listen_set = None
-
-    async def _mod_gate(self, interaction: discord.Interaction) -> bool:
-        member = interaction.user
-        if not isinstance(member, discord.Member):
-            await interaction.response.send_message(
-                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
-            )
-            return False
-        if not await is_mod(self.bot.db, member):
-            await interaction.response.send_message(
-                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
-            )
-            return False
-        return True
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -158,15 +158,10 @@ CREATE TABLE IF NOT EXISTS command_metrics (
 );
 CREATE INDEX IF NOT EXISTS command_metrics_ts_idx ON command_metrics (started_at DESC);
 
--- Chip-in feature: per-channel listen toggles + chip-in posting history.
-CREATE TABLE IF NOT EXISTS chipin_channels (
-    guild_id BIGINT NOT NULL,
-    channel_id BIGINT NOT NULL,
-    enabled_by BIGINT NOT NULL,
-    enabled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (guild_id, channel_id)
-);
-
+-- Chip-in feature: chip-in posting history (cooldown + daily cap tracking).
+-- The listen channel is the configured discourse_channel; the on/off control
+-- is the mood schedule (mood=off disables chip-in too). No separate enable
+-- table needed.
 CREATE TABLE IF NOT EXISTS chipin_history (
     id BIGSERIAL PRIMARY KEY,
     guild_id BIGINT NOT NULL,
@@ -577,35 +572,9 @@ class DB:
         )
 
     # ---- chip-in ----------------------------------------------------------------
-
-    async def enable_chipin(self, guild_id: int, channel_id: int, actor_id: int) -> None:
-        """Mark a channel as listened-to for chip-in. Idempotent."""
-        await self._pool().execute(
-            """
-            INSERT INTO chipin_channels (guild_id, channel_id, enabled_by)
-            VALUES ($1, $2, $3) ON CONFLICT (guild_id, channel_id) DO NOTHING
-            """,
-            guild_id, channel_id, actor_id,
-        )
-
-    async def disable_chipin(self, guild_id: int, channel_id: int) -> None:
-        await self._pool().execute(
-            "DELETE FROM chipin_channels WHERE guild_id = $1 AND channel_id = $2",
-            guild_id, channel_id,
-        )
-
-    async def chipin_channels(self, guild_id: int) -> list[int]:
-        rows = await self._pool().fetch(
-            "SELECT channel_id FROM chipin_channels WHERE guild_id = $1", guild_id,
-        )
-        return [r["channel_id"] for r in rows]
-
-    async def all_chipin_channels(self) -> list[tuple[int, int]]:
-        """All (guild_id, channel_id) pairs across every guild. Used by the tick loop."""
-        rows = await self._pool().fetch(
-            "SELECT guild_id, channel_id FROM chipin_channels",
-        )
-        return [(r["guild_id"], r["channel_id"]) for r in rows]
+    # Note: chip-in's listen channel is the configured discourse_channel and its
+    # on/off control is the mood schedule (mood=off => no chip-in). No separate
+    # enable/disable table; we only need history for cooldown + daily-cap math.
 
     async def record_chipin(
         self,
