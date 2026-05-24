@@ -117,7 +117,10 @@ class ClaudeClient:
 
         system_extra = (
             "TASK: Answer the user's question in your voice. Use channel chatter for vibe, not quotes. "
-            "Keep it ~140 chars. One link MAX, only if it actually helps."
+            "Open with a brief paraphrase of the question, then your answer. "
+            "The answer portion is ~140 chars; the paraphrase does not count toward that cap. "
+            "Skip the paraphrase only when the question is so short an echo would dwarf the answer. "
+            "One link MAX, only if it actually helps."
         )
         tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_web else None
         result = await self._call(
