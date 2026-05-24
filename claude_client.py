@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+import anthropic
 from anthropic import AsyncAnthropic
 
 from persona import system_prompt
@@ -170,10 +171,10 @@ _TOOL_DISCIPLINE = (
     "  - HARD RULE: your answer must NEVER include a first-person verb "
     "describing what YOU did, will do, need to do, can't do, or tried to "
     "do with a tool. No \"i need to\", \"i should\", \"i'll\", \"let me\", "
-    "\"i tried\", \"i can't\", \"i couldn't\", \"i'm checking\", \"i looked\", "
-    "\"i searched\", \"i found\", \"i can see\", \"i can tell\" + any reference "
-    "to a tool action. The user does not need to know what you did. They "
-    "just see the answer.\n"
+    "\"let me try\", \"let me look\", \"i tried\", \"i can't\", \"i couldn't\", "
+    "\"i'm checking\", \"i looked\", \"i searched\", \"i found\", \"i can see\", "
+    "\"i can tell\" + any reference to a tool action. The user does not "
+    "need to know what you did. They just see the answer.\n"
     "  - HARD RULE: never describe the STATE of your inputs to the user. "
     "No mention of \"placeholder\", \"broken link\", \"won't resolve\", \"can't "
     "load\", \"no data\", \"empty result\", \"if you send me real X\". Either "
@@ -283,8 +284,49 @@ class ClaudeClient:
 
         start = time.monotonic()
         ok = True
+        image_retry = False
         try:
             resp = await self.client.messages.create(**kwargs)
+        except anthropic.BadRequestError as exc:
+            # Anthropic couldn't fetch one of the image URLs we passed (expired
+            # Discord CDN signature, gated content, geo-restriction, transient
+            # 5xx upstream). The TEXT part of the answer is still useful. Drop
+            # the images and retry once silently. If the retry also fails,
+            # bubble up to the original error path.
+            if (
+                image_urls
+                and "Unable to download" in str(exc)
+                and isinstance(user_content, list)
+            ):
+                image_retry = True
+                # Strip image blocks; keep the text block.
+                text_only_content = [
+                    b for b in user_content if b.get("type") == "text"
+                ]
+                kwargs["messages"] = [
+                    {"role": "user", "content": text_only_content}
+                ]
+                try:
+                    resp = await self.client.messages.create(**kwargs)
+                except Exception as retry_exc:
+                    ok = False
+                    emit(
+                        "claude_api",
+                        model=model, purpose=purpose,
+                        duration_ms=int((time.monotonic() - start) * 1000),
+                        ok=ok, error=type(retry_exc).__name__,
+                        image_retry=True, retry_failed=True,
+                    )
+                    raise
+            else:
+                ok = False
+                emit(
+                    "claude_api",
+                    model=model, purpose=purpose,
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                    ok=ok, error=type(exc).__name__,
+                )
+                raise
         except Exception as exc:
             ok = False
             emit(
@@ -338,6 +380,11 @@ class ClaudeClient:
             tool_calls=tool_calls if tool_calls else None,
             tool_call_count=len(tool_calls),
             had_tools_available=bool(tools),
+            # True if we silently retried without image_urls because
+            # Anthropic couldn't fetch one of them. Lets us see in logs
+            # how often the image-fetch retry is firing (and on which
+            # surfaces, to know if we need to cache/proxy images).
+            image_retry=image_retry if image_retry else None,
         )
 
         return ClaudeResult(
@@ -381,16 +428,28 @@ class ClaudeClient:
         system_extra = (
             "TASK: Answer the user's question in your voice.\n"
             "\n"
-            "SOURCES (in this order of trust):\n"
-            "  1. Web search results, when the question is factual (artist discography, "
-            "scores, news, releases, who-is-who). Use the web_search tool for ANY question "
-            "that asks about real-world facts, even if you think you know the answer. "
-            "Channel members get things wrong, and your training data is months stale.\n"
-            "  2. Your own taste / opinion / hot take, for value judgments (best, worst, "
-            "ranking, vibe checks).\n"
-            "  3. Channel chatter, for VIBE-CALIBRATION ONLY (what's the room's energy, "
-            "what nicknames do they use, what's the in-joke). Do NOT quote member opinions "
-            "as authoritative. Do NOT take their factual claims at face value.\n"
+            "SOURCES (default: search first, opinion second):\n"
+            "  1. Web search is the DEFAULT for almost every question. Your training "
+            "data is months stale. The room's references shift. The right rappers in "
+            "the \"big 3\" change. Albums drop. Players get traded. Restaurants close. "
+            "Songs get sampled. Even questions that READ like pure opinion (\"best X\", "
+            "\"is Y done\", \"rank Z\", \"who's the GOAT\") have a SUBJECT that lives "
+            "in current discourse, and your opinion will be anchored to a stale set if "
+            "you skip the search. Search first, THEN form your take.\n"
+            "\n"
+            "  2. Skip web_search ONLY for:\n"
+            "    - Questions about Toots herself (\"who are you\", \"what's your name\", "
+            "\"wyd\")\n"
+            "    - Pure abstract questions with no real-world referent (\"meaning of "
+            "life\", \"is free will real\")\n"
+            "    - Tautologies, jokes, non-sequiturs, bartender chitchat (\"how's your "
+            "shift\", \"sup\")\n"
+            "    - Math, code logic, definitions of common words\n"
+            "  If none of those apply, search.\n"
+            "\n"
+            "  3. Channel chatter is for VIBE-CALIBRATION ONLY (what's the room's "
+            "energy, what nicknames they use, what's the in-joke). Do NOT quote member "
+            "opinions as authoritative. Do NOT take their factual claims at face value.\n"
             "\n"
             "FORMAT:\n"
             "  Open with a brief paraphrase of the question, then your answer.\n"
