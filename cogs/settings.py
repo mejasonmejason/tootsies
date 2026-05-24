@@ -27,12 +27,15 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from models import MoodMode
 from utils import voice
 from utils.metrics import track_command
 from utils.permissions import is_mod
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
+
+MOOD_CYCLE = ["chill", "yaps", "off"]
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +84,7 @@ async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[st
     saved_settings = await bot.db.all_settings(guild.id)
     saved_mod_roles = await bot.db.get_mod_roles(guild.id)
     saved_feed_channels = await bot.db.get_feed_channels(guild.id)
+    saved_schedule = await bot.db.get_schedule(guild.id)
 
     state: dict[str, object] = {}
     if "bot_logs_channel" in saved_settings:
@@ -91,6 +95,9 @@ async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[st
         state["mod_role_ids"] = list(saved_mod_roles)
     if saved_feed_channels:
         state["feed_channel_ids"] = [cid for cid, _cat in saved_feed_channels]
+    # Mood is a real DB-backed value (defaulted to 'chill' by the schema), so it
+    # always exists — no need to fall back to pattern matching.
+    state["mood"] = saved_schedule.mood.value
 
     # Fill any remaining gaps from name-pattern heuristics.
     guesses = _pattern_prefill(guild)
@@ -219,29 +226,31 @@ class MenuView(discord.ui.View):
             self, _safe_channel_defaults(guild, prefill.get("feed_channel_ids")),
         ))
 
+        # The mood button's label is declared as "mood: chill" on the class but
+        # we want it to reflect the actual saved mood when /menu opens.
+        initial_mood = str(self.selected.get("mood", "chill"))
+        self.cycle_mood.label = f"mood: {initial_mood}"
+
     # ---- embed -----------------------------------------------------------------
 
     def help_embed(self) -> discord.Embed:
         e = discord.Embed(
             title="toots' menu",
             description=(
-                "configure the four settings below. each dropdown is labeled with "
-                "what it controls. when you're happy, hit **confirm & save**.\n\n"
-                "_re-running `/menu` later shows your current settings so you can "
-                "tweak. for the scheduled-posting mood (chill / yaps / off), use_ "
-                "`/discourse mood:<x>` _instead — it's separate so you can change "
-                "it on the fly without re-running setup._"
+                "set me up. each dropdown is labeled. click **mood** to cycle "
+                "how chatty i am on auto-pilot. hit **confirm & save** when "
+                "you're done. re-run `/menu` anytime to see and change these."
             ),
             color=0x9b59b6,
         )
         e.add_field(
             name="📊  bot-logs channel",
-            value="where I narrate `/order` status (🟡 → 🍳 → ✅).",
+            value="where i narrate `/order` status (🟡 → 🍳 → ✅).",
             inline=False,
         )
         e.add_field(
             name="💬  discourse channel",
-            value="where scheduled discourse posts land.",
+            value="where my scheduled posts land.",
             inline=False,
         )
         e.add_field(
@@ -251,7 +260,15 @@ class MenuView(discord.ui.View):
         )
         e.add_field(
             name="📰  feed channels",
-            value="read-only sources I pull from for `/discourse` (X feeds, news, alerts). optional.",
+            value="read-only sources i pull from for `/discourse` (X feeds, news, alerts). optional.",
+            inline=False,
+        )
+        e.add_field(
+            name="😎  mood",
+            value=(
+                "scheduled posting cadence (US Pacific). cycles on click.\n"
+                "**chill**: 2/day (~12pm, 7pm) · **yaps**: 4/day (~10am, 2pm, 6pm, 10pm) · **off**: silent."
+            ),
             inline=False,
         )
         return e
@@ -263,6 +280,29 @@ class MenuView(discord.ui.View):
             )
             return False
         return True
+
+    def _refresh_select_defaults(self) -> None:
+        """Sync each select's `default_values` to current `self.selected` before
+        any `edit_message(view=self)`. Without this, re-rendering the view (e.g.
+        on the mood button click) reverts dropdowns to their construction-time
+        defaults, visually clearing whatever the user had picked."""
+        for child in self.children:
+            if isinstance(child, _BotLogsSelect):
+                child.default_values = _safe_channel_default(
+                    self.guild, self.selected.get("bot_logs_channel"),
+                )
+            elif isinstance(child, _DiscourseSelect):
+                child.default_values = _safe_channel_default(
+                    self.guild, self.selected.get("discourse_channel"),
+                )
+            elif isinstance(child, _ModRoleSelect):
+                child.default_values = _safe_role_defaults(
+                    self.guild, self.selected.get("mod_role_ids"),
+                )
+            elif isinstance(child, _FeedSelect):
+                child.default_values = _safe_channel_defaults(
+                    self.guild, self.selected.get("feed_channel_ids"),
+                )
 
     # ---- buttons (row 4) -------------------------------------------------------
 
@@ -315,6 +355,10 @@ class MenuView(discord.ui.View):
                 guild_id, [(int(c), None) for c in feeds],
             )
 
+        mood = self.selected.get("mood", "chill")
+        if isinstance(mood, str):
+            await self.bot.db.set_schedule(guild_id, MoodMode(mood), self.actor_id)
+
         await self.bot.db.mark_configured(guild_id)
         await self.bot.db.audit(
             guild_id, self.actor_id, "menu_saved", after=self.selected,
@@ -332,6 +376,24 @@ class MenuView(discord.ui.View):
         await interaction.response.edit_message(
             content=None, embed=confirm_embed, view=self,
         )
+
+    @discord.ui.button(label="mood: chill", style=discord.ButtonStyle.secondary, row=4)
+    async def cycle_mood(
+        self, interaction: discord.Interaction, btn: discord.ui.Button,
+    ) -> None:
+        if not await self._check_actor(interaction):
+            return
+        current = str(self.selected.get("mood", "chill"))
+        i = MOOD_CYCLE.index(current) if current in MOOD_CYCLE else 0
+        new = MOOD_CYCLE[(i + 1) % len(MOOD_CYCLE)]
+        self.selected["mood"] = new
+        btn.label = f"mood: {new}"
+        # Critical: sync each select's default_values to what the user has
+        # picked so far. Otherwise edit_message re-renders the selects with
+        # their original construction-time defaults and visually clears any
+        # user input. (Was previously a bug when mood was a button.)
+        self._refresh_select_defaults()
+        await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="cancel", style=discord.ButtonStyle.secondary, row=4)
     async def cancel(
@@ -356,7 +418,8 @@ class MenuView(discord.ui.View):
             f"**discourse:** <#{discourse}>\n"
             f"**mod roles:** "
             f"{', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles))}\n"
-            f"**feeds:** {len(cast('list[int]', feeds))} channel(s)"
+            f"**feeds:** {len(cast('list[int]', feeds))} channel(s)\n"
+            f"**mood:** {self.selected.get('mood', 'chill')}"
         )
 
 

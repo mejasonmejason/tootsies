@@ -59,68 +59,26 @@ class Discourse(commands.Cog):
 
     @app_commands.command(
         name="discourse",
-        description="start a fight (manual) or set the schedule (mood).",
+        description="drop a discussion starter into this channel.",
     )
-    @app_commands.describe(
-        category="post one starter now in this channel.",
-        mood="control scheduled posting in the discourse channel.",
-    )
+    @app_commands.describe(category="what corner of the internet?")
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
-        mood=[
-            app_commands.Choice(name="chill (2/day)", value="chill"),
-            app_commands.Choice(name="yaps (4/day)", value="yaps"),
-            app_commands.Choice(name="off", value="off"),
-            app_commands.Choice(name="status", value="status"),
-        ],
     )
     @track_command("discourse")
     async def discourse(
         self,
         interaction: discord.Interaction,
-        category: app_commands.Choice[str] | None = None,
-        mood: app_commands.Choice[str] | None = None,
+        category: app_commands.Choice[str],
     ) -> None:
+        """Post one discourse starter now in the invoked channel.
+
+        Schedule control (chill/yaps/off) is in `/menu`, not here — keeps the
+        slash command focused on the one thing everyone needs.
+        """
         if not await require_configured(interaction, self.bot.db):
             return
-        if category and mood:
-            await interaction.response.send_message(
-                "one or the other, regular. `category:` to post or `mood:` to set the schedule.",
-                ephemeral=True,
-            )
-            return
-        if mood:
-            await self._handle_mood(interaction, mood.value)
-            return
-        if category:
-            await self._handle_manual_post(interaction, category.value)
-            return
-        await interaction.response.send_message(
-            "what'll it be? `/discourse category:<c>` to post or `/discourse mood:<x>` to set the schedule.",
-            ephemeral=True,
-        )
-
-    # ---- mood handler -----------------------------------------------------------
-
-    async def _handle_mood(self, interaction: discord.Interaction, mode_value: str) -> None:
-        assert interaction.guild_id is not None
-        guild_id = interaction.guild_id
-
-        if mode_value == "status":
-            state = await self.bot.db.get_schedule(guild_id)
-            await interaction.response.send_message(
-                f"mood: **{state.mood.value}** · {state.posts_today} post(s) today",
-                ephemeral=True,
-            )
-            return
-
-        new_mode = MoodMode(mode_value)
-        await self.bot.db.set_schedule(guild_id, new_mode, interaction.user.id)
-        await self.bot.db.audit(
-            guild_id, interaction.user.id, "schedule_set",
-            after={"mode": new_mode.value},
-        )
-        await interaction.response.send_message(f"mood: **{new_mode.value}**.")
+        await self._handle_manual_post(interaction, category.value)
 
     # ---- manual post handler ----------------------------------------------------
 

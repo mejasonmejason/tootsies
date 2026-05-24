@@ -32,52 +32,54 @@ class Help(commands.Cog):
         embed = discord.Embed(
             title="what i do",
             description=(
-                "i'm toots, the bot. ask me stuff, summarize chat, drop discourse "
-                "starters. mods can ship new features by ordering them."
+                "i'm toots. ask me stuff, catch you up on chat, start a "
+                "conversation when the room's dead. mods can teach me new "
+                "tricks just by asking."
             ),
             color=0x9b59b6,
         )
         embed.add_field(
             name="🗣️  everyone",
             value=(
-                "**`/ask <question>`** — i answer in my voice. i read recent chat "
-                "for vibe and search the web for facts. you can also `@Toots` me "
-                "in any message (same backend).\n"
-                "**`/recap period:<1h | 1d | today>`** — what'd you miss in this "
-                "channel.\n"
-                "**`/discourse category:<pop | sports | cinema | hiphop | nba | custom>`** — "
-                "i drop a discourse starter into this channel."
+                "**`/ask <question>`** — ask me anything. takes, recs, scores, "
+                "whatever. i read the room and check the web.\n"
+                "**`@Toots <question>`** — same thing, no slash. "
+                "*ayo @Toots what's the move tonight* works.\n"
+                "**`/recap period:<last hour | last 24h | today>`** — what'd "
+                "you miss in here.\n"
+                "**`/discourse category:<pop | sports | cinema | hiphop | nba | "
+                "custom>`** — i drop a discussion starter."
             ),
             inline=False,
         )
         embed.add_field(
             name="👮  mods only",
             value=(
-                "**`/order new <feature>`** — file a feature request. i'll write "
-                "the PR, CI runs, auto-merges if green, railway redeploys. one "
-                "order at a time.\n"
-                "**`/order status [filter]`** — see what's cooking.\n"
-                "**`/order retry <issue#>`** — retry a failed order.\n"
-                "**`/order cancel <issue#>`** — kill an in-flight order.\n"
-                "**`/menu`** — channels, mod roles, feed channels. re-run anytime "
-                "to see current settings.\n"
-                "**`/discourse mood:<chill | yaps | off | status>`** — control "
-                "the scheduled posting cadence.\n"
-                "**`/close` / `/open`** — kitchen open or closed for new orders.\n"
-                "**`/undo`** — roll back to the previous successful deploy."
+                "**`/order new <feature>`** — tell me a new thing you want me to "
+                "do. i'll build it. one at a time, takes a few minutes.\n"
+                "**`/order status`** — see what i'm working on.\n"
+                "**`/order retry <number>`** — try again on something that "
+                "didn't work.\n"
+                "**`/order cancel <number>`** — call it off.\n"
+                "**`/menu`** — set up my channels, mod roles, what to post on "
+                "auto-pilot, where to pull news from.\n"
+                "**`/close` / `/open`** — stop or restart taking `/order` "
+                "requests.\n"
+                "**`/undo`** — if a new feature broke me, roll me back to the "
+                "version before."
             ),
             inline=False,
         )
         embed.add_field(
             name="📏  daily caps",
             value=(
-                "**20/day per user** for `/ask` (+ @mentions) and `/recap`.\n"
-                "**20/day server-wide** for `/discourse` (manual posts) and `/order`.\n"
-                "`/order` also has a 15-minute per-user cooldown. mood changes are unlimited."
+                "you get **20 of `/ask` + `@Toots` + `/recap` per day each**.\n"
+                "the server gets **20 `/discourse` + `/order` per day total**.\n"
+                "no caps on `/menu` or `/help` or `/close` / `/open` / `/undo`."
             ),
             inline=False,
         )
-        embed.set_footer(text="see the source: github.com/mejasonmejason/tootsies")
+        embed.set_footer(text="if i'm broken, ping a mod.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
