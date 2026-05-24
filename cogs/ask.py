@@ -16,7 +16,7 @@ from discord.ext import commands
 
 from utils import voice
 from utils.events import emit
-from utils.feeds import format_for_prompt, recent_messages
+from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.metrics import track_command
 from utils.rate_limits import check_user_limit, consume_user
@@ -79,14 +79,19 @@ class Ask(commands.Cog):
         question: str,
     ) -> str:
         context = ""
+        image_urls: list[str] = []
         if (
             isinstance(channel, discord.TextChannel | discord.Thread)
             and me is not None
         ):
             msgs = await recent_messages(channel, me, limit=30)
             context = format_for_prompt(msgs)
+            # Pull image URLs from the few most-recent messages so Toots can actually
+            # see what the room is reacting to. Cap is intentionally small (cost +
+            # avoid drowning the prompt with old visuals).
+            image_urls = recent_image_urls(msgs, limit=3)
         return await self.bot.claude.ask(
-            question, channel_context=context, use_web=True
+            question, channel_context=context, use_web=True, image_urls=image_urls,
         )
 
     @commands.Cog.listener()

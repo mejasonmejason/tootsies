@@ -14,7 +14,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic
@@ -71,6 +71,7 @@ class ClaudeClient:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         tools: list[dict[str, Any]] | None = None,
         purpose: str = "unknown",
+        image_urls: list[str] | None = None,
     ) -> ClaudeResult:
         # System prompt is a list with a cache_control marker on the persona block so
         # repeat calls hit the prompt cache (the persona is ~1k tokens and stable).
@@ -82,13 +83,24 @@ class ClaudeClient:
             }
         ]
 
+        # Build user content. Text always, plus optional image blocks for vision.
+        # Time prefix keeps Toots's date/weekday references honest.
+        full_text = _time_context() + user_message
+        if image_urls:
+            user_content: list[dict[str, Any]] | str = [{"type": "text", "text": full_text}]
+            for url in image_urls[:5]:  # hard cap for cost control
+                cast("list[dict[str, Any]]", user_content).append({
+                    "type": "image",
+                    "source": {"type": "url", "url": url},
+                })
+        else:
+            user_content = full_text
+
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "system": system,
-            # Prefix every user message with the current time so date/weekday
-            # references in Toots's output don't drift from reality.
-            "messages": [{"role": "user", "content": _time_context() + user_message}],
+            "messages": [{"role": "user", "content": user_content}],
         }
         if tools:
             kwargs["tools"] = tools
@@ -132,11 +144,28 @@ class ClaudeClient:
             output_tokens=resp.usage.output_tokens,
         )
 
-    async def ask(self, question: str, channel_context: str = "", use_web: bool = False) -> str:
-        """Answer a user question in Toots voice. Used by /ask and @Toots mentions."""
+    async def ask(
+        self,
+        question: str,
+        channel_context: str = "",
+        use_web: bool = False,
+        image_urls: list[str] | None = None,
+    ) -> str:
+        """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
+
+        `image_urls`, if provided, gets passed to Claude as vision blocks so Toots
+        can actually see images recently posted in the channel (memes, GIFs,
+        screenshots being discussed). Capped to 5 internally for cost control.
+        """
         extra_context = ""
         if channel_context:
             extra_context = f"\n\nRecent channel chatter (for vibe, don't quote it back):\n{channel_context}"
+        if image_urls:
+            extra_context += (
+                f"\n\nThe last {len(image_urls)} image(s) posted in this channel are "
+                "attached. Use them if the question is about one of them or if they're "
+                "what the room is reacting to."
+            )
 
         system_extra = (
             "TASK: Answer the user's question in your voice.\n"
@@ -165,6 +194,7 @@ class ClaudeClient:
             system_extra=system_extra,
             tools=tools,
             purpose="ask",
+            image_urls=image_urls,
         )
         return result.text
 
