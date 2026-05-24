@@ -75,3 +75,28 @@ Tests use `conftest.py` to stub env vars so imports don't blow up without real s
 - Rate limits: per-user daily (default 20) for `/ask`+mentions and `/recap`; server-wide daily (default 20) for `/discourse` and `/order`. `/order` also has a 15min per-user cooldown.
 - Order states flow: Prepping -> On the stove -> Plating -> Served (or Burnt/Sent back at any step).
 - Config is a frozen dataclass in `config.py`, read from env vars at startup. Required: `DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `DATABASE_URL`.
+
+## Commit and PR conventions
+
+**Always include a `PREVIEW:` section in commit bodies and PR descriptions when the change is user-facing.** The bot's UI is Discord, so screenshots are awkward — render an ASCII/markdown mock of the relevant surface instead. Reviewers shouldn't have to deploy the change to know what it looks like.
+
+- **UI changes** (embeds, views, slash command shape) → ASCII mock of the embed and any buttons/selects:
+  ```
+  PREVIEW:
+  ┌─ embed: "toots' menu" ──────────────────────────┐
+  │ description text...                             │
+  ├──────────────────────────────────────────────────┤
+  │ ▾ select 1                                       │
+  │ [button] [button]                                │
+  └──────────────────────────────────────────────────┘
+  ```
+- **Copy / persona / voice-library changes** → quote 2-3 sample outputs:
+  ```
+  PREVIEW (sample /ask response):
+  > "is drake done"
+  > → "he's been done four times this decade and keeps eating. give it up."
+  ```
+- **New command** → mock the slash command picker entry + an example response.
+- **Pure backend changes** (db schema, refactors, dep bumps) → no PREVIEW section needed.
+
+PR descriptions follow `.github/pull_request_template.md` which prompts for the same. Skip the section when it genuinely doesn't apply, don't pad with "N/A".
