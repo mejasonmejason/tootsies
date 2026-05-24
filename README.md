@@ -12,7 +12,7 @@ A Discord bot for the Tootsies server. The bot is "Toots", a hip city-girl barte
 
 - Python 3.11+, `discord.py` 2.4
 - Postgres on Railway (`asyncpg`)
-- Anthropic API: Haiku 4.5 for `/ask`, `/recap`, scheduler, deflections; Sonnet 4.6 for `/discourse` and `/order` pre-flight
+- Anthropic API: Haiku 4.5 for `/ask`, `/recap`, scheduler, chime-in scoring, deflections; Sonnet 4.6 for `/discourse`, chime-in posting, and `/order` pre-flight
 - GitHub Actions running `claude-code-action` for the `/order` pipeline
 - Railway for hosting + auto-deploy on push to `main`
 

@@ -30,10 +30,12 @@ class Help(commands.Cog):
     @track_command("help")
     async def help(self, interaction: discord.Interaction) -> None:
         embed = discord.Embed(
-            title="what i do",
+            title="hey, i'm toots",
             description=(
-                "i'm toots. ask me stuff, catch you up on chat, start a "
-                "conversation when the room's dead. mods can teach me new "
+                "chicago kid, miami based, bartender at tootsies. music is the "
+                "core (sample-spotter), bulls fan, A24 girlie. i answer "
+                "questions, recap the chat, start fights when it's dead, and "
+                "chime in when the room's cooking. mods can teach me new "
                 "tricks just by asking."
             ),
             color=0x9b59b6,
@@ -48,7 +50,21 @@ class Help(commands.Cog):
                 "**`/recap period:<last hour | last 24h | today>`**: what'd "
                 "you miss in here.\n"
                 "**`/discourse category:<pop | sports | cinema | hiphop | nba | "
-                "custom>`**, i drop a discussion starter."
+                "custom>`**: i drop a discussion starter."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="🍸  on my own (no command, runs in the background)",
+            value=(
+                "**scheduled posts** in the discourse channel and **chime-ins** "
+                "when y'all are debating something good. both ride on the mood "
+                "dial mods set in `/menu`:\n"
+                "  · **chill**: scheduled at 12pm + 7pm ET, chime in up to 3/day\n"
+                "  · **yaps**: scheduled at 10am, 2pm, 6pm, 10pm ET, chime in up to 6/day\n"
+                "  · **off**: silent on both\n"
+                "i won't chime in on catch-ups, vulnerable shares, or weekend "
+                "logistics. only when the room's actually cooking."
             ),
             inline=False,
         )
@@ -61,8 +77,8 @@ class Help(commands.Cog):
                 "**`/order retry <number>`**: try again on something that "
                 "didn't work.\n"
                 "**`/order cancel <number>`**: call it off.\n"
-                "**`/menu`**: set up my channels, mod roles, what to post on "
-                "auto-pilot, where to pull news from.\n"
+                "**`/menu`**: set up my channels, mod roles, mood, where to "
+                "pull news from.\n"
                 "**`/close` / `/open`**: stop or restart taking `/order` "
                 "requests.\n"
                 "**`/undo`**: if a new feature broke me, roll me back to the "
