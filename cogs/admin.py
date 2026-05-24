@@ -11,6 +11,7 @@ from discord.ext import commands
 
 from utils import voice
 from utils.gates import require_configured
+from utils.metrics import track_command
 from utils.permissions import is_mod
 from utils.railway import RailwayClient, RailwayError
 
@@ -25,6 +26,7 @@ class Admin(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="close", description="close the kitchen. no new /order requests.")
+    @track_command("close")
     async def close(self, interaction: discord.Interaction) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -36,6 +38,7 @@ class Admin(commands.Cog):
         await interaction.response.send_message("kitchen closed. no more orders tonight.")
 
     @app_commands.command(name="open", description="open the kitchen. accept /order again.")
+    @track_command("open")
     async def open(self, interaction: discord.Interaction) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -47,6 +50,7 @@ class Admin(commands.Cog):
         await interaction.response.send_message("we're open. let's go.")
 
     @app_commands.command(name="undo", description="roll back to the previous successful deploy.")
+    @track_command("undo")
     async def undo(self, interaction: discord.Interaction) -> None:
         if not await self._mod_gate(interaction):
             return

@@ -13,6 +13,7 @@ from discord.ext import commands
 from utils import voice
 from utils.feeds import format_for_prompt, is_channel_dead, recent_messages
 from utils.gates import require_configured
+from utils.metrics import track_command
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -30,9 +31,11 @@ class Recap(commands.Cog):
     @app_commands.choices(
         period=[
             app_commands.Choice(name="last hour", value="1h"),
-            app_commands.Choice(name="today", value="today"),
+            app_commands.Choice(name="last 24h", value="1d"),
+            app_commands.Choice(name="today (since midnight)", value="today"),
         ]
     )
+    @track_command("recap")
     async def recap(
         self,
         interaction: discord.Interaction,
@@ -95,7 +98,9 @@ class Recap(commands.Cog):
 def _period_to_window(period: str) -> timedelta:
     if period == "1h":
         return timedelta(hours=1)
-    # "today" = since midnight UTC. Close enough — exact TZ doesn't matter for vibes.
+    if period == "1d":
+        return timedelta(hours=24)
+    # "today" = since midnight UTC. Close enough, exact TZ doesn't matter for vibes.
     now = datetime.now(UTC)
     today_start = datetime.combine(now.date(), time.min, tzinfo=UTC)
     return now - today_start

@@ -74,7 +74,7 @@ class ScheduleState:
     """Per-guild state for the scheduled discourse poster (the `discourse_schedule` table)."""
 
     guild_id: int
-    mode: MoodMode
+    mood: MoodMode
     last_changed_by: int | None
     last_changed_at: datetime | None
     posts_today: int

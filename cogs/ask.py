@@ -17,6 +17,7 @@ from discord.ext import commands
 from utils import voice
 from utils.feeds import format_for_prompt, recent_messages
 from utils.gates import require_configured
+from utils.metrics import track_command
 from utils.rate_limits import check_user_limit, consume_user
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ class Ask(commands.Cog):
 
     @app_commands.command(name="ask", description="ask toots something.")
     @app_commands.describe(question="what do you want to know?")
+    @track_command("ask")
     async def ask(self, interaction: discord.Interaction, question: str) -> None:
         if not await require_configured(interaction, self.bot.db):
             return

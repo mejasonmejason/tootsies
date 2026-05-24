@@ -109,7 +109,7 @@ CREATE INDEX IF NOT EXISTS audit_log_guild_ts_idx ON audit_log (guild_id, timest
 
 CREATE TABLE IF NOT EXISTS discourse_schedule (
     guild_id BIGINT PRIMARY KEY,
-    mode TEXT NOT NULL DEFAULT 'chill',
+    mood TEXT NOT NULL DEFAULT 'chill',
     last_changed_by BIGINT,
     last_changed_at TIMESTAMPTZ,
     posts_today INTEGER NOT NULL DEFAULT 0,
@@ -117,13 +117,12 @@ CREATE TABLE IF NOT EXISTS discourse_schedule (
     posts_day DATE
 );
 
--- Migrate legacy mood_state rows on first boot after rename. Safe to run repeatedly:
--- only copies if the legacy table exists AND the new table has no row for that guild.
+-- Migrate legacy `mood_state` table from the pre-rename schema (plan §7).
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'mood_state') THEN
         INSERT INTO discourse_schedule (
-            guild_id, mode, last_changed_by, last_changed_at, posts_today, last_post_at, posts_day
+            guild_id, mood, last_changed_by, last_changed_at, posts_today, last_post_at, posts_day
         )
         SELECT guild_id, mode, last_changed_by, last_changed_at, posts_today, last_post_at, posts_day
         FROM mood_state
@@ -131,6 +130,34 @@ BEGIN
         DROP TABLE mood_state;
     END IF;
 END $$;
+
+-- Rename legacy `mode` column to `mood` on the new table if a pre-rename deploy
+-- already created the table with the old column name.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'discourse_schedule' AND column_name = 'mode'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'discourse_schedule' AND column_name = 'mood'
+    ) THEN
+        ALTER TABLE discourse_schedule RENAME COLUMN mode TO mood;
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS command_metrics (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT,
+    user_id BIGINT NOT NULL,
+    command TEXT NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    duration_ms INTEGER NOT NULL,
+    ok BOOLEAN NOT NULL,
+    error_class TEXT
+);
+CREATE INDEX IF NOT EXISTS command_metrics_ts_idx ON command_metrics (started_at DESC);
+CREATE INDEX IF NOT EXISTS command_metrics_guild_cmd_idx ON command_metrics (guild_id, command);
 """
 
 
@@ -502,6 +529,32 @@ class DB:
             "DELETE FROM audit_log WHERE timestamp < NOW() - INTERVAL '90 days'"
         )
 
+    # ---- command metrics --------------------------------------------------------
+
+    async def record_command(
+        self,
+        *,
+        guild_id: int | None,
+        user_id: int,
+        command: str,
+        duration_ms: int,
+        ok: bool,
+        error_class: str | None = None,
+    ) -> None:
+        await self._pool().execute(
+            """
+            INSERT INTO command_metrics
+                (guild_id, user_id, command, duration_ms, ok, error_class)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            guild_id, user_id, command, duration_ms, ok, error_class,
+        )
+
+    async def prune_command_metrics(self) -> None:
+        await self._pool().execute(
+            "DELETE FROM command_metrics WHERE started_at < NOW() - INTERVAL '30 days'"
+        )
+
     # ---- discourse schedule -----------------------------------------------------
 
     async def get_schedule(self, guild_id: int) -> ScheduleState:
@@ -510,29 +563,29 @@ class DB:
         )
         if not row:
             return ScheduleState(
-                guild_id=guild_id, mode=MoodMode.CHILL, last_changed_by=None,
+                guild_id=guild_id, mood=MoodMode.CHILL, last_changed_by=None,
                 last_changed_at=None, posts_today=0, last_post_at=None,
             )
         return ScheduleState(
             guild_id=row["guild_id"],
-            mode=MoodMode(row["mode"]),
+            mood=MoodMode(row["mood"]),
             last_changed_by=row["last_changed_by"],
             last_changed_at=row["last_changed_at"],
             posts_today=row["posts_today"],
             last_post_at=row["last_post_at"],
         )
 
-    async def set_schedule(self, guild_id: int, mode: MoodMode, actor_id: int) -> None:
+    async def set_schedule(self, guild_id: int, mood: MoodMode, actor_id: int) -> None:
         await self._pool().execute(
             """
-            INSERT INTO discourse_schedule (guild_id, mode, last_changed_by, last_changed_at)
+            INSERT INTO discourse_schedule (guild_id, mood, last_changed_by, last_changed_at)
             VALUES ($1, $2, $3, NOW())
             ON CONFLICT (guild_id) DO UPDATE
-                SET mode = EXCLUDED.mode,
+                SET mood = EXCLUDED.mood,
                     last_changed_by = EXCLUDED.last_changed_by,
                     last_changed_at = NOW()
             """,
-            guild_id, mode.value, actor_id,
+            guild_id, mood.value, actor_id,
         )
 
     async def record_schedule_post(self, guild_id: int, today: date) -> None:

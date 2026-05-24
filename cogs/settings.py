@@ -18,6 +18,7 @@ from discord.ext import commands
 
 from models import MoodMode
 from utils import voice
+from utils.metrics import track_command
 from utils.permissions import is_mod
 
 if TYPE_CHECKING:
@@ -63,6 +64,7 @@ class Settings(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="menu", description="set toots up. (mods only)")
+    @track_command("menu")
     async def menu(self, interaction: discord.Interaction) -> None:
         member = interaction.user
         guild = interaction.guild
@@ -85,6 +87,7 @@ class Settings(commands.Cog):
         )
 
     @app_commands.command(name="menu_view", description="see current settings.")
+    @track_command("menu_view")
     async def menu_view(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
             return
@@ -93,7 +96,7 @@ class Settings(commands.Cog):
         feeds = await self.bot.db.get_feed_channels(interaction.guild.id)
         schedule = await self.bot.db.get_schedule(interaction.guild.id)
         lines = [
-            f"**mood:** {schedule.mode.value}",
+            f"**mood:** {schedule.mood.value}",
             f"**mod roles:** {', '.join(f'<@&{r}>' for r in mod_roles) or '(none)'}",
             f"**feeds:** {len(feeds)} channel(s)",
         ]

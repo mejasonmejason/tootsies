@@ -124,7 +124,8 @@ class TootsiesBot(commands.Bot):
         try:
             await self.db.prune_audit()
             await self.db.prune_discourse()
-            log.info("pruned old audit + discourse history")
+            await self.db.prune_command_metrics()
+            log.info("pruned old audit + discourse + command_metrics history")
         except Exception:
             log.exception("prune failed")
 

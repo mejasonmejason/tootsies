@@ -19,6 +19,7 @@ from models import ORDER_STATUS_EMOJI, ORDER_STATUS_LABEL, TERMINAL_STATUSES, Or
 from utils import bot_logs, voice
 from utils.gates import require_configured
 from utils.github import issue_body_for_order
+from utils.metrics import track_command
 from utils.permissions import is_mod
 from utils.rate_limits import check_cooldown, check_server_limit, consume_server
 
@@ -37,6 +38,7 @@ class Order(commands.GroupCog, name="order"):
 
     @app_commands.command(name="new", description="file a new feature request. (mods only)")
     @app_commands.describe(feature="what should toots learn how to do?")
+    @track_command("order new")
     async def new(self, interaction: discord.Interaction, feature: str) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -154,6 +156,7 @@ class Order(commands.GroupCog, name="order"):
             app_commands.Choice(name="failed", value="failed"),
         ]
     )
+    @track_command("order status")
     async def status(
         self,
         interaction: discord.Interaction,
@@ -189,6 +192,7 @@ class Order(commands.GroupCog, name="order"):
 
     @app_commands.command(name="retry", description="retry a failed order. (mods only)")
     @app_commands.describe(issue_number="github issue number")
+    @track_command("order retry")
     async def retry(self, interaction: discord.Interaction, issue_number: int) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -242,6 +246,7 @@ class Order(commands.GroupCog, name="order"):
 
     @app_commands.command(name="cancel", description="kill an in-flight order. (mods only)")
     @app_commands.describe(issue_number="github issue number")
+    @track_command("order cancel")
     async def cancel(self, interaction: discord.Interaction, issue_number: int) -> None:
         if not await self._mod_gate(interaction):
             return

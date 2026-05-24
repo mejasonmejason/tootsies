@@ -30,6 +30,7 @@ from models import MoodMode
 from utils import voice
 from utils.feeds import format_for_prompt, recent_messages
 from utils.gates import require_configured
+from utils.metrics import track_command
 from utils.permissions import can_send_in
 from utils.rate_limits import check_server_limit, consume_server
 
@@ -72,6 +73,7 @@ class Discourse(commands.Cog):
             app_commands.Choice(name="status", value="status"),
         ],
     )
+    @track_command("discourse")
     async def discourse(
         self,
         interaction: discord.Interaction,
@@ -106,7 +108,7 @@ class Discourse(commands.Cog):
         if mode_value == "status":
             state = await self.bot.db.get_schedule(guild_id)
             await interaction.response.send_message(
-                f"mood: **{state.mode.value}** · {state.posts_today} post(s) today",
+                f"mood: **{state.mood.value}** · {state.posts_today} post(s) today",
                 ephemeral=True,
             )
             return
@@ -218,9 +220,9 @@ class Discourse(commands.Cog):
 
     async def _maybe_scheduled_post(self, guild_id: int, now_pt: datetime) -> None:
         state = await self.bot.db.get_schedule(guild_id)
-        if state.mode == MoodMode.OFF:
+        if state.mood == MoodMode.OFF:
             return
-        schedule = CHILL_TIMES if state.mode == MoodMode.CHILL else YAPS_TIMES
+        schedule = CHILL_TIMES if state.mood == MoodMode.CHILL else YAPS_TIMES
 
         # Pick the most recent scheduled slot whose time has passed today.
         current = now_pt.time().replace(second=0, microsecond=0)
