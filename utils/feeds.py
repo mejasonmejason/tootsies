@@ -39,6 +39,9 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
     refs: list[MediaRef] = []
 
     # Embeds — Discord auto-unfurls links into embeds (X posts, articles, GIFs).
+    # Multi-image carousels (X with 4 photos, Bluesky multi-image posts) come
+    # through as separate embeds on the same message, so iterating msg.embeds
+    # already gets us all the frames in those cases.
     for embed in msg.embeds:
         text_parts: list[str] = []
         if embed.title:
@@ -48,15 +51,28 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
         if text_parts:
             url_suffix = f" ({embed.url})" if embed.url else ""
             refs.append(MediaRef(kind="embed", label=" / ".join(text_parts) + url_suffix))
-        # Tenor / GIPHY surface their preview via embed.image.url.
+
+        # Pull BOTH embed.image and embed.thumbnail when both exist and differ
+        # (Tier 1 stills boost). For TikTok / Twitter video embeds these are
+        # often two different frames of the same clip — the more frames Claude
+        # sees, the better her take on what's actually in the video.
+        seen_image_urls: set[str] = set()
         if embed.image and embed.image.url:
             refs.append(MediaRef(
                 kind="image", label="embed image", image_url=embed.image.url,
             ))
-        elif embed.thumbnail and embed.thumbnail.url:
+            seen_image_urls.add(embed.image.url)
+        if embed.thumbnail and embed.thumbnail.url and embed.thumbnail.url not in seen_image_urls:
             refs.append(MediaRef(
                 kind="image", label="embed thumbnail", image_url=embed.thumbnail.url,
             ))
+            seen_image_urls.add(embed.thumbnail.url)
+
+        # Video URL as a TEXT reference (we can't process motion, but knowing
+        # the embed points to a video helps Claude form a take like "tiktok
+        # clip" instead of treating the still as the whole story).
+        if embed.video and embed.video.url:
+            refs.append(MediaRef(kind="video", label=f"embed video: {embed.video.url}"))
 
     # Direct attachments — uploaded files.
     for att in msg.attachments:

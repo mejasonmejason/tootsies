@@ -58,10 +58,12 @@ def _fake_embed(
     url: str | None = None,
     image_url: str | None = None,
     thumbnail_url: str | None = None,
+    video_url: str | None = None,
 ) -> object:
     embed = SimpleNamespace(title=title, description=description, url=url)
     embed.image = SimpleNamespace(url=image_url) if image_url else None
     embed.thumbnail = SimpleNamespace(url=thumbnail_url) if thumbnail_url else None
+    embed.video = SimpleNamespace(url=video_url) if video_url else None
     return embed
 
 
@@ -124,10 +126,46 @@ def test_extract_media_tenor_embed_yields_image_url() -> None:
     assert image_refs[0].image_url == "https://media.tenor.com/x.gif"
 
 
-def test_extract_media_falls_back_to_thumbnail_when_no_image() -> None:
+def test_extract_media_uses_thumbnail_when_no_image() -> None:
     embed = _fake_embed(thumbnail_url="https://cdn/thumb.jpg")
     refs = extract_media(_fake_msg(embeds=[embed]))
     assert any(r.image_url == "https://cdn/thumb.jpg" for r in refs)
+
+
+def test_extract_media_includes_both_image_and_thumbnail_when_both_exist() -> None:
+    """Tier 1 stills boost: TikTok/Twitter video embeds often expose two
+    different frames via image and thumbnail. Take both so vision sees more."""
+    embed = _fake_embed(
+        image_url="https://cdn/frame-a.jpg",
+        thumbnail_url="https://cdn/frame-b.jpg",
+    )
+    refs = extract_media(_fake_msg(embeds=[embed]))
+    image_urls = [r.image_url for r in refs if r.image_url is not None]
+    assert "https://cdn/frame-a.jpg" in image_urls
+    assert "https://cdn/frame-b.jpg" in image_urls
+
+
+def test_extract_media_dedups_identical_image_and_thumbnail() -> None:
+    """Some embeds set image and thumbnail to the same URL; only emit one ref."""
+    embed = _fake_embed(
+        image_url="https://cdn/same.jpg",
+        thumbnail_url="https://cdn/same.jpg",
+    )
+    refs = extract_media(_fake_msg(embeds=[embed]))
+    image_urls = [r.image_url for r in refs if r.image_url is not None]
+    assert image_urls == ["https://cdn/same.jpg"]
+
+
+def test_extract_media_surfaces_embed_video_url_as_text_reference() -> None:
+    """We can't process video frames but knowing there's a video at all helps
+    Claude form a better take ('this is a video post' vs 'this is just a still')."""
+    embed = _fake_embed(
+        title="some clip",
+        image_url="https://cdn/cover.jpg",
+        video_url="https://cdn/clip.mp4",
+    )
+    refs = extract_media(_fake_msg(embeds=[embed]))
+    assert any(r.kind == "video" and "clip.mp4" in r.label for r in refs)
 
 
 # ---- recent_image_urls -----------------------------------------------------------
