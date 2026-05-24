@@ -18,12 +18,14 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
+    # Write across the board so the /order pipeline can author PRs, push branches,
+    # comment on issues, and close them when an order ships.
     permissions:
-      contents: read
-      pull-requests: read
-      issues: read
+      contents: write
+      pull-requests: write
+      issues: write
       id-token: write
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read  # read-only is enough — we only consume CI results, never trigger workflows
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
