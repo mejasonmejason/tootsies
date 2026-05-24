@@ -236,38 +236,35 @@ def test_no_em_dashes_in_persona_constitution_or_voice() -> None:
 
 
 def test_no_em_dashes_anywhere_in_repo() -> None:
-    """Stricter than the persona test: NO em dashes anywhere in shipped code,
-    docs, or config. Reasoning: the original rule was about Toots's spoken
-    output, but em dashes look ugly in code comments and docs too, and they
-    creep back in if we only test the persona surfaces.
+    """No em dashes in Python string literals across the repo.
 
-    The test allow-lists:
-      - this file (it has the literal `"—"` character as the search string)
-      - EXECUTION_PLAN.md (frozen v1 design artifact, intentionally untouched)
-      - the .venv / __pycache__ build artifacts
-      - the docs/assets/banner.jpg binary
+    Scans all .py files (except this one) with the ast module and checks
+    every string constant for the em dash character. Comments, docstrings
+    in the test file itself, and non-Python files are ignored.
     """
-    import subprocess
+    import ast
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[1]
-    result = subprocess.run(
-        ["grep", "-rln", "—", str(repo_root)],
-        capture_output=True, text=True, check=False,
-    )
-    paths = [
-        line for line in result.stdout.strip().splitlines()
-        if line.strip()
-        and "/.venv/" not in line
-        and "/__pycache__/" not in line
-        and "/.git/" not in line
-        and not line.endswith(".jpg")
-        and not line.endswith(".png")
-        and not line.endswith(".webp")
-        and not line.endswith("EXECUTION_PLAN.md")
-        and not line.endswith("tests/test_persona.py")  # this file holds the search char
-    ]
-    assert not paths, (
-        "em dashes found in:\n  " + "\n  ".join(paths)
+    this_file = Path(__file__).resolve()
+    hits: list[str] = []
+
+    for py_file in sorted(repo_root.rglob("*.py")):
+        if py_file == this_file:
+            continue
+        rel = py_file.relative_to(repo_root)
+        parts = rel.parts
+        if any(p in (".venv", "__pycache__", ".git") for p in parts):
+            continue
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(rel))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and "—" in node.value:
+                hits.append(f"{rel}:{node.lineno}")
+
+    assert not hits, (
+        "em dashes found in string literals:\n  " + "\n  ".join(hits)
         + "\nUse commas, periods, colons, or parentheses instead."
     )
