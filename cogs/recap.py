@@ -15,6 +15,7 @@ from utils.events import emit
 from utils.feeds import (
     channel_dead_diagnostic,
     format_for_prompt,
+    hot_urls,
     is_channel_dead,
     recent_image_urls,
     recent_messages,
@@ -107,9 +108,14 @@ class Recap(commands.Cog):
             else:
                 blob = format_for_prompt(msgs, include_reactions=True)
                 # Surface recent images to recap too so Toots can name the meme that
-                # got the reactions, not just say "an image had reactions".
+                # got the reactions. Now reaction-ranked, not strictly chronological.
                 image_urls = recent_image_urls(msgs, limit=8)
-                line = await self.bot.claude.recap(channel.name, blob, image_urls=image_urls)
+                # Surface popular URLs separately so Toots is explicitly nudged to
+                # OPEN them (fixes the "can't peep what's at the link" failure mode).
+                url_list = hot_urls(msgs, limit=8)
+                line = await self.bot.claude.recap(
+                    channel.name, blob, image_urls=image_urls, hot_urls=url_list,
+                )
         except Exception as exc:
             log.exception("recap failed")
             emit(

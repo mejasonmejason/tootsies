@@ -206,6 +206,7 @@ class ClaudeClient:
         channel_name: str,
         messages_blob: str,
         image_urls: list[str] | None = None,
+        hot_urls: list[tuple[str, int, str]] | None = None,
     ) -> str:
         """Summarize a channel's recent activity with spice.
 
@@ -216,7 +217,23 @@ class ClaudeClient:
         `image_urls` lets Toots actually see the memes/screenshots being reacted to,
         so the recap can name the joke rather than just say "everyone reacted to an
         image".
+
+        `hot_urls` is a list of (url, reaction_count, posting_author) tuples
+        surfaced from the channel content. Toots is explicitly instructed to OPEN
+        those URLs via web_search rather than punt with "can't peep what's there"
+        — that was the old failure mode in link-heavy channels.
         """
+        hot_urls_block = ""
+        if hot_urls:
+            lines = [
+                f"  - {url}  (posted by {author}, {rxn} reaction(s))"
+                for url, rxn, author in hot_urls
+            ]
+            hot_urls_block = (
+                "\n\nLINKS THE ROOM SHARED (open these via web_search before recapping; "
+                "the higher the reaction count, the more it matters):\n" + "\n".join(lines)
+            )
+
         system_extra = (
             "TASK: Recap the recent vibe in this channel. Weight reactions. Be spicy but kind. "
             "If it's dead, say so honestly with a quip. ~140 chars.\n"
@@ -227,10 +244,19 @@ class ClaudeClient:
             "'room is buzzing about the lakers losing 105-110 to denver, AD dropped 32'. "
             "Don't search for vibes or in-jokes, only for verifiable facts the room references.\n"
             "\n"
+            "LINKS: when URLs are shared (see LINKS THE ROOM SHARED below if present), OPEN them "
+            "by passing the URL to web_search as the query. Never tell the user 'i can't see "
+            "what's at the link' — the tool is right there. If a link 404s or the content is "
+            "unreachable, name what the URL points to (host, post id, etc.) and move on; don't "
+            "give up the whole recap.\n"
+            "\n"
             "IMAGES: if images are attached, the room may have been reacting to them. Reference "
             "what's IN the meme/screenshot when relevant, not just that an image exists."
         )
-        user = f"Channel: #{channel_name}\n\nMessages (most recent last):\n{messages_blob}"
+        user = (
+            f"Channel: #{channel_name}\n\nMessages (most recent last):\n"
+            f"{messages_blob}{hot_urls_block}"
+        )
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],

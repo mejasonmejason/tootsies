@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -80,20 +81,61 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
 
 
 def recent_image_urls(messages: list[discord.Message], limit: int = 3) -> list[str]:
-    """Image URLs from the N most-recent messages, for Claude vision.
+    """Image URLs ranked by relevance (reaction count) then recency.
 
     Smart-cap so we don't fan out vision blocks on every call. Vision tokens
     are pricier than text and Anthropic charges a fixed overhead per image,
-    so we cap aggressively. Walks newest-first; stops once we have `limit`.
+    so we cap aggressively.
+
+    Ranking: messages with reactions come first (highest count first),
+    then messages with no reactions filled in most-recent first. The reasoning:
+    if the room reacted to it, it's almost certainly more relevant to /recap
+    or /ask than something nobody engaged with — even if older.
     """
-    out: list[str] = []
-    for msg in reversed(messages):
+    candidates: list[tuple[int, datetime, str]] = []
+    for msg in messages:
+        reaction_count = sum(r.count for r in msg.reactions) if msg.reactions else 0
         for ref in extract_media(msg):
             if ref.image_url is not None:
-                out.append(ref.image_url)
-                if len(out) >= limit:
-                    return out
-    return out
+                candidates.append((reaction_count, msg.created_at, ref.image_url))
+                break  # one image per message; avoids one viral message hogging the cap
+    # Sort: reactions DESC, then recency DESC.
+    candidates.sort(key=lambda item: (-item[0], -item[1].timestamp()))
+    return [url for _, _, url in candidates[:limit]]
+
+
+# Cheap URL detector for picking out bare links in message text. Discord auto-
+# unfurls many links into rich embeds (which we capture separately in
+# extract_media), but plenty of sites either block the unfurl or just produce
+# a stripped embed; the bare URL is the only signal we have.
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def hot_urls(
+    messages: list[discord.Message], limit: int = 8,
+) -> list[tuple[str, int, str]]:
+    """URLs from message content, ranked by reactions then recency.
+
+    Returns (url, reaction_count, posting_author_display_name) tuples. Used to
+    surface "here are the links the room actually engaged with" in /recap
+    prompts so Toots can decide which ones to actually open.
+    """
+    out: list[tuple[int, datetime, str, str]] = []
+    seen: set[str] = set()
+    for msg in messages:
+        if not msg.content:
+            continue
+        reaction_count = sum(r.count for r in msg.reactions) if msg.reactions else 0
+        author_name = getattr(msg.author, "display_name", "?")
+        for url in _URL_RE.findall(msg.content):
+            # Strip trailing punctuation that's almost always not part of the URL.
+            url = url.rstrip(").,;:!?'\"")
+            if url in seen:
+                continue
+            seen.add(url)
+            out.append((reaction_count, msg.created_at, url, author_name))
+    out.sort(key=lambda item: (-item[0], -item[1].timestamp()))
+    return [(url, rxn, name) for rxn, _, url, name in out[:limit]]
 
 
 async def recent_messages(

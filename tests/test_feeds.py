@@ -12,6 +12,7 @@ from utils.feeds import (
     channel_dead_diagnostic,
     extract_media,
     format_for_prompt,
+    hot_urls,
     is_channel_dead,
     recent_image_urls,
 )
@@ -23,14 +24,27 @@ def _fake_msg(
     attachments: list[object] | None = None,
     embeds: list[object] | None = None,
     reactions: list[object] | None = None,
+    created_at: object | None = None,
 ) -> MagicMock:
+    """Build a fake discord.Message with sane defaults.
+
+    `created_at` defaults to "now" so reaction-weighted sorting falls back to
+    recency tie-breakers consistently in tests that don't care about timestamps.
+    """
+    from datetime import UTC, datetime
+
     msg = MagicMock(spec=discord.Message)
     msg.content = content
     msg.author = SimpleNamespace(display_name=display_name, bot=False)
     msg.attachments = attachments or []
     msg.embeds = embeds or []
     msg.reactions = reactions or []
+    msg.created_at = created_at or datetime.now(UTC)
     return msg
+
+
+def _fake_reaction(count: int) -> object:
+    return SimpleNamespace(count=count)
 
 
 def _fake_attachment(filename: str, content_type: str, size: int, url: str) -> object:
@@ -118,13 +132,64 @@ def test_extract_media_falls_back_to_thumbnail_when_no_image() -> None:
 # ---- recent_image_urls -----------------------------------------------------------
 
 
-def test_recent_image_urls_walks_newest_first_and_caps() -> None:
-    """`messages` is oldest-first (per recent_messages docstring); we walk reverse."""
-    older = _fake_msg(attachments=[_fake_attachment("a.png", "image/png", 1000, "url-A")])
-    middle = _fake_msg(attachments=[_fake_attachment("b.png", "image/png", 1000, "url-B")])
-    newest = _fake_msg(attachments=[_fake_attachment("c.png", "image/png", 1000, "url-C")])
+def test_recent_image_urls_prefers_reacted_messages_over_recency() -> None:
+    """A reacted-to image beats the most recent one with no reactions. This is the
+    correctness fix: if the room engaged with it, it's more relevant to recap/ask.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    old_reacted = _fake_msg(
+        attachments=[_fake_attachment("hit.png", "image/png", 1000, "url-HIT")],
+        reactions=[_fake_reaction(7)],
+        created_at=now - timedelta(hours=20),
+    )
+    newest_silent = _fake_msg(
+        attachments=[_fake_attachment("meh.png", "image/png", 1000, "url-MEH")],
+        created_at=now,
+    )
+    out = recent_image_urls([old_reacted, newest_silent], limit=2)
+    assert out == ["url-HIT", "url-MEH"]
+
+
+def test_recent_image_urls_falls_back_to_recency_with_no_reactions() -> None:
+    """Tie-break: when nothing's reacted-to, the original newest-first behavior holds."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    older = _fake_msg(
+        attachments=[_fake_attachment("a.png", "image/png", 1000, "url-A")],
+        created_at=now - timedelta(hours=3),
+    )
+    middle = _fake_msg(
+        attachments=[_fake_attachment("b.png", "image/png", 1000, "url-B")],
+        created_at=now - timedelta(hours=1),
+    )
+    newest = _fake_msg(
+        attachments=[_fake_attachment("c.png", "image/png", 1000, "url-C")],
+        created_at=now,
+    )
     out = recent_image_urls([older, middle, newest], limit=2)
     assert out == ["url-C", "url-B"]
+
+
+def test_recent_image_urls_ranks_within_reacted_bucket_by_count() -> None:
+    """Higher reaction count wins within the reacted-to bucket."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    medium = _fake_msg(
+        attachments=[_fake_attachment("m.png", "image/png", 1000, "url-MED")],
+        reactions=[_fake_reaction(3)],
+        created_at=now,
+    )
+    viral = _fake_msg(
+        attachments=[_fake_attachment("v.png", "image/png", 1000, "url-VIRAL")],
+        reactions=[_fake_reaction(20)],
+        created_at=now - timedelta(hours=10),
+    )
+    out = recent_image_urls([medium, viral], limit=2)
+    assert out == ["url-VIRAL", "url-MED"]
 
 
 def test_recent_image_urls_empty_when_no_images() -> None:
@@ -136,6 +201,55 @@ def test_recent_image_urls_skips_video_only_messages() -> None:
     img = _fake_msg(attachments=[_fake_attachment("i.png", "image/png", 1000, "url-I")])
     out = recent_image_urls([vid, img], limit=5)
     assert out == ["url-I"]
+
+
+# ---- hot_urls --------------------------------------------------------------------
+
+
+def test_hot_urls_extracts_from_message_content() -> None:
+    msg = _fake_msg(content="check this https://x.com/foo/123 fire", display_name="gaza")
+    out = hot_urls([msg])
+    assert out == [("https://x.com/foo/123", 0, "gaza")]
+
+
+def test_hot_urls_ranks_by_reaction_count() -> None:
+    silent = _fake_msg(content="https://a.com", display_name="alice")
+    hyped = _fake_msg(
+        content="https://b.com", display_name="bob", reactions=[_fake_reaction(15)],
+    )
+    out = hot_urls([silent, hyped])
+    assert out[0] == ("https://b.com", 15, "bob")
+    assert out[1] == ("https://a.com", 0, "alice")
+
+
+def test_hot_urls_strips_trailing_punctuation() -> None:
+    """URLs at end of sentences shouldn't carry the period/comma along."""
+    msg = _fake_msg(content="big take here: https://x.com/foo, agree?")
+    out = hot_urls([msg])
+    assert out[0][0] == "https://x.com/foo"
+
+
+def test_hot_urls_dedups_repeated_urls() -> None:
+    msg1 = _fake_msg(content="https://same.com")
+    msg2 = _fake_msg(content="https://same.com again")
+    out = hot_urls([msg1, msg2])
+    assert len(out) == 1
+
+
+def test_hot_urls_respects_limit() -> None:
+    msgs: list[discord.Message] = [
+        _fake_msg(content=f"https://site-{i}.com") for i in range(20)
+    ]
+    out = hot_urls(msgs, limit=5)
+    assert len(out) == 5
+
+
+def test_hot_urls_ignores_messages_with_no_urls() -> None:
+    msg1 = _fake_msg(content="just a comment")
+    msg2 = _fake_msg(content="real link https://hot.com")
+    out = hot_urls([msg1, msg2])
+    assert len(out) == 1
+    assert out[0][0] == "https://hot.com"
 
 
 # ---- format_for_prompt -----------------------------------------------------------
