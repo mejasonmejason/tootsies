@@ -1,0 +1,22 @@
+{
+  "thread": {
+    "$type": "app.bsky.feed.defs#threadViewPost",
+    "post": {
+      "uri": "at://did:plc:abc/app.bsky.feed.post/xyz",
+      "cid": "bafyabc",
+      "author": {
+        "did": "did:plc:abc",
+        "handle": "danpriceseattle.bsky.social",
+        "displayName": "Dan Price"
+      },
+      "record": {
+        "$type": "app.bsky.feed.post",
+        "text": "billionaires don't pay payroll tax on income over $168k. fix that one rule, social security is solvent forever.",
+        "createdAt": "2026-05-23T14:32:00.000Z"
+      },
+      "likeCount": 8421,
+      "repostCount": 1840,
+      "replyCount": 277
+    }
+  }
+}

@@ -31,6 +31,7 @@ from utils.feeds import (
     recent_messages,
 )
 from utils.gates import require_configured
+from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
 from utils.permissions import can_send_in
 from utils.rate_limits import check_server_limit, consume_server
@@ -174,6 +175,12 @@ class Discourse(commands.Cog):
         # pattern we use for /recap (commit 8f00964 + 3c18f88).
         image_urls = recent_image_urls(all_feed_msgs, limit=8)
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
+        # Pre-fetch enriched content for known social platforms. The Discord
+        # embed for an X/TikTok/Reddit link is just the first ~200 chars;
+        # fxtwitter/tikwm/oembed/reddit-json give us the full text + counts +
+        # comments. Failures fall through to web_search per URL.
+        enriched_map = await enrich_batch([u for u, _, _, _ in feed_hot_urls])
+        enriched = [v for v in enriched_map.values() if v is not None]
 
         # State-aware dedup: timestamped recent topics for this category. Manual /discourse
         # must always post (the user explicitly asked), so must_post=True instructs Claude to
@@ -189,6 +196,7 @@ class Discourse(commands.Cog):
         line = await self.bot.claude.discourse(
             category, sources_blob, recent_with_timestamps=recent_blob, must_post=True,
             image_urls=image_urls, hot_urls=feed_hot_urls,
+            enriched_links=enriched,
         )
 
         if not line or line.strip().upper() == "EMPTY":

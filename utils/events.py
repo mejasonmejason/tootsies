@@ -49,6 +49,9 @@ Known kinds (keep this list in sync with what's emitted):
       local_hour_et, mood
   - chimein_posted     : chime-in actually posted a take
       guild_id, channel_id, score, vibe, hook, mood
+  - link_enrich        : per-URL social-link enrichment attempt (utils/link_enrich.py)
+      platform (twitter|tiktok|youtube|reddit|bluesky), url_host, ok,
+      duration_ms, cache_hit
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.

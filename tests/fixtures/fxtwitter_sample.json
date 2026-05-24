@@ -1,0 +1,19 @@
+{
+  "code": 200,
+  "tweet": {
+    "text": "iceman tracklist drops friday. been waiting on this one",
+    "author": {
+      "name": "Champagne Papi",
+      "screen_name": "champagnepapi"
+    },
+    "likes": 127000,
+    "retweets": 18000,
+    "replies": 4200,
+    "views": 5400000,
+    "media": {
+      "all": [
+        {"url": "https://pbs.twimg.com/media/example1.jpg", "type": "photo"}
+      ]
+    }
+  }
+}

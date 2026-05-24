@@ -21,6 +21,7 @@ from anthropic import AsyncAnthropic
 
 from persona import system_prompt
 from utils.events import emit
+from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 
 log = logging.getLogger(__name__)
 
@@ -402,6 +403,7 @@ class ClaudeClient:
         messages_blob: str,
         image_urls: list[str] | None = None,
         hot_urls: list[tuple[str, int, str, str]] | None = None,
+        enriched_links: list[EnrichedLink] | None = None,
     ) -> str:
         """Summarize a channel's recent activity with spice.
 
@@ -430,6 +432,10 @@ class ClaudeClient:
                 "of content it is even if the host is an embed-fixer like fxtwitter or "
                 "tnktok, those redirect to the canonical site):\n" + "\n".join(lines)
             )
+
+        enriched_block = ""
+        if enriched_links:
+            enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
 
         system_extra = (
             "TASK: Recap the recent vibe in this channel. Weight reactions.\n"
@@ -477,7 +483,7 @@ class ClaudeClient:
         )
         user = (
             f"Channel: #{channel_name}\n\nMessages (most recent last):\n"
-            f"{messages_blob}{hot_urls_block}"
+            f"{messages_blob}{hot_urls_block}{enriched_block}"
         )
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra,
@@ -497,6 +503,7 @@ class ClaudeClient:
         must_post: bool = True,
         image_urls: list[str] | None = None,
         hot_urls: list[tuple[str, int, str, str]] | None = None,
+        enriched_links: list[EnrichedLink] | None = None,
     ) -> str:
         """Generate a discourse-starter post pulling from feeds + web.
 
@@ -542,6 +549,10 @@ class ClaudeClient:
                 "wrapped in an embed-fixer like fxtwitter or tnktok):\n" + "\n".join(lines)
             )
 
+        enriched_block = ""
+        if enriched_links:
+            enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
+
         system_extra = (
             "TASK: Pick the freshest, most talk-worthy thread from these "
             "sources and post one starter in your voice. Hot take welcome. "
@@ -562,7 +573,7 @@ class ClaudeClient:
             "STATE: Bake the current state of the topic into your line so we "
             "can tell later if it's the same beat or a new one (e.g. 'lakers "
             "vs nuggets r2, series tied 1-1', not just 'lakers')."
-            f"{hot_urls_block}{dedup_clause}"
+            f"{hot_urls_block}{enriched_block}{dedup_clause}"
             + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         user = f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
@@ -679,6 +690,7 @@ class ClaudeClient:
         buffer_blob: str,
         hook: str,
         image_urls: list[str] | None = None,
+        enriched_links: list[EnrichedLink] | None = None,
     ) -> str:
         """Generate the actual chime-in take given the buffer + scored hook.
 
@@ -720,7 +732,10 @@ class ClaudeClient:
             "(\"@gaza you're cooking with that take\")."
             + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
-        user = f"Buffer (oldest first):\n{buffer_blob}"
+        enriched_block = ""
+        if enriched_links:
+            enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
+        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}"
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
