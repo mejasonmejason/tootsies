@@ -14,7 +14,20 @@ Known kinds (keep this list in sync with what's emitted):
   - command            : slash command invocation (utils/metrics.py)
       cmd, user_id, guild_id, duration_ms, ok, error
   - claude_api         : Anthropic API call (claude_client.py)
-      model, purpose, input_tokens, output_tokens, duration_ms, stop_reason
+      Required: model, purpose, duration_ms, ok
+      On success: input_tokens, output_tokens, stop_reason
+      Diagnostics (added to debug hallucinations + tool-use behavior):
+        response_preview     first ~200 chars of model output
+        response_chars       full char count of output
+        tool_calls           list of {name, query} dicts for each tool_use
+                             block in the response (None if no tools fired)
+        tool_call_count      int count of tool invocations this call
+        had_tools_available  bool, did we even pass tools= to the call
+      The diagnostics let log-monitors answer "did web_search fire on a
+      sports claim?" without re-running the call. tool_call_count=0 on a
+      hallucinated mood_post means the model ignored the VERIFY rule;
+      tool_call_count>=1 but the output is still wrong means the search
+      returned bad data.
   - order_state        : /order pipeline state change (cogs/order.py)
       order_id, issue_number, guild_id, user_id, from, to
   - rate_limit_hit     : a user or server bumped a daily cap (utils/rate_limits.py)

@@ -296,10 +296,32 @@ class ClaudeClient:
 
         duration_ms = int((time.monotonic() - start) * 1000)
         text_parts: list[str] = []
+        # Tool-use diagnostics: track every tool the model invoked so we can
+        # debug "why did mood_post say jimmy butler is on the heat" in the
+        # future. If web_search wasn't called for a sports claim, that's the
+        # bug. If it WAS called and returned nothing useful, that's a different
+        # bug. The structured event gives us the answer without re-running.
+        tool_calls: list[dict[str, Any]] = []
         for block in resp.content:
-            if getattr(block, "type", None) == "text":
+            btype = getattr(block, "type", None)
+            if btype == "text":
                 text_parts.append(block.text)
+            elif btype in ("tool_use", "server_tool_use"):
+                # web_search blocks carry the query in `input.query`. Other
+                # tools may have different shapes; just capture name + a brief
+                # input summary, keep it lean.
+                tool_input = getattr(block, "input", {}) or {}
+                tool_calls.append({
+                    "name": getattr(block, "name", "unknown"),
+                    "query": str(tool_input.get("query", ""))[:120] if isinstance(tool_input, dict) else "",
+                })
         text = "".join(text_parts).strip()
+
+        # Truncated output preview for the log-monitor / dashboards. The full
+        # output is public (it's what the user/channel saw), so logging a
+        # snippet is fine. 200 chars matches the persona's tweet-length
+        # ceiling so the preview shows MOST outputs in full.
+        response_preview = text[:200] if text else ""
 
         emit(
             "claude_api",
@@ -310,6 +332,11 @@ class ClaudeClient:
             duration_ms=duration_ms,
             stop_reason=resp.stop_reason,
             ok=ok,
+            response_preview=response_preview,
+            response_chars=len(text),
+            tool_calls=tool_calls if tool_calls else None,
+            tool_call_count=len(tool_calls),
+            had_tools_available=bool(tools),
         )
 
         return ClaudeResult(
@@ -597,13 +624,25 @@ class ClaudeClient:
             "culture, sports, music, movies, food. No question stack, one "
             "prompt.\n"
             "STATE: Bake the current state of the topic into your line (e.g. "
-            "'lakers vs nuggets r2, series 1-1', not just 'lakers')."
+            "'lakers vs nuggets r2, series 1-1', not just 'lakers').\n"
+            "\n"
+            "VERIFY BEFORE YOU POST. Your training data is months stale and "
+            "sports/news drift the fastest. If your line makes a SPECIFIC "
+            "real-world claim (a game result, a roster spot, a trade, a "
+            "score, a stat, a news event, a release date), use web_search "
+            "first to verify it. Don't invent. If web_search returns nothing "
+            "current you can verify, pick a different angle or return EMPTY "
+            "(literally the word EMPTY) to skip this slot. A hallucinated "
+            "sports result (e.g. 'jimmy butler on the heat' when he's been "
+            "traded) goes out PUBLIC and damages credibility, way worse than "
+            "skipping a tick."
             f"{dedup_clause}"
             + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         user = "Anything good. Surprise me."
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
             max_tokens=MAX_TOKENS_POST,
             purpose="mood_scheduled",
         )
