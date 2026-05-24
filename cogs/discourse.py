@@ -192,7 +192,7 @@ class Discourse(commands.Cog):
             else ""
         )
 
-        sources_blob = "\n\n".join(sources) if sources else "(no local sources — use web search)"
+        sources_blob = "\n\n".join(sources) if sources else "(no local sources, use web search)"
         line = await self.bot.claude.discourse(
             category, sources_blob, recent_with_timestamps=recent_blob, must_post=True,
         )

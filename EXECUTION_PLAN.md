@@ -33,7 +33,8 @@ auto-rollback to previous deploy + post error in #bot-logs
 ---
 ## 2. Identity & persona
 **Toots** — late 20s, hip city girl bartending the hottest spot in town. Sharp, plugged in, opinionated. Knows hip-hop, NBA, cinema, pop culture. Drake fan (smart, not blind). Engaging > correct. Sharp ≠ mean.
-**Voice** is applied to all Claude-powered output: command responses, status updates, ambient scheduled posts, error messages, and rate-limit deflections. Plumbing (PR titles, env var names, logs) stays plain.
+**No em dashes.** Toots never uses em dashes in her output. Use commas, periods, or parentheses instead. This applies to every Claude-generated response (`/ask`, `/recap`, `/discourse`, deflections, status messages, scheduled posts).
+**Voice** is applied to all Claude-powered output: command responses, status updates, scheduled `/discourse` posts, error messages, and rate-limit deflections. Plumbing (PR titles, env var names, logs) stays plain.
 **Mentions:** @Toots invokes the same backend as `/ask` (shared 10/day limit). Mention can be anywhere in the message ("ayo @Toots fr" works). **Rules for responding:** message must mention only Toots (no other users), no @everyone/@here, author isn't a bot, not a DM. For replies, the auto-mention from Discord's "Reply" feature doesn't count — user must explicitly re-mention Toots. When a user hits the limit, Toots deflects with a quip ("off the clock for you tonight, try me tomorrow") rather than a sterile error.
 ---
 ## 3. Command surface (day-one launch)
@@ -42,8 +43,7 @@ auto-rollback to previous deploy + post error in #bot-logs
 |---|---|---|
 | `/ask <question>` | Reads recent messages from public channels + web search when time-sensitive. 140-char response, ≤1 link, Toots voice. Channel context (last ~30 messages). Single-response, no thread continuation in v1. **Also triggered by @Toots mentions anywhere in a message** ("ayo @Toots fr" works), as long as only Toots is mentioned. | 20/day per user (shared between `/ask` and mentions) |
 | `/recap period:[1h\|today]` | Summarizes current channel for the period. Reaction-weighted prioritization + spice. Deflects with a quip if channel is dead. ~140 chars. | 20/day per user |
-| `/discourse category:[pop\|sports\|cinema\|hiphop\|nba\|custom]` | Manual post — Toots drops a discourse starter into the channel where the command was run. Pulls from configured feed channels + current channel's last hour + web. Falls back to persona quip if all sources dry. ~140 chars, optional 1 link. | 20/day server-wide |
-| `/discourse mood:[chill\|yaps\|off\|status]` | Controls scheduled discourse posting (posts land in the configured discourse channel, not the invoked one). Chill = 2/day (~12pm, ~7pm PT). Yaps = 4/day (~10am, ~2pm, ~6pm, ~10pm PT). Default chill on first deploy. | — |
+| `/discourse` | Two modes: **manual** = `/discourse category:[pop\|sports\|cinema\|hiphop\|nba\|custom]` pulls from configured feeds + current channel's last hour + web, posts in invoked channel. **Schedule** = `/discourse mood:[chill\|yaps\|off\|status]` sets automated posting cadence to the configured discourse channel. Chill = 2/day (~12pm, ~7pm PT). Yaps = 4/day (~10am, ~2pm, ~6pm, ~10pm PT). Default chill on first deploy. Falls back to persona quip if all sources dry. ~140 chars, optional 1 link. | 20/day server-wide on manual invocations. Mood changes unlimited. |
 ### Mods only (@Promoters / @Bouncers / @Janitors)
 | Command | Behavior | Limits |
 |---|---|---|
@@ -235,8 +235,8 @@ discourse_history — guild_id, category, topic_summary, created_at
                    (72h retention per category; topic_summary includes
                     current state, e.g. "lakers vs nuggets r2, series 1-1")
 audit_log        — guild_id, actor_id, action, target, before, after, timestamp
-discourse_schedule — guild_id, mode, last_changed_by, last_changed_at,
-                     posts_today, last_post_at
+discourse_schedule — guild_id, mood (chill/yaps/off), last_changed_by,
+                     last_changed_at, posts_today, last_post_at
 ```
 ---
 ## 8. Environment variables (Railway)

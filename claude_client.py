@@ -134,7 +134,7 @@ class ClaudeClient:
             "If a topic has materially evolved since the last post (new score, new news, new beef), "
             "going again is fine. If nothing's changed, "
             + (
-                "pick a DIFFERENT angle or category — the user asked, you must post something."
+                "pick a DIFFERENT angle or category. the user asked, you must post something."
                 if must_post
                 else "return EMPTY (literally the word EMPTY, nothing else) so we skip this slot."
             )
@@ -174,7 +174,7 @@ class ClaudeClient:
         )
         system_extra = (
             "TASK: Drop one short conversation-starter into the chat. Pop culture, sports, music, "
-            "movies, food. Your voice. ~140 chars. No question stack — one prompt.\n"
+            "movies, food. Your voice. ~140 chars. No question stack, one prompt.\n"
             "STATE: Bake the current state of the topic into your line (e.g. 'lakers vs nuggets r2, "
             "series 1-1', not just 'lakers')."
             f"{dedup_clause}"
@@ -207,17 +207,17 @@ class ClaudeClient:
             "TASK: You are reviewing a /order request before it goes to the build pipeline.\n"
             "Classify into ONE of three buckets:\n"
             "\n"
-            "REJECT — drop the request entirely. Use when:\n"
+            "REJECT: drop the request entirely. Use when:\n"
             "  - it asks for moderation actions (kick/ban/mute/delete messages/role changes)\n"
             "  - it asks the bot to DM users or post outside this Discord\n"
             "  - it violates the constitution (NSFW, hate, doxxing, fabricated quotes, impersonation)\n"
             "  - it's incoherent or has no actionable code change\n"
             "  - it asks for medical / legal / financial advice features\n"
             "\n"
-            "PLUMBING — the request would require editing a protected path. Use when it would touch:\n"
+            "PLUMBING: the request would require editing a protected path. Use when it would touch:\n"
             "  - constitution.py (the constitution itself)\n"
             "  - persona.py CORE voice (the system prompt that defines Toots)\n"
-            "    EXCEPTION: voice-library *additions* in utils/voice.py are FINE — that's an ALLOW.\n"
+            "    EXCEPTION: voice-library *additions* in utils/voice.py are FINE, that's an ALLOW.\n"
             "    Example: 'add a new quip for when someone asks toots to dance' → ALLOW.\n"
             "  - .github/ (CI/CD workflows)\n"
             "  - Dockerfile, railway.toml, Procfile\n"
@@ -228,7 +228,7 @@ class ClaudeClient:
             "  - deleting from requirements.txt or removing required vars from .env.example\n"
             "    EXCEPTION: adding new deps / new optional vars is FINE → ALLOW.\n"
             "\n"
-            "ALLOW — anything else, including '/order remove /commandname' and the exceptions above.\n"
+            "ALLOW: anything else, including '/order remove /commandname' and the exceptions above.\n"
             "\n"
             "Respond on ONE line in EXACTLY this format:\n"
             "  ALLOW: <one-line summary of what to build>\n"

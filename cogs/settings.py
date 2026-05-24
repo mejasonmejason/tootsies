@@ -185,7 +185,7 @@ class MenuView(discord.ui.View):
         e = discord.Embed(
             title="toots' menu",
             description=(
-                "pick the channels and roles below — i pre-selected my best guesses, "
+                "pick the channels and roles below. i pre-selected my best guesses, "
                 "tweak whatever's wrong. then hit **confirm & save**."
             ),
             color=0x9b59b6,
@@ -193,12 +193,12 @@ class MenuView(discord.ui.View):
         e.add_field(
             name="what each one means",
             value=(
-                "**bot-logs channel** — where i narrate `/order` status (🟡→🍳→✅).\n"
-                "**discourse channel** — where scheduled discourse posts land.\n"
-                "**mod roles** — who can run `/order`, `/close`, `/open`, `/undo`, `/menu`.\n"
-                "**feed channels** — read-only sources i pull from for `/discourse` "
+                "**bot-logs channel**: where i narrate `/order` status (🟡→🍳→✅).\n"
+                "**discourse channel**: where scheduled discourse posts land.\n"
+                "**mod roles**: who can run `/order`, `/close`, `/open`, `/undo`, `/menu`.\n"
+                "**feed channels**: read-only sources i pull from for `/discourse` "
                 "(X feeds, news, alerts, etc.).\n"
-                "**mood** — chill (2/day), yaps (4/day), or off. Cycles on click."
+                "**mood**: chill (2/day), yaps (4/day), or off. Cycles on click."
             ),
             inline=False,
         )
@@ -371,7 +371,7 @@ class _FeedSelect(discord.ui.ChannelSelect):
         self, parent: MenuView, defaults: list[discord.SelectDefaultValue]
     ) -> None:
         super().__init__(
-            placeholder="feed channels (X feeds, news — optional)",
+            placeholder="feed channels (X feeds, news, optional)",
             min_values=0, max_values=25, row=3,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,

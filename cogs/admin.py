@@ -24,7 +24,7 @@ class Admin(commands.Cog):
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="close", description="close the kitchen — no new /order requests.")
+    @app_commands.command(name="close", description="close the kitchen. no new /order requests.")
     async def close(self, interaction: discord.Interaction) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -35,7 +35,7 @@ class Admin(commands.Cog):
         )
         await interaction.response.send_message("kitchen closed. no more orders tonight.")
 
-    @app_commands.command(name="open", description="open the kitchen — accept /order again.")
+    @app_commands.command(name="open", description="open the kitchen. accept /order again.")
     async def open(self, interaction: discord.Interaction) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -55,14 +55,14 @@ class Admin(commands.Cog):
         cfg = self.bot.config
         if not cfg.railway_api_token:
             await interaction.response.send_message(
-                "no `RAILWAY_API_TOKEN` set — can't roll back from here. "
+                "no `RAILWAY_API_TOKEN` set, can't roll back from here. "
                 "do it from the railway dashboard for now.",
                 ephemeral=True,
             )
             return
         if not cfg.railway_service_id:
             await interaction.response.send_message(
-                "no `RAILWAY_SERVICE_ID` set — usually auto-injected on railway. "
+                "no `RAILWAY_SERVICE_ID` set. usually auto-injected on railway. "
                 "if you're running off-railway, set it explicitly.",
                 ephemeral=True,
             )

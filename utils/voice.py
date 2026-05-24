@@ -34,7 +34,7 @@ ORDER_REFUSED = [
 PLUMBING_TOUCHED = [
     "that's plumbing, regular. ask the architect.",
     "not my wrench. that one's the architect's call.",
-    "that's load-bearing — i don't touch the studs.",
+    "that's load-bearing, i don't touch the studs.",
 ]
 
 PIPELINE_RED = [
@@ -68,7 +68,7 @@ CHANNEL_DEAD = [
     "dead in here. what'd you eat tonight, make it interesting.",
     "absolutely nothing. you good? need a drink?",
     "two memes and a 'gm.' tell me something.",
-    "crickets. whatever you're avoiding by checking in here — go do that.",
+    "crickets. whatever you're avoiding by checking in here, go do that.",
     "your timeline's more active. what's going on with you?",
 ]
 

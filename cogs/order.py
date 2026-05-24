@@ -102,7 +102,7 @@ class Order(commands.GroupCog, name="order"):
             emoji = "🔧" if verdict == "plumbing" else "🚫"
             await bot_logs.post(
                 self.bot, self.bot.db, guild_id,
-                f"{emoji} **{verdict.title()}** — {interaction.user.mention}'s order rejected.\n"
+                f"{emoji} **{verdict.title()}**: {interaction.user.mention}'s order rejected.\n"
                 f"> {feature[:200]}\n**Reason:** {reason}",
                 level="milestones", verbosity=self.bot.config.bot_logs_verbosity,
             )
@@ -138,7 +138,7 @@ class Order(commands.GroupCog, name="order"):
         )
         await bot_logs.post(
             self.bot, self.bot.db, guild_id,
-            f"🟡 **Prepping** — order #{order.id} (issue #{issue_number}) from {interaction.user.mention}\n> {feature[:200]}",
+            f"🟡 **Prepping**: order #{order.id} (issue #{issue_number}) from {interaction.user.mention}\n> {feature[:200]}",
             level="milestones", verbosity=self.bot.config.bot_logs_verbosity,
         )
 
@@ -182,7 +182,7 @@ class Order(commands.GroupCog, name="order"):
             emoji = ORDER_STATUS_EMOJI[o.status]
             label = ORDER_STATUS_LABEL[o.status]
             ref = f"issue #{o.issue_number}" if o.issue_number else f"order {o.id}"
-            lines.append(f"{emoji} **{label}** · {ref} — {o.summary[:60]}")
+            lines.append(f"{emoji} **{label}** · {ref} · {o.summary[:60]}")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     # ---- /order retry -----------------------------------------------------------
@@ -199,7 +199,7 @@ class Order(commands.GroupCog, name="order"):
             return
         if order.status not in {OrderStatus.BURNT, OrderStatus.SENT_BACK}:
             await interaction.response.send_message(
-                f"that one's {ORDER_STATUS_LABEL[order.status].lower()} — can't retry.",
+                f"that one's {ORDER_STATUS_LABEL[order.status].lower()}, can't retry.",
                 ephemeral=True,
             )
             return
@@ -252,7 +252,7 @@ class Order(commands.GroupCog, name="order"):
             return
         if order.status in TERMINAL_STATUSES:
             await interaction.response.send_message(
-                f"already {ORDER_STATUS_LABEL[order.status].lower()} — nothing to cancel.",
+                f"already {ORDER_STATUS_LABEL[order.status].lower()}, nothing to cancel.",
                 ephemeral=True,
             )
             return

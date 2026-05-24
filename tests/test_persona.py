@@ -46,3 +46,31 @@ def test_system_prompt_composes_all_layers() -> None:
 def test_system_prompt_appends_extras() -> None:
     sp = system_prompt("TASK: testing extra")
     assert "TASK: testing extra" in sp
+
+
+def test_no_em_dashes_in_persona_constitution_or_voice() -> None:
+    """Toots never uses em dashes (see plan §2). This test fails loudly if one slips into
+    a place that affects her output: the constitution, persona, voice examples, or any
+    canned variant pool."""
+    from utils import voice
+
+    surfaces = {
+        "CONSTITUTION": CONSTITUTION,
+        "PERSONA_CORE": PERSONA_CORE,
+        "system_prompt()": system_prompt(),
+    }
+    for pool_name in dir(voice):
+        if pool_name.startswith("_"):
+            continue
+        attr = getattr(voice, pool_name)
+        if isinstance(attr, list) and all(isinstance(x, str) for x in attr):
+            surfaces[f"voice.{pool_name}"] = "\n".join(attr)
+        elif isinstance(attr, str):
+            surfaces[f"voice.{pool_name}"] = attr
+
+    offenders = {name: text for name, text in surfaces.items() if "—" in text}
+    assert not offenders, (
+        "em dashes found in Toots-output surfaces: "
+        + ", ".join(offenders.keys())
+        + ". Use commas, periods, or parentheses instead."
+    )
