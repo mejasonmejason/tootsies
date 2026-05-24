@@ -2,6 +2,41 @@
 
 All notable changes to Tootsies. Dates in PT.
 
+## [1.0.1] — 2026-05-24 (post-launch polish)
+
+A wave of UX, accuracy, and content-quality fixes shipped same-day as v1.0.0 based on running Toots against the actual server. No new commands.
+
+### `/menu` consolidation
+
+- **Mood control moved into `/menu`** as a cycling button. Removed the `mood:` parameter from `/discourse`, which now does one thing only: post a discussion starter.
+- **State-preservation bug fixed** — clicking the mood button no longer visually reverts the other dropdowns to their construction-time defaults. New `_refresh_select_defaults()` syncs each select's `default_values` to the user's current picks before any `edit_message` call.
+- **`/menu_view` removed** — `/menu` now loads saved settings from the DB and shows them as the prefill, making the separate view command redundant.
+
+### `/recap` accuracy
+
+- **Reaction-weighted image selection** — `recent_image_urls()` now ranks images by reaction count first, recency as tie-break. A viral image from yesterday outranks a brand-new "yo" with zero reactions. Reasoning: if the room engaged with it, it's almost certainly more relevant to summarize.
+- **Open the links the room shared** — new `hot_urls()` extracts URLs from message text, dedups, ranks by reactions + recency, and passes them into the `/recap` prompt as a "LINKS THE ROOM SHARED" block. System prompt explicitly tells Claude to OPEN those URLs via `web_search` rather than punt with "can't peep what's at the link" — which was the old failure mode in link-heavy channels.
+- **Source labels on fixer URLs** — `_classify_url()` recognizes embed-fixer hosts (fxtwitter, vxtwitter, tnktok, vxtiktok, ddinstagram, fxbsky, etc.) and labels them by canonical source (TikTok, X/Twitter, Instagram, Bluesky, YouTube, Reddit, Spotify, SoundCloud, Twitch, Tenor). So Toots knows what kind of content a tnktok URL points to even though she's never seen the host.
+- **Recap prompt rewritten for commentary, not summary.** New voice rules: *"GIVE A TAKE, don't just summarize. For social content, drop a take WITH personality — yas queen, she ate, this is sending me, he's washed."* Includes a "VOICE" section reminding her to match the room's energy and never moderate.
+- **`is_channel_dead` simplified** — only deflects when the channel is literally empty over the period (previously required 3+ messages of >5 chars each, which filtered out short chat, reactions, and link drops; in real channels that's everyone).
+
+### Tier 1 video support
+
+- **Multi-frame embed extraction** — `extract_media` now pulls BOTH `embed.image` and `embed.thumbnail` when both exist and differ. TikTok / Twitter video embeds often expose two different frames this way; more frames means better takes on what's actually in the clip.
+- **Video URL as text reference** — `embed.video.url` is surfaced as a `kind="video"` ref so Claude knows the embed points to motion content (vs treating the cover frame as the whole story). Anthropic vision still doesn't process motion — Tier 2 (audio transcription via Whisper + frame extraction via ffmpeg) filed as [#9](https://github.com/mejasonmejason/tootsies/issues/9) for v1.2.
+
+### Documentation + site
+
+- **GitHub Pages site live** at https://mejasonmejason.github.io/tootsies/ — single-page homepage built with jekyll-theme-cayman. Includes the rhinestone banner.
+- **Homepage rewritten for non-engineer mods** — opens with "meet toots" + three Toots-voice example interactions, plain-English command surface, house rules in friendly bullets. Technical content (algorithms, structured event catalog, source) tucked under "for engineers" at the bottom.
+
+### Bug fixes
+
+- `tootsies.events` no longer emits `"error": null` on successful commands (was causing false positives in "all errors" dashboard queries). `emit()` now strips any field whose value is `None` before serializing.
+- `.coverage` data file added to `.gitignore` (pytest-cov regenerates it on every run; should never be tracked).
+
+---
+
 ## [1.0.0] — 2026-05-24 (initial launch)
 
 ### Commands
@@ -76,14 +111,25 @@ All notable changes to Tootsies. Dates in PT.
 
 ## Unreleased
 
-See [GitHub Issues](https://github.com/mejasonmejason/tootsies/issues) for the v1.1 backlog. Top candidates:
+See [GitHub Issues](https://github.com/mejasonmejason/tootsies/issues) for the full backlog. Top v1.1 candidates:
 
 - **GIPHY gifs in replies** ([#2](https://github.com/mejasonmejason/tootsies/issues/2)) — Toots sends gifs when they land harder than words.
-- **Per-user `/ask` memory** — "I asked about Lakers yesterday, what's new?"
-- **`/stats` admin command** — reads `command_metrics` for in-Discord visibility.
-- **Cog test coverage push** — bring `cogs/*` from 25–36% to 60%+.
-- **AI code review pass on `/order` PRs** — second Claude reviews first Claude's PR.
-- **`/order` from screenshot** — vision parses a posted image into a spec.
-- **Thread-based `/ask`** — continue a conversation in a thread.
-- **Voting / leaderboards** — track members' hot-take wins.
-- **Real-time NBA scores tool** — balldontlie.io, no key needed.
+- **`/stats` admin command** ([#3](https://github.com/mejasonmejason/tootsies/issues/3)) — reads `command_metrics` for in-Discord visibility.
+- **Per-user `/ask` memory** ([#4](https://github.com/mejasonmejason/tootsies/issues/4)) — "I asked about Lakers yesterday, what's new?"
+- **AI code review pass on `/order` PRs** ([#5](https://github.com/mejasonmejason/tootsies/issues/5)) — second Claude reviews first Claude.
+- **`/order` from screenshot** ([#6](https://github.com/mejasonmejason/tootsies/issues/6)) — vision parses a posted image into a spec.
+- **Cog test coverage push** ([#7](https://github.com/mejasonmejason/tootsies/issues/7)) — bring `cogs/*` from 25–36% to 60%+, ratchet gate to 65%.
+- **Tootsies chips in** ([#8](https://github.com/mejasonmejason/tootsies/issues/8)) — spontaneous bartender takes layered over chat. Two-phase: opt-in per channel, then a learning loop on reception.
+
+### v1.2 candidates
+
+- **Video audio + multi-frame stills** ([#9](https://github.com/mejasonmejason/tootsies/issues/9)) — Whisper transcription + ffmpeg frame extraction so Toots can hear what's said in a video and see beyond the cover frame.
+
+### Deferred (per plan §13 v1.1)
+
+- Thread-based `/ask` conversations
+- Voting / leaderboards
+- Real-time NBA scores tool
+- Verzuz scoring system
+- Engagement analytics for mods
+- Game commands (`/coinflip`, `/8ball`, `/roll`, polls, etc.)
