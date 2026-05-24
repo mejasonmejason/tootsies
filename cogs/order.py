@@ -17,6 +17,7 @@ from discord.ext import commands
 
 from models import ORDER_STATUS_EMOJI, ORDER_STATUS_LABEL, TERMINAL_STATUSES, OrderStatus
 from utils import bot_logs, voice
+from utils.events import emit
 from utils.gates import require_configured
 from utils.github import issue_body_for_order
 from utils.metrics import track_command
@@ -83,8 +84,12 @@ class Order(commands.GroupCog, name="order"):
         # Pre-flight sanity check via Sonnet. Three-way: allow / plumbing / reject.
         try:
             verdict, reason = await self.bot.claude.preflight_order(feature)
-        except Exception:
+        except Exception as exc:
             log.exception("preflight failed")
+            emit(
+                "error", source="order_preflight", error=type(exc).__name__,
+                guild_id=guild_id, user_id=user_id,
+            )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
 
@@ -108,6 +113,10 @@ class Order(commands.GroupCog, name="order"):
                 f"> {feature[:200]}\n**Reason:** {reason}",
                 level="milestones", verbosity=self.bot.config.bot_logs_verbosity,
             )
+            emit(
+                "order_state",
+                guild_id=guild_id, user_id=user_id, **{"from": None, "to": verdict},
+            )
             return
 
         # File the order — DB row first so we have the ID for the issue body.
@@ -120,8 +129,12 @@ class Order(commands.GroupCog, name="order"):
         try:
             issue = await self.bot.gh.create_issue(title, body, labels=["order", "claude"])
             issue_number = int(issue["number"])
-        except Exception:
+        except Exception as exc:
             log.exception("github issue file failed")
+            emit(
+                "error", source="order_github_create", error=type(exc).__name__,
+                guild_id=guild_id, user_id=user_id, order_id=order.id,
+            )
             await self.bot.db.update_order(order.id, status=OrderStatus.BURNT,
                                            error_log="failed to file GitHub issue")
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
@@ -142,6 +155,12 @@ class Order(commands.GroupCog, name="order"):
             self.bot, self.bot.db, guild_id,
             f"🟡 **Prepping**: order #{order.id} (issue #{issue_number}) from {interaction.user.mention}\n> {feature[:200]}",
             level="milestones", verbosity=self.bot.config.bot_logs_verbosity,
+        )
+        emit(
+            "order_state",
+            order_id=order.id, issue_number=issue_number,
+            guild_id=guild_id, user_id=user_id,
+            **{"from": None, "to": "prepping"},
         )
 
     # ---- /order status ----------------------------------------------------------

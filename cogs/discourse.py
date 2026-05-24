@@ -27,7 +27,8 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from models import MoodMode
-from utils import voice
+from utils import bot_logs, voice
+from utils.events import emit
 from utils.feeds import format_for_prompt, recent_messages
 from utils.gates import require_configured
 from utils.metrics import track_command
@@ -143,8 +144,12 @@ class Discourse(commands.Cog):
         await interaction.response.defer(thinking=True)
         try:
             line = await self._compose(interaction, category)
-        except Exception:
+        except Exception as exc:
             log.exception("discourse compose failed")
+            emit(
+                "error", source="discourse", error=type(exc).__name__,
+                guild_id=guild_id, user_id=interaction.user.id, category=category,
+            )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
 
@@ -203,6 +208,22 @@ class Discourse(commands.Cog):
         )
 
         if not line or line.strip().upper() == "EMPTY":
+            # Why did we fall back? Tell mods so they can tell if the bot is broken
+            # vs. genuinely out of source material.
+            emit(
+                "discourse_fallback",
+                guild_id=guild.id, user_id=interaction.user.id, category=category,
+                source_count=len(sources), local_source_chars=len(sources_blob),
+                recent_topic_count=len(recent),
+                reason="claude_returned_empty" if line else "claude_returned_blank",
+            )
+            await bot_logs.post(
+                self.bot, self.bot.db, guild.id,
+                f"💬 `/discourse` fell back to a quip in <#{interaction.channel_id}>: "
+                f"category=`{category}`, sources={len(sources)}, "
+                f"recent_topics={len(recent)}, reason=`empty_claude_response`.",
+                level="full", verbosity=self.bot.config.bot_logs_verbosity,
+            )
             return voice.pick(voice.DISCOURSE_FALLBACK)
         return line
 

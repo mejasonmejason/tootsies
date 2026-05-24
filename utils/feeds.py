@@ -70,3 +70,35 @@ def is_channel_dead(messages: list[discord.Message], min_messages: int = 3) -> b
     """Heuristic for /recap deflection."""
     real = [m for m in messages if len(m.content) > 5]
     return len(real) < min_messages
+
+
+def channel_dead_diagnostic(
+    channel: discord.TextChannel | discord.Thread,
+    me: discord.Member,
+    messages: list[discord.Message],
+    min_messages: int = 3,
+) -> dict[str, object]:
+    """Why did the channel look dead? Returns structured fields for events + bot-logs.
+
+    Bot/webhook messages are kept (since /recap passes include_bots=True), so this is
+    just total vs. substantive (>5 char) message counts plus the bot's read permission.
+    """
+    perms = channel.permissions_for(me) if isinstance(
+        channel, discord.TextChannel | discord.Thread
+    ) else None
+    substantive = [m for m in messages if len(m.content) > 5]
+    return {
+        "channel_id": channel.id,
+        "channel_name": channel.name,
+        "can_view": bool(perms and perms.view_channel),
+        "can_read_history": bool(perms and perms.read_message_history),
+        "total_messages": len(messages),
+        "substantive_messages": len(substantive),
+        "min_required": min_messages,
+        "reason": (
+            "no_permission" if perms and not perms.read_message_history
+            else "no_messages" if not messages
+            else "messages_too_short" if not substantive
+            else "below_threshold"
+        ),
+    }

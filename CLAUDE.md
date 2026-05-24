@@ -76,6 +76,33 @@ Tests use `conftest.py` to stub env vars so imports don't blow up without real s
 - Order states flow: Prepping -> On the stove -> Plating -> Served (or Burnt/Sent back at any step).
 - Config is a frozen dataclass in `config.py`, read from env vars at startup. Required: `DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `DATABASE_URL`.
 
+## Structured events for dashboards
+
+Every metric-worthy thing emits a JSON event line via `utils.events.emit(kind, **fields)`.
+Each line is prefixed with the literal `EVENT ` so Railway log queries can isolate
+dashboard data from operational logs.
+
+Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync):
+
+| event | source | fields |
+|---|---|---|
+| `command` | utils/metrics.py (`@track_command`) | cmd, user_id, guild_id, duration_ms, ok, error |
+| `claude_api` | claude_client.py (`_call`) | model, purpose, input_tokens, output_tokens, duration_ms, stop_reason, ok |
+| `order_state` | cogs/order.py | order_id, issue_number, guild_id, user_id, from, to |
+| `rate_limit_hit` | utils/rate_limits.py | scope, command, user_id, guild_id, count, cap |
+| `deploy_event` | bot.py | kind (boot/shutdown), guilds |
+| `error` | cogs/* + bot.py error handler | source (e.g. `ask`, `order_preflight`, `undo`), error (exception class), guild_id, user_id, optional context |
+| `recap_deflected` | cogs/recap.py | guild_id, user_id, period, channel_id, channel_name, reason (`no_permission`/`no_messages`/`messages_too_short`/`below_threshold`), can_read_history, total_messages, substantive_messages |
+| `discourse_fallback` | cogs/discourse.py | guild_id, user_id, category, source_count, recent_topic_count, reason |
+
+**Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to
+the table above + the events.py docstring. Use snake_case for kinds and fields. Don't
+include full message content (data minimization, per the constitution).
+
+**Railway dashboard queries:** filter logs for the `EVENT ` prefix, then parse the JSON
+suffix. Typical queries: count of `event=command` per minute, p95 of `duration_ms`
+where `event=claude_api`, sum of `output_tokens` where `purpose=ask` for cost tracking.
+
 ## Commit and PR conventions
 
 **Always include a `PREVIEW:` section in commit bodies and PR descriptions when the change is user-facing.** The bot's UI is Discord, so screenshots are awkward — render an ASCII/markdown mock of the relevant surface instead. Reviewers shouldn't have to deploy the change to know what it looks like.

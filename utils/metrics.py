@@ -24,6 +24,8 @@ import discord
 # Without these imports, get_type_hints raises NameError at cog-load time.
 from discord import app_commands  # noqa: F401
 
+from utils.events import emit
+
 log = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
@@ -61,11 +63,14 @@ def track_command(command_name: str | None = None) -> Callable[[F], F]:
             finally:
                 duration_ms = int((time.monotonic() - start) * 1000)
                 name = command_name or _interaction_command_name(interaction)
-                log.info(
-                    "cmd=%s user=%s guild=%s duration_ms=%d ok=%s%s",
-                    name, interaction.user.id, interaction.guild_id,
-                    duration_ms, ok,
-                    f" error={error_class}" if error_class else "",
+                emit(
+                    "command",
+                    cmd=name,
+                    user_id=interaction.user.id,
+                    guild_id=interaction.guild_id,
+                    duration_ms=duration_ms,
+                    ok=ok,
+                    error=error_class,
                 )
                 # DB write is best-effort. If the metrics table or pool is unavailable,
                 # we don't want a metrics failure to bubble into the user's response.

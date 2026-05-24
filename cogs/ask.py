@@ -15,6 +15,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import voice
+from utils.events import emit
 from utils.feeds import format_for_prompt, recent_messages
 from utils.gates import require_configured
 from utils.metrics import track_command
@@ -65,8 +66,12 @@ class Ask(commands.Cog):
         me = interaction.guild.me if interaction.guild else None
         try:
             answer = await self._answer(interaction.channel, me, question)
-        except Exception:
+        except Exception as exc:
             log.exception("ask failed")
+            emit(
+                "error", source="ask", error=type(exc).__name__,
+                guild_id=guild_id, user_id=user_id,
+            )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
 
@@ -144,8 +149,12 @@ class Ask(commands.Cog):
         async with message.channel.typing():
             try:
                 answer = await self._answer(message.channel, me, question)
-            except Exception:
+            except Exception as exc:
                 log.exception("mention answer failed")
+                emit(
+                    "error", source="ask_mention", error=type(exc).__name__,
+                    guild_id=message.guild.id, user_id=message.author.id,
+                )
                 await message.reply(voice.pick(voice.DB_ERROR), mention_author=False)
                 return
 

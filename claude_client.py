@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from anthropic import AsyncAnthropic
 
 from persona import system_prompt
+from utils.events import emit
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +49,7 @@ class ClaudeClient:
         system_extra: str = "",
         max_tokens: int = DEFAULT_MAX_TOKENS,
         tools: list[dict[str, Any]] | None = None,
+        purpose: str = "unknown",
     ) -> ClaudeResult:
         # System prompt is a list with a cache_control marker on the persona block so
         # repeat calls hit the prompt cache (the persona is ~1k tokens and stable).
@@ -67,13 +70,37 @@ class ClaudeClient:
         if tools:
             kwargs["tools"] = tools
 
-        resp = await self.client.messages.create(**kwargs)
+        start = time.monotonic()
+        ok = True
+        try:
+            resp = await self.client.messages.create(**kwargs)
+        except Exception as exc:
+            ok = False
+            emit(
+                "claude_api",
+                model=model, purpose=purpose,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                ok=ok, error=type(exc).__name__,
+            )
+            raise
 
+        duration_ms = int((time.monotonic() - start) * 1000)
         text_parts: list[str] = []
         for block in resp.content:
             if getattr(block, "type", None) == "text":
                 text_parts.append(block.text)
         text = "".join(text_parts).strip()
+
+        emit(
+            "claude_api",
+            model=model,
+            purpose=purpose,
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
+            duration_ms=duration_ms,
+            stop_reason=resp.stop_reason,
+            ok=ok,
+        )
 
         return ClaudeResult(
             text=text,
@@ -98,6 +125,7 @@ class ClaudeClient:
             user_message=f"{question}{extra_context}",
             system_extra=system_extra,
             tools=tools,
+            purpose="ask",
         )
         return result.text
 
@@ -108,7 +136,9 @@ class ClaudeClient:
             "If it's dead, say so honestly with a quip. ~140 chars."
         )
         user = f"Channel: #{channel_name}\n\nMessages (most recent last):\n{messages_blob}"
-        result = await self._call(model=HAIKU, user_message=user, system_extra=system_extra)
+        result = await self._call(
+            model=HAIKU, user_message=user, system_extra=system_extra, purpose="recap",
+        )
         return result.text
 
     async def discourse(
@@ -154,6 +184,7 @@ class ClaudeClient:
             user_message=user,
             system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            purpose="discourse_manual" if must_post else "discourse_scheduled",
         )
         return result.text
 
@@ -180,7 +211,10 @@ class ClaudeClient:
             f"{dedup_clause}"
         )
         user = "Anything good. Surprise me."
-        result = await self._call(model=HAIKU, user_message=user, system_extra=system_extra)
+        result = await self._call(
+            model=HAIKU, user_message=user, system_extra=system_extra,
+            purpose="mood_scheduled",
+        )
         return result.text
 
     async def deflect(self, situation: str) -> str:
@@ -189,7 +223,8 @@ class ClaudeClient:
             "TASK: One-liner deflection in your voice. Sharp, not mean. <100 chars. No emoji."
         )
         result = await self._call(
-            model=HAIKU, user_message=situation, system_extra=system_extra, max_tokens=80
+            model=HAIKU, user_message=situation, system_extra=system_extra, max_tokens=80,
+            purpose="deflect",
         )
         return result.text
 
@@ -236,7 +271,8 @@ class ClaudeClient:
             "  REJECT: <one-line reason>"
         )
         result = await self._call(
-            model=SONNET, user_message=request, system_extra=system_extra, max_tokens=250
+            model=SONNET, user_message=request, system_extra=system_extra, max_tokens=250,
+            purpose="order_preflight",
         )
         text = result.text.strip()
         upper = text.upper()

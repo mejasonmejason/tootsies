@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import voice
+from utils.events import emit
 from utils.gates import require_configured
 from utils.metrics import track_command
 from utils.permissions import is_mod
@@ -78,6 +79,10 @@ class Admin(commands.Cog):
             target, new_id = await client.rollback_to_previous()
         except RailwayError as exc:
             log.warning("railway rollback rejected: %s", exc)
+            emit(
+                "error", source="undo", error="RailwayError",
+                guild_id=interaction.guild.id, user_id=interaction.user.id,
+            )
             await self.bot.db.audit(
                 interaction.guild.id, interaction.user.id, "undo_failed",
                 after={"error": str(exc)[:300]},
@@ -86,6 +91,10 @@ class Admin(commands.Cog):
             return
         except Exception as exc:
             log.exception("railway rollback crashed")
+            emit(
+                "error", source="undo", error=type(exc).__name__,
+                guild_id=interaction.guild.id, user_id=interaction.user.id,
+            )
             await self.bot.db.audit(
                 interaction.guild.id, interaction.user.id, "undo_failed",
                 after={"error": str(exc)[:300]},

@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 
 from db import DB
+from utils.events import emit
 
 DEFAULT_PER_USER_DAILY = 20
 DEFAULT_PER_SERVER_DAILY = 20
@@ -36,11 +37,17 @@ async def check_user_limit(
 ) -> tuple[bool, int, int]:
     """Returns (allowed, current_count, cap). Allowed = current_count < cap.
 
-    Does NOT consume the slot — call consume_user() to increment after a successful action.
+    Does NOT consume the slot. Call consume_user() to increment after a successful action.
     """
     cap = await _user_cap(db, guild_id)
     current = await db.get_user_rate(user_id, guild_id, command, _today_utc())
-    return current < cap, current, cap
+    allowed = current < cap
+    if not allowed:
+        emit(
+            "rate_limit_hit", scope="user", command=command,
+            user_id=user_id, guild_id=guild_id, count=current, cap=cap,
+        )
+    return allowed, current, cap
 
 
 async def consume_user(db: DB, user_id: int, guild_id: int, command: str) -> int:
@@ -52,7 +59,13 @@ async def check_server_limit(
 ) -> tuple[bool, int, int]:
     cap = await _server_cap(db, guild_id)
     current = await db.get_server_rate(guild_id, command, _today_utc())
-    return current < cap, current, cap
+    allowed = current < cap
+    if not allowed:
+        emit(
+            "rate_limit_hit", scope="server", command=command,
+            user_id=None, guild_id=guild_id, count=current, cap=cap,
+        )
+    return allowed, current, cap
 
 
 async def consume_server(db: DB, guild_id: int, command: str) -> int:

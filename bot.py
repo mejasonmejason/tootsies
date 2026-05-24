@@ -18,6 +18,7 @@ from claude_client import ClaudeClient
 from config import Config
 from db import DB
 from utils import voice
+from utils.events import emit
 from utils.github import GitHubClient
 from utils.healthcheck import HealthServer
 from utils.permissions import can_send_in
@@ -74,6 +75,7 @@ class TootsiesBot(commands.Bot):
             self._ready_once = True
             self._pruner.start()
         log.info("ready as %s · %d guild(s)", self.user, len(self.guilds))
+        emit("deploy_event", kind="boot", guilds=len(self.guilds))
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         await self.db.ensure_server(guild.id)
@@ -107,6 +109,14 @@ class TootsiesBot(commands.Bot):
         self, interaction: discord.Interaction, error: Exception
     ) -> None:
         log.exception("app command error: %s", error)
+        emit(
+            "error", source="app_command_handler", error=type(error).__name__,
+            guild_id=interaction.guild_id, user_id=interaction.user.id,
+            command=(
+                interaction.command.qualified_name
+                if interaction.command else None
+            ),
+        )
         msg = voice.pick(voice.DB_ERROR)
         try:
             if interaction.response.is_done():

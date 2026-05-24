@@ -10,14 +10,20 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils import voice
-from utils.feeds import format_for_prompt, is_channel_dead, recent_messages
+from utils import bot_logs, voice
+from utils.events import emit
+from utils.feeds import (
+    channel_dead_diagnostic,
+    format_for_prompt,
+    is_channel_dead,
+    recent_messages,
+)
 from utils.gates import require_configured
 from utils.metrics import track_command
+from utils.rate_limits import check_user_limit, consume_user
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
-from utils.rate_limits import check_user_limit, consume_user
 
 log = logging.getLogger(__name__)
 
@@ -80,12 +86,33 @@ class Recap(commands.Cog):
         await interaction.response.defer(thinking=True)
         try:
             if is_channel_dead(msgs):
+                # Distinguish "quip vs. no info" — emit a structured diagnostic AND post
+                # to #bot-logs at full verbosity so mods can tell whether Toots is being
+                # cute or whether something's actually wrong (perms, filtering, etc.).
+                diag = channel_dead_diagnostic(channel, me, msgs)
+                emit(
+                    "recap_deflected",
+                    guild_id=guild_id, user_id=user_id,
+                    period=period.value, **diag,
+                )
+                await bot_logs.post(
+                    self.bot, self.bot.db, guild_id,
+                    f"👀 `/recap` deflected in <#{channel.id}> (period={period.value}): "
+                    f"reason=`{diag['reason']}`, total={diag['total_messages']}, "
+                    f"substantive={diag['substantive_messages']}, "
+                    f"can_read_history={diag['can_read_history']}.",
+                    level="full", verbosity=self.bot.config.bot_logs_verbosity,
+                )
                 line = voice.pick(voice.CHANNEL_DEAD)
             else:
                 blob = format_for_prompt(msgs, include_reactions=True)
                 line = await self.bot.claude.recap(channel.name, blob)
-        except Exception:
+        except Exception as exc:
             log.exception("recap failed")
+            emit(
+                "error", source="recap", error=type(exc).__name__,
+                guild_id=guild_id, user_id=user_id,
+            )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
 
