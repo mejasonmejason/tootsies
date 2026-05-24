@@ -1,0 +1,26 @@
+# GitHub Pages site config for tootsies docs.
+#
+# Source: the /docs folder on the main branch.
+# Set this up under Repo Settings → Pages → Source: Deploy from a branch →
+#   Branch: main · Folder: /docs · Save.
+# Pages URL will be: https://mejasonmejason.github.io/tootsies/
+
+title: tootsies
+description: a discord bot for the tootsies server. ask, recap, discuss, ship features by typing.
+url: https://mejasonmejason.github.io
+baseurl: /tootsies
+theme: jekyll-theme-cayman
+
+# Skip building the unrelated repo files when GitHub renders the site.
+exclude:
+  - "*.py"
+  - "**/*.py"
+  - "Dockerfile"
+  - "Procfile"
+  - "railway.toml"
+  - "pyproject.toml"
+  - "requirements*.txt"
+  - ".github/"
+  - "tests/"
+  - "cogs/"
+  - "utils/"
