@@ -401,9 +401,8 @@ class MenuView(discord.ui.View):
         mod_roles = self.selected.get("mod_role_ids") or []
         feeds = cast("list[int]", self.selected.get("feed_channel_ids") or [])
         feeds_label = (
-            "none" if not feeds
-            else f"{len(feeds)} channel" if len(feeds) == 1
-            else f"{len(feeds)} channels"
+            "_(none)_" if not feeds
+            else ", ".join(f"<#{c}>" for c in feeds)
         )
         return (
             f"**bot-logs:** {f'<#{bot_logs}>' if bot_logs else '_(pick one)_'}\n"
