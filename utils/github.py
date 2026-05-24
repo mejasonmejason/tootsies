@@ -103,7 +103,7 @@ def issue_body_for_order(
         "@claude please implement this feature for the Tootsies bot. "
         "Stay within the constitution defined in `constitution.py` and the persona in `persona.py`. "
         "Run ruff + mypy + pytest before opening the PR. "
-        "Include 'Fixes #<this-issue-number>' in the PR body so the issue closes automatically on merge. "
+        "Reference the source issue in the PR body with 'Part of #<this-issue-number>' (do NOT use 'Fixes' or 'Closes' — the issue is closed by a separate deploy workflow). "
         "When the PR is ready, mark it ready-for-review and let CI auto-merge if green.\n\n"
         f"**Requested by:** {requester_tag}\n"
         f"**Summary:** {summary}\n\n"
