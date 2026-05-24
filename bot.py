@@ -18,7 +18,7 @@ from claude_client import ClaudeClient
 from config import Config
 from db import DB
 from utils import bot_logs, voice
-from utils.events import emit
+from utils.events import emit, emit_error
 from utils.github import GitHubClient
 from utils.healthcheck import HealthServer
 from utils.permissions import can_send_in
@@ -111,12 +111,12 @@ class TootsiesBot(commands.Bot):
         self, interaction: discord.Interaction, error: Exception
     ) -> None:
         log.exception("app command error: %s", error)
-        emit(
-            "error", source="app_command_handler", error=type(error).__name__,
-            guild_id=interaction.guild_id, user_id=interaction.user.id,
+        emit_error(
+                source="app_command_handler", exc=error, recoverable=False,
+                guild_id=interaction.guild_id, user_id=interaction.user.id,
             command=(
                 interaction.command.qualified_name
-                if interaction.command else None
+                if interaction.command else None,
             ),
         )
         await bot_logs.maybe_post_db_error(

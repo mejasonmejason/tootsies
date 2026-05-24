@@ -11,7 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import bot_logs, voice
-from utils.events import emit
+from utils.events import emit, emit_error
 from utils.feeds import (
     channel_dead_diagnostic,
     format_for_prompt,
@@ -118,8 +118,8 @@ class Recap(commands.Cog):
                 )
         except Exception as exc:
             log.exception("recap failed")
-            emit(
-                "error", source="recap", error=type(exc).__name__,
+            emit_error(
+                source="recap", exc=exc, recoverable=False,
                 guild_id=guild_id, user_id=user_id,
             )
             await bot_logs.maybe_post_db_error(

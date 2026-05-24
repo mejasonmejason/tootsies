@@ -23,7 +23,7 @@ from discord.ext import commands, tasks
 
 from models import MoodMode
 from utils import bot_logs, voice
-from utils.events import emit
+from utils.events import emit, emit_error
 from utils.feeds import (
     format_for_prompt,
     hot_urls,
@@ -104,8 +104,8 @@ class Discourse(commands.Cog):
             line = await self._compose(interaction, category)
         except Exception as exc:
             log.exception("discourse compose failed")
-            emit(
-                "error", source="discourse", error=type(exc).__name__,
+            emit_error(
+                source="discourse", exc=exc, recoverable=False,
                 guild_id=guild_id, user_id=interaction.user.id, category=category,
             )
             await bot_logs.maybe_post_db_error(

@@ -41,7 +41,7 @@ import discord
 from discord.ext import commands, tasks
 
 from models import MoodMode
-from utils.events import emit
+from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, recent_image_urls
 from utils.permissions import can_send_in
 
@@ -247,8 +247,8 @@ class ChimeIn(commands.Cog):
         try:
             score, vibe, hook = await self.bot.claude.chimein_score(buffer_blob)
         except Exception as exc:
-            emit(
-                "error", source="chimein_score", error=type(exc).__name__,
+            emit_error(
+                source="chimein_score", exc=exc, recoverable=True,
                 guild_id=guild_id, channel_id=channel_id,
             )
             return
@@ -284,8 +284,8 @@ class ChimeIn(commands.Cog):
                 buffer_blob, hook=hook, image_urls=image_urls,
             )
         except Exception as exc:
-            emit(
-                "error", source="chimein_post", error=type(exc).__name__,
+            emit_error(
+                source="chimein_post", exc=exc, recoverable=True,
                 guild_id=guild_id, channel_id=channel_id,
             )
             return

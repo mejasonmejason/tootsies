@@ -10,7 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import voice
-from utils.events import emit
+from utils.events import emit, emit_error
 from utils.gates import require_configured
 from utils.metrics import track_command
 from utils.permissions import is_mod
@@ -91,8 +91,8 @@ class Admin(commands.Cog):
             return
         except Exception as exc:
             log.exception("railway rollback crashed")
-            emit(
-                "error", source="undo", error=type(exc).__name__,
+            emit_error(
+                source="undo", exc=exc, recoverable=False,
                 guild_id=interaction.guild.id, user_id=interaction.user.id,
             )
             await self.bot.db.audit(

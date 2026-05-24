@@ -22,8 +22,20 @@ Known kinds (keep this list in sync with what's emitted):
   - deploy_event       : bot startup or shutdown
       kind (boot|shutdown), guilds, commit (if known)
   - error              : caught exception in a cog or the global error handler
-      source (e.g. `ask`, `order_preflight`, `undo`), error (exception class),
-      guild_id, user_id, plus optional context (command, order_id, category, ...)
+      Required: source (e.g. `ask`, `order_preflight`, `undo`), error (exception class).
+      Optional:
+        guild_id, user_id, command, order_id, category, ...
+        recoverable: bool   true = caught + retried/skipped cleanly with no
+                            user-visible failure; false = caused a deflection
+                            or undelivered response. Lets log-monitor agents
+                            triage urgency.
+        context: dict       small operation snapshot when the error fired,
+                            e.g. {"had_image_urls": 3, "model": "haiku"}.
+                            Keep PII out (no raw user input, no SQL params).
+        traceback: list[str] last 3 stack frames, truncated. Auto-populated
+                             by emit_error() below. Inline so log-monitor
+                             agents don't have to grep two log streams to
+                             correlate the EVENT with its traceback.
   - recap_deflected    : /recap fell back to the "dead channel" quip (truly zero messages)
       guild_id, user_id, period, channel_id, channel_name,
       reason (`no_permission` | `no_messages`),
@@ -46,6 +58,7 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback as _traceback
 from datetime import UTC, datetime
 from typing import Any
 
@@ -68,3 +81,57 @@ def emit(event: str, **fields: Any) -> None:
     # `default=str` is a safety net for things like datetime, Decimal, or IDs that
     # asyncpg returns as non-JSON-native types.
     log.info("EVENT %s", json.dumps(payload, default=str, separators=(",", ":")))
+
+
+def emit_error(
+    *,
+    source: str,
+    exc: BaseException,
+    recoverable: bool = False,
+    context: dict[str, Any] | None = None,
+    **extra: Any,
+) -> None:
+    """Emit a structured `error` event with traceback + optional context.
+
+    This is the preferred way to emit errors from caught-exception paths.
+    A single emit_error() call carries enough detail for a downstream
+    log-monitor agent to identify the exception class, the source function,
+    the top stack frames, whether the bot recovered, and any operation
+    snapshot context (had_image_urls, model name, etc.).
+
+    Args:
+        source: cog/function label, e.g. "ask_mention", "chimein_score".
+            This is the primary signature dimension log-monitors group on.
+        exc: the caught exception. Class name AND traceback frames are
+            extracted automatically.
+        recoverable: True if the bot caught the exception and recovered
+            (retry succeeded, or we skipped cleanly with no user-visible
+            failure). False if the error caused a deflection / undelivered
+            response / failed request. Lets log-monitors triage urgency:
+            recoverable=True is informational, recoverable=False is
+            user-impact.
+        context: optional small dict of operation state when the error
+            fired. Keep PII out (no raw user input, no full SQL params).
+            Good examples: {"had_image_urls": 3, "use_web": True,
+            "model": "haiku-4.5"}. Bad examples: {"user_message": "..."},
+            {"sql": "INSERT INTO users VALUES ($1)"}.
+        **extra: backward-compat for guild_id, user_id, command, order_id,
+            category, etc. These become top-level event fields, same as
+            calling emit("error", ...) directly.
+    """
+    payload: dict[str, Any] = {
+        "source": source,
+        "error": type(exc).__name__,
+        "recoverable": recoverable,
+        **extra,
+    }
+    if context:
+        payload["context"] = context
+    if exc.__traceback__ is not None:
+        # Keep the last 3 frames (deepest = where the error actually
+        # raised; closest to where the fix lives). Each `format_tb` entry
+        # is a multi-line string with file/line/code, truncated to bound
+        # event size since some lines can be quite long.
+        frames = _traceback.format_tb(exc.__traceback__)[-3:]
+        payload["traceback"] = [f.strip()[:400] for f in frames]
+    emit("error", **payload)

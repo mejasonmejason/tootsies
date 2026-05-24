@@ -15,7 +15,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import bot_logs, voice
-from utils.events import emit
+from utils.events import emit_error
 from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.metrics import track_command
@@ -58,8 +58,8 @@ class Ask(commands.Cog):
             answer = await self._answer(interaction.channel, me, question)
         except Exception as exc:
             log.exception("ask failed")
-            emit(
-                "error", source="ask", error=type(exc).__name__,
+            emit_error(
+                source="ask", exc=exc, recoverable=False,
                 guild_id=guild_id, user_id=user_id,
             )
             await bot_logs.maybe_post_db_error(
@@ -156,10 +156,10 @@ class Ask(commands.Cog):
                 answer = await self._answer(message.channel, me, question)
             except Exception as exc:
                 log.exception("mention answer failed")
-                emit(
-                    "error", source="ask_mention", error=type(exc).__name__,
-                    guild_id=message.guild.id, user_id=message.author.id,
-                )
+                emit_error(
+                source="ask_mention", exc=exc, recoverable=False,
+                guild_id=message.guild.id, user_id=message.author.id,
+            )
                 await bot_logs.maybe_post_db_error(
                     self.bot, self.bot.db, message.guild.id, exc,
                     source="ask_mention", user_id=message.author.id,

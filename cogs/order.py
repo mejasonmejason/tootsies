@@ -18,7 +18,7 @@ from discord.ext import commands
 
 from models import ORDER_STATUS_EMOJI, ORDER_STATUS_LABEL, TERMINAL_STATUSES, OrderStatus
 from utils import bot_logs, voice
-from utils.events import emit
+from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, recent_messages
 from utils.gates import require_configured
 from utils.github import issue_body_for_order
@@ -119,8 +119,8 @@ class Order(commands.GroupCog, name="order"):
             )
         except Exception as exc:
             log.exception("preflight failed")
-            emit(
-                "error", source="order_preflight", error=type(exc).__name__,
+            emit_error(
+                source="order_preflight", exc=exc, recoverable=False,
                 guild_id=guild_id, user_id=user_id,
             )
             await bot_logs.maybe_post_db_error(
@@ -178,8 +178,8 @@ class Order(commands.GroupCog, name="order"):
             issue_number = int(issue["number"])
         except Exception as exc:
             log.exception("github issue file failed")
-            emit(
-                "error", source="order_github_create", error=type(exc).__name__,
+            emit_error(
+                source="order_github_create", exc=exc, recoverable=False,
                 guild_id=guild_id, user_id=user_id, order_id=order.id,
             )
             await self.bot.db.update_order(order.id, status=OrderStatus.BURNT,
