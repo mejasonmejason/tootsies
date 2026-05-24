@@ -9,6 +9,7 @@ import discord
 import pytest
 
 from utils.feeds import (
+    _classify_url,
     channel_dead_diagnostic,
     extract_media,
     format_for_prompt,
@@ -209,7 +210,7 @@ def test_recent_image_urls_skips_video_only_messages() -> None:
 def test_hot_urls_extracts_from_message_content() -> None:
     msg = _fake_msg(content="check this https://x.com/foo/123 fire", display_name="gaza")
     out = hot_urls([msg])
-    assert out == [("https://x.com/foo/123", 0, "gaza")]
+    assert out == [("https://x.com/foo/123", 0, "gaza", "X/Twitter")]
 
 
 def test_hot_urls_ranks_by_reaction_count() -> None:
@@ -218,8 +219,8 @@ def test_hot_urls_ranks_by_reaction_count() -> None:
         content="https://b.com", display_name="bob", reactions=[_fake_reaction(15)],
     )
     out = hot_urls([silent, hyped])
-    assert out[0] == ("https://b.com", 15, "bob")
-    assert out[1] == ("https://a.com", 0, "alice")
+    assert out[0] == ("https://b.com", 15, "bob", "web")
+    assert out[1] == ("https://a.com", 0, "alice", "web")
 
 
 def test_hot_urls_strips_trailing_punctuation() -> None:
@@ -250,6 +251,51 @@ def test_hot_urls_ignores_messages_with_no_urls() -> None:
     out = hot_urls([msg1, msg2])
     assert len(out) == 1
     assert out[0][0] == "https://hot.com"
+
+
+# ---- _classify_url ---------------------------------------------------------------
+
+
+def test_classify_url_tiktok_canonical_and_fixers() -> None:
+    """tnktok / vxtiktok / vm.tiktok variants all classify as TikTok."""
+    assert _classify_url("https://tiktok.com/@user/video/123") == "TikTok"
+    assert _classify_url("https://tnktok.com/t/ZP8pgmfD6/") == "TikTok"
+    assert _classify_url("https://vxtiktok.com/@user/video/123") == "TikTok"
+    assert _classify_url("https://vm.tiktok.com/abc") == "TikTok"
+
+
+def test_classify_url_twitter_x_and_fixers() -> None:
+    """Twitter, x.com, fxtwitter, vxtwitter, fixupx all classify as X/Twitter."""
+    assert _classify_url("https://twitter.com/foo/status/1") == "X/Twitter"
+    assert _classify_url("https://x.com/foo/status/1") == "X/Twitter"
+    assert _classify_url("https://fxtwitter.com/foo/status/1") == "X/Twitter"
+    assert _classify_url("https://vxtwitter.com/foo/status/1") == "X/Twitter"
+    assert _classify_url("https://fixupx.com/foo/status/1") == "X/Twitter"
+
+
+def test_classify_url_instagram_and_fixers() -> None:
+    assert _classify_url("https://instagram.com/p/abc") == "Instagram"
+    assert _classify_url("https://ddinstagram.com/p/abc") == "Instagram"
+
+
+def test_classify_url_other_known_sources() -> None:
+    assert _classify_url("https://bsky.app/profile/x") == "Bluesky"
+    assert _classify_url("https://youtube.com/watch?v=abc") == "YouTube"
+    assert _classify_url("https://youtu.be/abc") == "YouTube"
+    assert _classify_url("https://reddit.com/r/foo/") == "Reddit"
+    assert _classify_url("https://open.spotify.com/track/abc") == "Spotify"
+    assert _classify_url("https://twitch.tv/streamer") == "Twitch"
+    assert _classify_url("https://tenor.com/view/funny-gif") == "Tenor"
+
+
+def test_classify_url_unknown_falls_back_to_web() -> None:
+    assert _classify_url("https://some-random-blog.com/post/123") == "web"
+    assert _classify_url("https://github.com/foo/bar") == "web"
+
+
+def test_classify_url_case_insensitive() -> None:
+    assert _classify_url("https://TikTok.com/x") == "TikTok"
+    assert _classify_url("https://YOUTUBE.com/x") == "YouTube"
 
 
 # ---- format_for_prompt -----------------------------------------------------------

@@ -206,7 +206,7 @@ class ClaudeClient:
         channel_name: str,
         messages_blob: str,
         image_urls: list[str] | None = None,
-        hot_urls: list[tuple[str, int, str]] | None = None,
+        hot_urls: list[tuple[str, int, str, str]] | None = None,
     ) -> str:
         """Summarize a channel's recent activity with spice.
 
@@ -218,40 +218,49 @@ class ClaudeClient:
         so the recap can name the joke rather than just say "everyone reacted to an
         image".
 
-        `hot_urls` is a list of (url, reaction_count, posting_author) tuples
-        surfaced from the channel content. Toots is explicitly instructed to OPEN
-        those URLs via web_search rather than punt with "can't peep what's there"
-        — that was the old failure mode in link-heavy channels.
+        `hot_urls` is a list of (url, reaction_count, posting_author, source_label)
+        tuples surfaced from the channel content. Source labels ("TikTok", "X/Twitter",
+        etc.) help Toots know what kind of content the URL points to even when it's
+        wrapped in an embed-fixer like fxtwitter or tnktok.
         """
         hot_urls_block = ""
         if hot_urls:
             lines = [
-                f"  - {url}  (posted by {author}, {rxn} reaction(s))"
-                for url, rxn, author in hot_urls
+                f"  - [{source}] {url}  (posted by {author}, {rxn} reaction(s))"
+                for url, rxn, author, source in hot_urls
             ]
             hot_urls_block = (
                 "\n\nLINKS THE ROOM SHARED (open these via web_search before recapping; "
-                "the higher the reaction count, the more it matters):\n" + "\n".join(lines)
+                "higher reaction counts matter more. The [source] tag tells you what kind "
+                "of content it is even if the host is an embed-fixer like fxtwitter or "
+                "tnktok — those redirect to the canonical site):\n" + "\n".join(lines)
             )
 
         system_extra = (
-            "TASK: Recap the recent vibe in this channel. Weight reactions. Be spicy but kind. "
-            "If it's dead, say so honestly with a quip. ~140 chars.\n"
+            "TASK: Recap the recent vibe in this channel. Weight reactions. "
+            "GIVE A TAKE, don't just summarize. ~140 chars.\n"
             "\n"
             "WEB SEARCH: if the room is hyped about a specific real-world thing (a game, a "
             "release, a news event, a person), use web_search to pull the relevant fact and "
             "fold it into the recap. Example: 'room is buzzing about the lakers game' becomes "
-            "'room is buzzing about the lakers losing 105-110 to denver, AD dropped 32'. "
-            "Don't search for vibes or in-jokes, only for verifiable facts the room references.\n"
+            "'room is buzzing about the lakers losing 105-110 to denver, AD dropped 32'.\n"
             "\n"
-            "LINKS: when URLs are shared (see LINKS THE ROOM SHARED below if present), OPEN them "
-            "by passing the URL to web_search as the query. Never tell the user 'i can't see "
-            "what's at the link' — the tool is right there. If a link 404s or the content is "
-            "unreachable, name what the URL points to (host, post id, etc.) and move on; don't "
-            "give up the whole recap.\n"
+            "LINKS: when URLs are shared (see LINKS THE ROOM SHARED below if present), OPEN "
+            "them via web_search to know what's actually there. Don't punt with 'can't see "
+            "what's at the link' — the tool is right there. If a fetch fails, name what the "
+            "URL points to (the [source] tag tells you) and move on.\n"
             "\n"
-            "IMAGES: if images are attached, the room may have been reacting to them. Reference "
-            "what's IN the meme/screenshot when relevant, not just that an image exists."
+            "IMAGES + VIDEO POSTS: when an image is attached OR when a link is a TikTok / "
+            "X / Instagram / YouTube video, the embed cover frame is in the vision blocks "
+            "below. Look at it. Describe who's in it, what the vibe is, react like a "
+            "bartender would (yas queen, she ate, this is sending me, he's washed, etc.). "
+            "If multiple posts compete for the recap, prioritize what the room reacted to "
+            "most. For social content (creators, posts, clips), drop a take WITH personality "
+            "— this is the whole point of a recap, not a neutral summary.\n"
+            "\n"
+            "VOICE: keep your bartender voice — sharp, lowercase, terse. Match the room's "
+            "energy. If they're hyped about hot content, hype with them. If they're roasting "
+            "something, roast it with them. Never moderate, never lecture."
         )
         user = (
             f"Channel: #{channel_name}\n\nMessages (most recent last):\n"

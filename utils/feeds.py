@@ -110,15 +110,45 @@ def recent_image_urls(messages: list[discord.Message], limit: int = 3) -> list[s
 # a stripped embed; the bare URL is the only signal we have.
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
+# Map known "embed-fixer" hostnames + variants to a canonical source label.
+# Fixer sites (fxtwitter, tnktok, ddinstagram, etc.) exist because Discord
+# unfurls of the originals are flaky; they all redirect to the canonical
+# host. We don't follow the HTTP redirect (latency), we just label them so
+# Toots knows "this is a TikTok / an X post / a Reels link" and can react
+# accordingly without conflating tnktok.com with some random unknown site.
+_SOURCE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("TikTok",     ("tiktok.com", "tnktok.com", "vxtiktok.com", "vm.tiktok.com")),
+    ("X/Twitter",  ("twitter.com", "x.com", "fxtwitter.com", "vxtwitter.com",
+                     "fixupx.com", "fixvx.com", "twittpr.com")),
+    ("Instagram",  ("instagram.com", "ddinstagram.com", "kkinstagram.com",
+                     "instagramez.com")),
+    ("Bluesky",    ("bsky.app", "fxbsky.app")),
+    ("YouTube",    ("youtube.com", "youtu.be")),
+    ("Reddit",     ("reddit.com", "old.reddit.com", "rxddit.com", "redd.it")),
+    ("Spotify",    ("open.spotify.com", "spotify.link")),
+    ("SoundCloud", ("soundcloud.com",)),
+    ("Twitch",     ("twitch.tv", "clips.twitch.tv")),
+    ("Tenor",      ("tenor.com", "media.tenor.com")),
+)
+
+
+def _classify_url(url: str) -> str:
+    """Return a human-readable source label for the URL, or 'web' if unknown."""
+    lowered = url.lower()
+    for label, hosts in _SOURCE_PATTERNS:
+        if any(host in lowered for host in hosts):
+            return label
+    return "web"
+
 
 def hot_urls(
     messages: list[discord.Message], limit: int = 8,
-) -> list[tuple[str, int, str]]:
+) -> list[tuple[str, int, str, str]]:
     """URLs from message content, ranked by reactions then recency.
 
-    Returns (url, reaction_count, posting_author_display_name) tuples. Used to
-    surface "here are the links the room actually engaged with" in /recap
-    prompts so Toots can decide which ones to actually open.
+    Returns (url, reaction_count, posting_author_display_name, source_label)
+    tuples. Source label lets the recap prompt say "this is TikTok content"
+    instead of just dumping a fixer URL Toots might not recognize.
     """
     out: list[tuple[int, datetime, str, str]] = []
     seen: set[str] = set()
@@ -135,7 +165,10 @@ def hot_urls(
             seen.add(url)
             out.append((reaction_count, msg.created_at, url, author_name))
     out.sort(key=lambda item: (-item[0], -item[1].timestamp()))
-    return [(url, rxn, name) for rxn, _, url, name in out[:limit]]
+    return [
+        (url, rxn, name, _classify_url(url))
+        for rxn, _, url, name in out[:limit]
+    ]
 
 
 async def recent_messages(
