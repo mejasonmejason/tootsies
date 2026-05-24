@@ -1,0 +1,15 @@
+[
+  {"timestamp": "2026-05-24T16:00:00Z", "message": "starting up"},
+  {"timestamp": "2026-05-24T16:28:00Z", "message": "EVENT {\"event\":\"error\",\"ts\":\"2026-05-24T16:28:00.000+00:00\",\"source\":\"ask_mention\",\"error\":\"BadRequestError\",\"guild_id\":123,\"user_id\":456}"},
+  {"timestamp": "2026-05-24T16:28:00Z", "message": "Traceback (most recent call last):"},
+  {"timestamp": "2026-05-24T16:28:00Z", "message": "  File \"/app/cogs/ask.py\", line 156, in _answer"},
+  {"timestamp": "2026-05-24T16:28:00Z", "message": "    answer = await self.bot.claude.ask(question)"},
+  {"timestamp": "2026-05-24T16:28:00Z", "message": "  File \"/app/claude_client.py\", line 313, in ask"},
+  {"timestamp": "2026-05-24T16:28:00Z", "message": "    result = await self._call(...)"},
+  {"timestamp": "2026-05-24T16:28:00Z", "message": "anthropic.BadRequestError: 400 - Bad request: image url invalid"},
+  {"timestamp": "2026-05-24T16:30:00Z", "message": "EVENT {\"event\":\"error\",\"ts\":\"2026-05-24T16:30:00.000+00:00\",\"source\":\"order_preflight\",\"error\":\"TimeoutError\",\"guild_id\":123,\"user_id\":789}"},
+  {"timestamp": "2026-05-24T16:35:00Z", "message": "EVENT {\"event\":\"error\",\"ts\":\"2026-05-24T16:35:00.000+00:00\",\"source\":\"db_query\",\"error\":\"InvalidCachedStatementError\",\"guild_id\":123}"},
+  {"timestamp": "2026-05-24T16:40:00Z", "message": "EVENT {\"event\":\"error\",\"ts\":\"2026-05-24T16:40:00.000+00:00\",\"source\":\"chimein_score\",\"error\":\"ValueError\",\"guild_id\":123}"},
+  {"timestamp": "2026-05-24T16:50:00Z", "message": "EVENT {\"event\":\"command\",\"cmd\":\"ask\",\"ok\":true}"},
+  {"timestamp": "2026-05-24T16:55:00Z", "message": "EVENT {\"event\":\"error\",\"ts\":\"2026-05-24T16:55:00.000+00:00\",\"source\":\"image_fetch\",\"error\":\"BadRequestError\",\"detail\":\"Unable to download image from url\",\"guild_id\":123}"}
+]
