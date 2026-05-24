@@ -353,12 +353,18 @@ class ClaudeClient:
         channel_context: str = "",
         use_web: bool = False,
         image_urls: list[str] | None = None,
+        enriched_links: list[EnrichedLink] | None = None,
     ) -> str:
         """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
 
         `image_urls`, if provided, gets passed to Claude as vision blocks so Toots
         can actually see images recently posted in the channel (memes, GIFs,
         screenshots being discussed). Capped to 5 internally for cost control.
+
+        `enriched_links`, if provided, is pre-fetched social-post content (via
+        utils.link_enrich) for any URLs in the question or channel chatter.
+        Claude reads them directly instead of round-tripping through web_search
+        on each URL. Same pattern as recap/discourse/chimein_post.
         """
         extra_context = ""
         if channel_context:
@@ -369,6 +375,8 @@ class ClaudeClient:
                 "attached. Use them if the question is about one of them or if they're "
                 "what the room is reacting to."
             )
+        if enriched_links:
+            extra_context += "\n\n" + format_enriched_for_prompt(enriched_links)
 
         system_extra = (
             "TASK: Answer the user's question in your voice.\n"

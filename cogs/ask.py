@@ -18,8 +18,15 @@ from utils import bot_logs, voice
 from utils.events import emit_error
 from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
+from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
 from utils.rate_limits import check_user_limit, consume_user
+
+# Match raw http(s) URLs in the user's question or pulled channel context.
+# Same shape as the regex in utils/feeds.py (kept private there); /ask is the
+# only outside caller, so we just inline it here rather than exporting from
+# feeds.
+_URL_IN_TEXT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -100,8 +107,23 @@ class Ask(commands.Cog):
             # Bumped from 3 to 8, lean toward accuracy / "she sees what we see" since
             # cost is still bounded by the hard cap inside _call().
             image_urls = recent_image_urls(msgs, limit=8)
+
+        # Pre-enrich any social URLs that appear in the user's question OR in
+        # the recent channel chatter we just pulled. This is the same pattern
+        # /recap, /discourse, and chime-in use: fetch the tweet/TikTok/Reddit
+        # content directly via the platform's free endpoint and pass it to
+        # Claude as structured data, so the model doesn't have to round-trip
+        # through web_search on each URL (faster + no "i need to look that
+        # up" narration risk). Cap to 10 URLs total per ask to bound latency.
+        text_for_urls = f"{question}\n{context}"
+        raw_urls = _URL_IN_TEXT_RE.findall(text_for_urls)[:10]
+        enriched_map = await enrich_batch(raw_urls) if raw_urls else {}
+        enriched = [e for e in enriched_map.values() if e is not None]
+
         return await self.bot.claude.ask(
-            question, channel_context=context, use_web=True, image_urls=image_urls,
+            question, channel_context=context, use_web=True,
+            image_urls=image_urls,
+            enriched_links=enriched if enriched else None,
         )
 
     @commands.Cog.listener()
