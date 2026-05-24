@@ -2,6 +2,34 @@
 
 All notable changes to Tootsies. Dates in PT.
 
+## [1.0.3], 2026-05-24 (chime-in)
+
+New feature: Toots can listen in on enabled channels and chip in when she has something real to say. Opt-in per channel via three new mod commands. No changes to existing surface.
+
+### New commands
+
+- `/chipin enable` (mods only): turn on chip-in for the current channel. Toots starts listening and may post unprompted when the conversation warrants.
+- `/chipin disable` (mods only): turn it off for the current channel. Drops the in-memory buffer too, so a re-enable won't fire on stale backlog.
+- `/chipin status` (mods only): list channels where chip-in is on plus today's chip-in count per channel.
+
+### Algorithm
+
+Per-channel deque (max 50) populated by `on_message`; background tick every 60s walks channels with new buffered activity through a gate sequence: hours window (9am-2am ET) → cooldown (30 min) → daily cap (5/day) → Haiku scoring (returns score + vibe + hook) → vibe gate (skip `vulnerable`, `catchup`, `other`) → threshold gate (>= 0.7) → Sonnet generates the actual one-liner with web search + vision. Full details in `docs/ALGORITHMS.md`.
+
+### Storage
+
+Two new tables in `db.py`: `chipin_channels` (which channels are opted in) and `chipin_history` (per-post log for cooldown + daily cap enforcement). Both pruned by the existing 24h pruner task.
+
+### Observability
+
+Two new structured event kinds: `chipin_evaluated` (with `decision` field for which gate fired) and `chipin_posted` (with score, vibe, hook). Filter on `EVENT ` in Railway logs and group by `event` for a chip-in funnel dashboard.
+
+### Knobs to tune
+
+All in `cogs/chipin.py`: `BUFFER_MIN_FOR_SCORE`, `COOLDOWN`, `DAILY_CAP`, `HOURS_START_ET`, `HOURS_END_ET_NEXT_DAY`, `THRESHOLD`, `SKIP_VIBES`, `TICK_SECONDS`.
+
+---
+
 ## [1.0.2], 2026-05-24 (persona refresh)
 
 Persona reframed: Toots gets a proper backstory and a music spine. No behavioral changes to the commands.

@@ -157,6 +157,27 @@ CREATE TABLE IF NOT EXISTS command_metrics (
     error_class TEXT
 );
 CREATE INDEX IF NOT EXISTS command_metrics_ts_idx ON command_metrics (started_at DESC);
+
+-- Chip-in feature: per-channel listen toggles + chip-in posting history.
+CREATE TABLE IF NOT EXISTS chipin_channels (
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    enabled_by BIGINT NOT NULL,
+    enabled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS chipin_history (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    score REAL,
+    vibe TEXT,
+    hook TEXT
+);
+CREATE INDEX IF NOT EXISTS chipin_history_channel_ts_idx
+    ON chipin_history (guild_id, channel_id, posted_at DESC);
 CREATE INDEX IF NOT EXISTS command_metrics_guild_cmd_idx ON command_metrics (guild_id, command);
 """
 
@@ -553,6 +574,82 @@ class DB:
     async def prune_command_metrics(self) -> None:
         await self._pool().execute(
             "DELETE FROM command_metrics WHERE started_at < NOW() - INTERVAL '30 days'"
+        )
+
+    # ---- chip-in ----------------------------------------------------------------
+
+    async def enable_chipin(self, guild_id: int, channel_id: int, actor_id: int) -> None:
+        """Mark a channel as listened-to for chip-in. Idempotent."""
+        await self._pool().execute(
+            """
+            INSERT INTO chipin_channels (guild_id, channel_id, enabled_by)
+            VALUES ($1, $2, $3) ON CONFLICT (guild_id, channel_id) DO NOTHING
+            """,
+            guild_id, channel_id, actor_id,
+        )
+
+    async def disable_chipin(self, guild_id: int, channel_id: int) -> None:
+        await self._pool().execute(
+            "DELETE FROM chipin_channels WHERE guild_id = $1 AND channel_id = $2",
+            guild_id, channel_id,
+        )
+
+    async def chipin_channels(self, guild_id: int) -> list[int]:
+        rows = await self._pool().fetch(
+            "SELECT channel_id FROM chipin_channels WHERE guild_id = $1", guild_id,
+        )
+        return [r["channel_id"] for r in rows]
+
+    async def all_chipin_channels(self) -> list[tuple[int, int]]:
+        """All (guild_id, channel_id) pairs across every guild. Used by the tick loop."""
+        rows = await self._pool().fetch(
+            "SELECT guild_id, channel_id FROM chipin_channels",
+        )
+        return [(r["guild_id"], r["channel_id"]) for r in rows]
+
+    async def record_chipin(
+        self,
+        guild_id: int,
+        channel_id: int,
+        *,
+        score: float | None = None,
+        vibe: str | None = None,
+        hook: str | None = None,
+    ) -> None:
+        await self._pool().execute(
+            """
+            INSERT INTO chipin_history (guild_id, channel_id, score, vibe, hook)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            guild_id, channel_id, score, vibe, hook,
+        )
+
+    async def last_chipin_at(
+        self, guild_id: int, channel_id: int,
+    ) -> datetime | None:
+        row = await self._pool().fetchrow(
+            """
+            SELECT MAX(posted_at) AS last_at FROM chipin_history
+            WHERE guild_id = $1 AND channel_id = $2
+            """,
+            guild_id, channel_id,
+        )
+        return row["last_at"] if row else None
+
+    async def chipin_count_today(self, guild_id: int, channel_id: int) -> int:
+        row = await self._pool().fetchrow(
+            """
+            SELECT COUNT(*) AS n FROM chipin_history
+            WHERE guild_id = $1 AND channel_id = $2
+              AND posted_at > NOW() - INTERVAL '24 hours'
+            """,
+            guild_id, channel_id,
+        )
+        return int(row["n"]) if row else 0
+
+    async def prune_chipin_history(self) -> None:
+        await self._pool().execute(
+            "DELETE FROM chipin_history WHERE posted_at < NOW() - INTERVAL '90 days'"
         )
 
     # ---- discourse schedule -----------------------------------------------------

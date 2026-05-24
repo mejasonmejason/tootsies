@@ -29,6 +29,54 @@ log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 
 
+_CHIPIN_VIBES = {
+    "debate", "hot_take", "question", "conversational",
+    "vulnerable", "catchup", "other",
+}
+
+
+def _parse_chipin_score(text: str) -> tuple[float, str, str]:
+    """Parse Claude's chipin_score response into (score, vibe, hook).
+
+    Tolerant of slight format drift (extra whitespace, missing fields, code
+    fences). Returns a safe fallback (0.0, "other", "") on any parse failure
+    so the chip-in tick skips the slot rather than misfiring.
+    """
+    import json
+    import re
+
+    if not text:
+        return 0.0, "other", ""
+
+    # Strip optional markdown code-fence wrapping.
+    cleaned = re.sub(r"^```\w*\s*|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    # Find the first {...} block (Claude sometimes prefaces with explanation).
+    match = re.search(r"\{[^{}]*\}", cleaned)
+    if not match:
+        return 0.0, "other", ""
+
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return 0.0, "other", ""
+
+    score = data.get("score")
+    vibe = data.get("vibe", "other")
+    hook = data.get("hook", "")
+
+    try:
+        score_f = float(score)
+    except (TypeError, ValueError):
+        return 0.0, "other", ""
+    score_f = max(0.0, min(1.0, score_f))
+
+    if not isinstance(vibe, str) or vibe not in _CHIPIN_VIBES:
+        vibe = "other"
+    if not isinstance(hook, str):
+        hook = ""
+    return score_f, vibe, hook
+
+
 def _time_context() -> str:
     """One-line current-time prefix injected into every user message.
 
@@ -382,6 +430,105 @@ class ClaudeClient:
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra,
             purpose="mood_scheduled",
+        )
+        return result.text
+
+    async def chipin_score(
+        self, buffer_blob: str, recent_self_posts: str = "",
+    ) -> tuple[float, str, str]:
+        """Score whether the recent buffer is worth chipping in on.
+
+        Cheap Haiku call. Returns (score 0..1, vibe, hook):
+          - score: how worth-chipping-in this conversation is.
+          - vibe: one of: debate, hot_take, question, conversational,
+                  vulnerable, catchup, other.
+          - hook: a one-line description of what Toots would actually
+                  say something about. Empty if score is low.
+
+        Vibe categories matter for gating: vulnerable/catchup/other are
+        no-go zones regardless of score. Debate/hot_take/question are the
+        sweet spot for chipping in.
+
+        Returns (0.0, "other", "") if the response is unparseable, which
+        guarantees we skip this slot rather than risk a weird post.
+        """
+        system_extra = (
+            "TASK: You are scoring whether the recent chat buffer warrants Toots chipping in "
+            "uninvited. She's a bartender, not a participant in every conversation. She should "
+            "chip in only when there's something real to say.\n"
+            "\n"
+            "Rate the buffer on two axes:\n"
+            "  - score (0.0 to 1.0): how worth-chipping-in this is. A heated debate over a "
+            "current event = 0.8+. A few short replies catching up about weekend plans = 0.1. "
+            "A hot take begging for a response = 0.9. A vulnerable share or a private chat = 0.0.\n"
+            "  - vibe: pick one of\n"
+            "      debate         (people disagreeing about something specific, room is engaged)\n"
+            "      hot_take       (someone dropped a contrarian opinion, no pushback yet)\n"
+            "      question       (someone asked something the room can't easily answer)\n"
+            "      conversational (general chat, no debate, no question, no take)\n"
+            "      vulnerable     (someone shared something personal, sad, or sensitive)\n"
+            "      catchup        (weekend plans, hi-how-are-you, schedule logistics)\n"
+            "      other          (everything else, including pure spam / off-topic noise)\n"
+            "\n"
+            "RULES:\n"
+            "  - Vulnerable, catchup, and 'other' vibes ALWAYS get score <= 0.3 regardless of "
+            "how engaging the chat looks. Toots doesn't interrupt these.\n"
+            "  - If Toots has already posted recently (see recent_self_posts) about the same "
+            "topic, score low. She doesn't repeat herself.\n"
+            "  - If the buffer is mostly her own messages, score 0.\n"
+            "  - Be skeptical. Default to 'this isn't worth interrupting for' unless it really is.\n"
+            "\n"
+            "Respond on ONE line of EXACTLY this format (one JSON-like object, no markdown):\n"
+            "  {\"score\": 0.78, \"vibe\": \"debate\", \"hook\": \"they're going at it about whether kendrick won\"}\n"
+            "If the response can't be parsed we treat it as a 0-score skip."
+        )
+        recent_self_block = (
+            f"\n\nRECENT TOOTS POSTS in this channel (don't repeat yourself):\n{recent_self_posts}"
+            if recent_self_posts else ""
+        )
+        user = f"Buffer (oldest first):\n{buffer_blob}{recent_self_block}"
+        result = await self._call(
+            model=HAIKU, user_message=user, system_extra=system_extra, max_tokens=200,
+            purpose="chipin_score",
+        )
+        return _parse_chipin_score(result.text)
+
+    async def chipin_post(
+        self,
+        buffer_blob: str,
+        hook: str,
+        image_urls: list[str] | None = None,
+    ) -> str:
+        """Generate the actual chip-in take given the buffer + scored hook.
+
+        Sonnet for the judgment call. Web search + vision available so she can
+        bring in a fact or react to a posted image. ~140 chars, in voice.
+        """
+        system_extra = (
+            "TASK: The room is talking and you've decided to chip in. Drop ONE short line "
+            "(~140 chars) that lands. You're a bartender leaning into a conversation, not "
+            "a participant catching up. Don't summarize what they said, ADD to it: a take, "
+            "a fact, a question that opens it up. Bring real heat.\n"
+            "\n"
+            f"WHAT CAUGHT YOUR EYE: {hook}\n"
+            "\n"
+            "WEB SEARCH: if the conversation touches a verifiable real-world thing (a game, "
+            "a song, a release, a person), use web_search to bring in the fact. Don't make "
+            "things up.\n"
+            "\n"
+            "IMAGES: any vision blocks attached are recent posts in the channel. React to "
+            "what's actually in them if relevant.\n"
+            "\n"
+            "TONE: like a regular at the bar leaning in mid-shift, not announcing yourself. "
+            "Call out a name from the buffer if it lands (\"@gaza you're cooking with that take\"). "
+            "Lowercase, no em dashes, no \"hey everyone,\" no \"actually...\""
+        )
+        user = f"Buffer (oldest first):\n{buffer_blob}"
+        result = await self._call(
+            model=SONNET, user_message=user, system_extra=system_extra,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            purpose="chipin_post",
+            image_urls=image_urls,
         )
         return result.text
 

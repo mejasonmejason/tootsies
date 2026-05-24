@@ -37,6 +37,7 @@ COGS = [
     "cogs.admin",
     "cogs.settings",
     "cogs.help",
+    "cogs.chipin",
 ]
 
 
@@ -136,7 +137,8 @@ class TootsiesBot(commands.Bot):
             await self.db.prune_audit()
             await self.db.prune_discourse()
             await self.db.prune_command_metrics()
-            log.info("pruned old audit + discourse + command_metrics history")
+            await self.db.prune_chipin_history()
+            log.info("pruned old audit + discourse + command_metrics + chipin_history")
         except Exception:
             log.exception("prune failed")
 

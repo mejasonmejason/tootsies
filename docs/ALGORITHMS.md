@@ -184,6 +184,59 @@ The cog then branches on the verdict for the user-facing message (different defl
 
 ---
 
+## /chipin (chime-in)
+
+Toots leans into the conversation when she has something real to say. Opt-in per channel; mods run `/chipin enable` in any channel they want her listening in.
+
+### Flow
+
+In [`cogs/chipin.py`](../cogs/chipin.py):
+
+1. **on_message listener** appends every qualifying human message (non-bot, non-empty or has attachments/embeds) in an enabled channel to a per-channel in-memory deque (max 50 messages).
+2. **`tasks.loop(seconds=60)` tick** walks every (guild, channel) with new buffered activity and runs the gate sequence in `_maybe_chip_in_one()`:
+   - **hours_gate**: only 9am-2am ET, else skip
+   - **cooldown_gate**: no chip-in within 30 min of the last one in this channel
+   - **daily_cap_gate**: max 5 chip-ins per channel per 24h
+   - Calls **Haiku 4.5** [`chipin_score()`](../claude_client.py) on the buffer, returns `(score, vibe, hook)`
+   - **vibe_gate**: drop if vibe in `{vulnerable, catchup, other}` (Toots doesn't interrupt private moments)
+   - **threshold_gate**: drop if score < 0.7
+3. If all gates pass, call **Sonnet 4.6** [`chipin_post()`](../claude_client.py) with the buffer + hook + recent image URLs (vision + web search both available) to generate the one-line take.
+4. Send the message, record in `chipin_history` for cooldown + daily cap tracking, emit `chipin_posted` event.
+
+### Tunable knobs
+
+| What | Where | Current |
+|---|---|---|
+| Min buffer to score | `BUFFER_MIN_FOR_SCORE` in [`cogs/chipin.py`](../cogs/chipin.py) | 5 messages |
+| Buffer max | `BUFFER_MAX` | 50 messages per channel |
+| Cooldown | `COOLDOWN` | 30 minutes per channel |
+| Daily cap | `DAILY_CAP` | 5 chip-ins per channel per 24h |
+| Hours window | `HOURS_START_ET`, `HOURS_END_ET_NEXT_DAY` | 9am to 2am ET |
+| Score threshold | `THRESHOLD` | 0.7 (raise = quieter Toots) |
+| Skip vibes | `SKIP_VIBES` | `vulnerable`, `catchup`, `other` |
+| Tick frequency | `TICK_SECONDS` | 60s (cheap, only scores buffers with new activity) |
+| Scoring model | Haiku 4.5 | One-shot scoring, returns JSON-like line |
+| Posting model | Sonnet 4.6 | Same model + tools as `/discourse` for tone parity |
+
+### Parser hardening
+
+[`_parse_chipin_score()`](../claude_client.py) is deliberately tolerant of model drift: strips markdown fences, extracts the first `{...}` block, clamps score to `[0, 1]`, coerces unknown vibes to `other`, and falls back to `(0.0, "other", "")` on any parse failure. This guarantees a bad response skips the slot rather than risking a misfired post.
+
+### Observability
+
+Two event kinds in [`utils/events.py`](../utils/events.py):
+
+- `chipin_evaluated`: emitted once per skipped slot with `decision` field naming which gate stopped it (`hours_gate`, `cooldown_gate`, `daily_cap_gate`, `vibe_gate`, `threshold_gate`, `empty_generation`). Lets you plot "where are we losing chip-in candidates?"
+- `chipin_posted`: emitted on every actual post with `score`, `vibe`, `hook`. Lets you see what Toots actually weighed in on.
+
+### When chip-in is "too chatty" or "too quiet"
+
+- Too chatty: raise `THRESHOLD` (0.7 → 0.8), or extend `SKIP_VIBES` with `conversational`, or shorten the daily cap.
+- Too quiet: lower `THRESHOLD` (0.7 → 0.55), or raise `DAILY_CAP`, or widen `HOURS_END_ET_NEXT_DAY`.
+- Repeating herself: the per-channel `recent_self_posts` block in `chipin_score()` is the existing dedup; pass more history if needed.
+
+---
+
 ## Shared layers (all commands)
 
 ### Time context
