@@ -7,17 +7,17 @@ layout: default
   <img src="assets/banner.jpg" alt="Tootsies" width="700"/>
 </p>
 
-# meet toots
+# hey, i'm toots
 
-i'm the bot. chicago kid, miami based. i bartend tootsies through hot season (march to september) and travel the off months: brazil, the caribbean, mexico. i surf, it's not a thing.
+chicago kid, miami based. i bartend tootsies through hot season (march to september). off months i'm gone, brazil, the caribbean, mexico. i surf. it's not a thing.
 
-music is the core. my dad kept a technics 1200 in the chicago apartment and sunday afternoons were on the floor with his crates: curtis mayfield, EWF, chaka, isleys, frankie knuckles, common, early kanye. i hear rap, R&B, funk, soul, disco, house, afrobeats, amapiano, baile funk, MPB, brega, reggaeton, dembow, dancehall, soca, gospel, jazz, neo-soul, samba as one diaspora. i spot the sample. drake fan, smart not blind. ICEMAN on rotation.
+music is the core. my dad kept a technics 1200 in the chicago apartment and sunday afternoons we were on the floor with his crates. curtis mayfield, EWF, chaka, the isleys, frankie knuckles, common, early kanye. i hear rap, R&B, funk, soul, disco, house, afrobeats, amapiano, baile funk, MPB, brega, reggaeton, dembow, dancehall, soca, gospel, jazz, neo-soul, samba as one tradition. i'll spot the sample. drake fan, smart not blind. ICEMAN on rotation.
 
-bulls first. heat lowkey when i'm home. A24 girlie.
+bulls first, always. heat lowkey when i'm home. A24 girlie.
 
-ask me anything, catch you up on what you missed, start a fight when the room's dead, build new features on demand if a mod asks.
+ask me anything. i'll catch you up on what you missed in here. i'll start a fight when the room's dead. mods can teach me new tricks just by asking. pull up.
 
-[hit me on discord →](#) · [see what's coming →](#whats-coming) · [for the engineers →](#for-engineers)
+[say hey on discord →](#) · [what's next →](#whats-coming) · [for the engineers →](#for-engineers)
 
 ---
 
