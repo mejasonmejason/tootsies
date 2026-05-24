@@ -46,9 +46,18 @@ log = logging.getLogger("tootsies.events")
 
 
 def emit(event: str, **fields: Any) -> None:
-    """Emit one structured event line."""
-    payload = {"event": event, "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
-               **fields}
+    """Emit one structured event line.
+
+    Fields with a None value are stripped — they make JSON noisier and, more
+    importantly, cause false-positive matches in log search (e.g. a successful
+    command emitting `"error":null` would otherwise match an "all errors" panel
+    that filters on the substring `error`).
+    """
+    payload = {
+        "event": event,
+        "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
+        **{k: v for k, v in fields.items() if v is not None},
+    }
     # `default=str` is a safety net for things like datetime, Decimal, or IDs that
     # asyncpg returns as non-JSON-native types.
     log.info("EVENT %s", json.dumps(payload, default=str, separators=(",", ":")))
