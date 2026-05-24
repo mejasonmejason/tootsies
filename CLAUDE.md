@@ -71,7 +71,7 @@ Tests use `conftest.py` to stub env vars so imports don't blow up without real s
 ## Key conventions
 
 - Python 3.11+. Ruff for linting (line length 100, E501 ignored). Mypy with `ignore_missing_imports = true` and `check_untyped_defs = true`.
-- All user-facing text goes through the Toots voice, lowercase, short, no emoji unless the user used one first. Plumbing (PR titles, env vars, logs) stays plain.
+- All user-facing text goes through the Toots voice, normal capitalization, short, no emoji unless the user used one first. Plumbing (PR titles, env vars, logs) stays plain.
 - Rate limits: per-user daily (default 20) for `/ask`+mentions and `/recap`; server-wide daily (default 20) for `/discourse` and `/order`. `/order` also has a 15min per-user cooldown.
 - Order states flow: Prepping -> On the stove -> Plating -> Served (or Burnt/Sent back at any step).
 - Config is a frozen dataclass in `config.py`, read from env vars at startup. Required: `DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `DATABASE_URL`.
