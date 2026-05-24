@@ -158,11 +158,11 @@ CREATE TABLE IF NOT EXISTS command_metrics (
 );
 CREATE INDEX IF NOT EXISTS command_metrics_ts_idx ON command_metrics (started_at DESC);
 
--- Chip-in feature: chip-in posting history (cooldown + daily cap tracking).
+-- Chime-in feature: chime-in posting history (cooldown + daily cap tracking).
 -- The listen channel is the configured discourse_channel; the on/off control
--- is the mood schedule (mood=off disables chip-in too). No separate enable
--- table needed.
-CREATE TABLE IF NOT EXISTS chipin_history (
+-- and cadence both come from the mood schedule (mood=off disables; chill/yaps
+-- set different threshold/cap/cooldown). No separate enable table needed.
+CREATE TABLE IF NOT EXISTS chimein_history (
     id BIGSERIAL PRIMARY KEY,
     guild_id BIGINT NOT NULL,
     channel_id BIGINT NOT NULL,
@@ -171,8 +171,8 @@ CREATE TABLE IF NOT EXISTS chipin_history (
     vibe TEXT,
     hook TEXT
 );
-CREATE INDEX IF NOT EXISTS chipin_history_channel_ts_idx
-    ON chipin_history (guild_id, channel_id, posted_at DESC);
+CREATE INDEX IF NOT EXISTS chimein_history_channel_ts_idx
+    ON chimein_history (guild_id, channel_id, posted_at DESC);
 CREATE INDEX IF NOT EXISTS command_metrics_guild_cmd_idx ON command_metrics (guild_id, command);
 """
 
@@ -571,12 +571,14 @@ class DB:
             "DELETE FROM command_metrics WHERE started_at < NOW() - INTERVAL '30 days'"
         )
 
-    # ---- chip-in ----------------------------------------------------------------
-    # Note: chip-in's listen channel is the configured discourse_channel and its
-    # on/off control is the mood schedule (mood=off => no chip-in). No separate
-    # enable/disable table; we only need history for cooldown + daily-cap math.
+    # ---- chime-in ---------------------------------------------------------------
+    # Note: chime-in's listen channel is the configured discourse_channel and its
+    # on/off + cadence both come from the mood schedule (mood=off => silent;
+    # chill/yaps pick different threshold/cap/cooldown in cogs/chimein.py).
+    # No separate enable/disable table; we only need history for cooldown +
+    # daily-cap math.
 
-    async def record_chipin(
+    async def record_chimein(
         self,
         guild_id: int,
         channel_id: int,
@@ -587,28 +589,28 @@ class DB:
     ) -> None:
         await self._pool().execute(
             """
-            INSERT INTO chipin_history (guild_id, channel_id, score, vibe, hook)
+            INSERT INTO chimein_history (guild_id, channel_id, score, vibe, hook)
             VALUES ($1, $2, $3, $4, $5)
             """,
             guild_id, channel_id, score, vibe, hook,
         )
 
-    async def last_chipin_at(
+    async def last_chimein_at(
         self, guild_id: int, channel_id: int,
     ) -> datetime | None:
         row = await self._pool().fetchrow(
             """
-            SELECT MAX(posted_at) AS last_at FROM chipin_history
+            SELECT MAX(posted_at) AS last_at FROM chimein_history
             WHERE guild_id = $1 AND channel_id = $2
             """,
             guild_id, channel_id,
         )
         return row["last_at"] if row else None
 
-    async def chipin_count_today(self, guild_id: int, channel_id: int) -> int:
+    async def chimein_count_today(self, guild_id: int, channel_id: int) -> int:
         row = await self._pool().fetchrow(
             """
-            SELECT COUNT(*) AS n FROM chipin_history
+            SELECT COUNT(*) AS n FROM chimein_history
             WHERE guild_id = $1 AND channel_id = $2
               AND posted_at > NOW() - INTERVAL '24 hours'
             """,
@@ -616,9 +618,9 @@ class DB:
         )
         return int(row["n"]) if row else 0
 
-    async def prune_chipin_history(self) -> None:
+    async def prune_chimein_history(self) -> None:
         await self._pool().execute(
-            "DELETE FROM chipin_history WHERE posted_at < NOW() - INTERVAL '90 days'"
+            "DELETE FROM chimein_history WHERE posted_at < NOW() - INTERVAL '90 days'"
         )
 
     # ---- discourse schedule -----------------------------------------------------

@@ -12,6 +12,21 @@ If you're trying to fix "Toots feels off when X", find the command, scan the kno
 
 ---
 
+## Scheduled cadence per mood
+
+The discourse `mood` setting (set in `/menu`) is the single dial that controls every periodic Toots surface. Manual surfaces (`/ask`, `/recap`, `/discourse category:`, `/order`, mentions) are unaffected by mood, they only see the per-user / per-server rate limits in [`utils/rate_limits.py`](../utils/rate_limits.py).
+
+| Surface | `off` | `chill` | `yaps` |
+|---|---|---|---|
+| [`/discourse` scheduled posts](../cogs/discourse.py) | silent | 2/day at **12pm + 7pm ET** | 4/day at **10am, 2pm, 6pm, 10pm ET** |
+| [Chime-in](../cogs/chimein.py) | silent | up to **3/day**, **60 min** cooldown, score **>= 0.8** | up to **6/day**, **20 min** cooldown, score **>= 0.6** |
+| Hours window (both) | n/a | 9am to 2am ET | 9am to 2am ET |
+| Tick frequency | n/a | scheduler: 1/min, chime-in: 1/min | scheduler: 1/min, chime-in: 1/min |
+
+Mood-independent periodics: the DB pruner runs once every 24h ([`bot.py`](../bot.py)).
+
+---
+
 ## /ask + @Toots mentions
 
 Same backend, same rate limit. The mention handler in [cogs/ask.py](../cogs/ask.py) is a thin Discord-event wrapper around the same `_answer()` method.
@@ -184,38 +199,40 @@ The cog then branches on the verdict for the user-facing message (different defl
 
 ---
 
-## Chip-in (chime-in)
+## Chime-in
 
 Toots leans into the conversation when she has something real to say. No commands of its own, it rides on two settings already in `/menu`:
 - **Listen channel:** the configured `discourse_channel`. Whatever room is your "chatter" / "general" channel is the one Toots will listen in on.
-- **On/off:** the discourse mood. `mood=off` silences chip-in too; `chill` or `yaps` enable it.
+- **On/off + cadence:** the discourse mood. `mood=off` silences chime-in; `chill` makes her reserved (3/day, 60 min cooldown, 0.8 threshold); `yaps` makes her chatty (6/day, 20 min cooldown, 0.6 threshold). Same 2:4 ratio scheduled discourse already uses.
+
+### Design intent
+
+Chime-in (and `/discourse`) is meant to get the ROOM talking to each other, not to start a back-and-forth between one user and Toots. Both prompts ([`chimein_post`](../claude_client.py), [`discourse`](../claude_client.py), [`mood_post`](../claude_client.py)) explicitly tell the model: drop the take or the prompt, don't ask questions aimed at you, don't tee yourself up for a reply. Toots is the bartender setting up the room's next argument and walking off, not a participant.
 
 ### Flow
 
-In [`cogs/chipin.py`](../cogs/chipin.py):
+In [`cogs/chimein.py`](../cogs/chimein.py):
 
 1. **on_message listener** appends every qualifying human message (non-bot, non-empty or has attachments/embeds) posted in the guild's `discourse_channel` to an in-memory deque (max 50 messages).
-2. **`tasks.loop(seconds=60)` tick** refreshes each guild's listen channel from settings, then walks every (guild, channel) with new buffered activity and runs the gate sequence in `_maybe_chip_in_one()`:
+2. **`tasks.loop(seconds=60)` tick** refreshes each guild's listen channel from settings, then walks every (guild, channel) with new buffered activity and runs the gate sequence in `_maybe_chime_in_one()`:
    - **mood_off_gate**: if the discourse mood is `off`, skip
    - **hours_gate**: only 9am-2am ET, else skip
-   - **cooldown_gate**: no chip-in within 30 min of the last one in this channel
-   - **daily_cap_gate**: max 5 chip-ins per channel per 24h
-   - Calls **Haiku 4.5** [`chipin_score()`](../claude_client.py) on the buffer, returns `(score, vibe, hook)`
+   - **cooldown_gate**: no chime-in within the mood-tuned cooldown (60 min chill / 20 min yaps)
+   - **daily_cap_gate**: bounded by the mood-tuned daily cap (3 chill / 6 yaps) per channel per 24h
+   - Calls **Haiku 4.5** [`chimein_score()`](../claude_client.py) on the buffer, returns `(score, vibe, hook)`
    - **vibe_gate**: drop if vibe in `{vulnerable, catchup, other}` (Toots doesn't interrupt private moments)
-   - **threshold_gate**: drop if score < 0.7
-3. If all gates pass, call **Sonnet 4.6** [`chipin_post()`](../claude_client.py) with the buffer + hook + recent image URLs (vision + web search both available) to generate the one-line take.
-4. Send the message, record in `chipin_history` for cooldown + daily cap tracking, emit `chipin_posted` event.
+   - **threshold_gate**: drop if score < mood-tuned threshold (0.8 chill / 0.6 yaps)
+3. If all gates pass, call **Sonnet 4.6** [`chimein_post()`](../claude_client.py) with the buffer + hook + recent image URLs (vision + web search both available) to generate the one-line take.
+4. Send the message, record in `chimein_history` for cooldown + daily cap tracking, emit `chimein_posted` event.
 
 ### Tunable knobs
 
 | What | Where | Current |
 |---|---|---|
-| Min buffer to score | `BUFFER_MIN_FOR_SCORE` in [`cogs/chipin.py`](../cogs/chipin.py) | 5 messages |
+| Min buffer to score | `BUFFER_MIN_FOR_SCORE` in [`cogs/chimein.py`](../cogs/chimein.py) | 5 messages |
 | Buffer max | `BUFFER_MAX` | 50 messages per channel |
-| Cooldown | `COOLDOWN` | 30 minutes per channel |
-| Daily cap | `DAILY_CAP` | 5 chip-ins per channel per 24h |
+| Per-mood cadence | `MOOD_TUNING` | chill: 0.8 / 3 / 60min · yaps: 0.6 / 6 / 20min |
 | Hours window | `HOURS_START_ET`, `HOURS_END_ET_NEXT_DAY` | 9am to 2am ET |
-| Score threshold | `THRESHOLD` | 0.7 (raise = quieter Toots) |
 | Skip vibes | `SKIP_VIBES` | `vulnerable`, `catchup`, `other` |
 | Tick frequency | `TICK_SECONDS` | 60s (cheap, only scores buffers with new activity) |
 | Scoring model | Haiku 4.5 | One-shot scoring, returns JSON-like line |
@@ -223,20 +240,20 @@ In [`cogs/chipin.py`](../cogs/chipin.py):
 
 ### Parser hardening
 
-[`_parse_chipin_score()`](../claude_client.py) is deliberately tolerant of model drift: strips markdown fences, extracts the first `{...}` block, clamps score to `[0, 1]`, coerces unknown vibes to `other`, and falls back to `(0.0, "other", "")` on any parse failure. This guarantees a bad response skips the slot rather than risking a misfired post.
+[`_parse_chimein_score()`](../claude_client.py) is deliberately tolerant of model drift: strips markdown fences, extracts the first `{...}` block, clamps score to `[0, 1]`, coerces unknown vibes to `other`, and falls back to `(0.0, "other", "")` on any parse failure. This guarantees a bad response skips the slot rather than risking a misfired post.
 
 ### Observability
 
 Two event kinds in [`utils/events.py`](../utils/events.py):
 
-- `chipin_evaluated`: emitted once per skipped slot with `decision` field naming which gate stopped it (`hours_gate`, `cooldown_gate`, `daily_cap_gate`, `vibe_gate`, `threshold_gate`, `empty_generation`). Lets you plot "where are we losing chip-in candidates?"
-- `chipin_posted`: emitted on every actual post with `score`, `vibe`, `hook`. Lets you see what Toots actually weighed in on.
+- `chimein_evaluated`: emitted once per skipped slot with `decision` field naming which gate stopped it (`mood_off_gate`, `hours_gate`, `cooldown_gate`, `daily_cap_gate`, `vibe_gate`, `threshold_gate`, `empty_generation`) plus `mood` where relevant. Lets you plot "where are we losing chime-in candidates?"
+- `chimein_posted`: emitted on every actual post with `score`, `vibe`, `hook`, `mood`. Lets you see what Toots actually weighed in on and under which mood.
 
-### When chip-in is "too chatty" or "too quiet"
+### When chime-in is "too chatty" or "too quiet"
 
-- Too chatty: raise `THRESHOLD` (0.7 → 0.8), or extend `SKIP_VIBES` with `conversational`, or shorten the daily cap.
-- Too quiet: lower `THRESHOLD` (0.7 → 0.55), or raise `DAILY_CAP`, or widen `HOURS_END_ET_NEXT_DAY`.
-- Repeating herself: the per-channel `recent_self_posts` block in `chipin_score()` is the existing dedup; pass more history if needed.
+- Switch the discourse `mood` from yaps to chill (or vice versa) in `/menu`. That's the intended dial.
+- If both moods feel wrong, edit `MOOD_TUNING` in [`cogs/chimein.py`](../cogs/chimein.py). Bumping `chill.threshold` up makes her even more reserved when chill; dropping `yaps.cooldown` makes her even chattier when yaps.
+- Repeating herself: the per-channel `recent_self_posts` block in `chimein_score()` is the existing dedup; pass more history if needed.
 
 ---
 

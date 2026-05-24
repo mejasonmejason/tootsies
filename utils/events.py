@@ -30,12 +30,13 @@ Known kinds (keep this list in sync with what's emitted):
       can_read_history, total_messages
   - discourse_fallback : /discourse fell back to the canned fallback quip
       guild_id, user_id, category, source_count, recent_topic_count, reason
-  - chipin_evaluated   : chip-in considered a channel buffer and decided
+  - chimein_evaluated  : chime-in considered a channel buffer and decided
       decision (mood_off_gate | hours_gate | cooldown_gate | daily_cap_gate |
                 vibe_gate | threshold_gate | empty_generation),
-      guild_id, channel_id, optional: score, vibe, count_today, local_hour_et
-  - chipin_posted      : chip-in actually posted a take
-      guild_id, channel_id, score, vibe, hook
+      guild_id, channel_id, optional: score, vibe, count_today,
+      local_hour_et, mood
+  - chimein_posted     : chime-in actually posted a take
+      guild_id, channel_id, score, vibe, hook, mood
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.

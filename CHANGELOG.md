@@ -4,29 +4,40 @@ All notable changes to Tootsies. Dates in PT.
 
 ## [1.0.3], 2026-05-24 (chime-in)
 
-New feature: Toots can lean into the discourse channel and chip in when she has something real to say. No new commands and no new settings, it rides entirely on the existing `discourse_channel` + mood configured in `/menu`.
+New feature: Toots can lean into the discourse channel and chime in when she has something real to say. No new commands and no new settings, it rides entirely on the existing `discourse_channel` + mood configured in `/menu`.
 
 ### Behavior
 
 - **Listen channel:** Toots listens in on the guild's configured `discourse_channel` (the room you've already pointed `/discourse` at).
-- **On/off control:** The discourse mood doubles as chip-in's on/off. `mood=off` silences both scheduled posts and chip-in. `chill` or `yaps` enable it. Change moods in `/menu`.
-- **No new slash commands.** Less surface to remember, fewer permission gates to wire up.
+- **On/off + cadence:** The discourse mood doubles as chime-in's on/off AND its rate. `mood=off` silences both scheduled discourse and chime-in. `chill` makes her reserved (3/day, 60min cooldown, 0.8 score threshold). `yaps` makes her chatty (6/day, 20min cooldown, 0.6 threshold). Mirrors the 2:4 chill:yaps ratio scheduled discourse already uses.
+- **No new slash commands.** One mood dial controls both surfaces.
+
+### Design intent
+
+Chime-in and `/discourse` are both meant to spark conversation BETWEEN the people in the room, not to start a 1-on-1 thread with Toots. The Sonnet prompts ([`chimein_post`](claude_client.py), [`discourse`](claude_client.py), [`mood_post`](claude_client.py)) now explicitly tell the model: drop the take or the prompt, don't ask questions aimed at yourself ("thoughts??"), don't tee yourself up for a reply, prefer takes the room will want to push back on. Toots is the bartender setting up the room's next argument and walking off.
 
 ### Algorithm
 
-Per-channel deque (max 50) populated by `on_message` for the listen channel only. Background tick every 60s refreshes the listen channels from settings, then walks channels with new buffered activity through a gate sequence: mood-off → hours window (9am-2am ET) → cooldown (30 min) → daily cap (5/day) → Haiku scoring (returns score + vibe + hook) → vibe gate (skip `vulnerable`, `catchup`, `other`) → threshold gate (>= 0.7) → Sonnet generates the actual one-liner with web search + vision. Full details in `docs/ALGORITHMS.md`.
+Per-channel deque (max 50) populated by `on_message` for the listen channel only. Background tick every 60s refreshes the listen channels from settings, then walks channels with new buffered activity through a gate sequence: mood-off → hours window (9am-2am ET) → mood-tuned cooldown → mood-tuned daily cap → Haiku scoring (returns score + vibe + hook) → vibe gate (skip `vulnerable`, `catchup`, `other`) → mood-tuned threshold → Sonnet generates the actual one-liner with web search + vision. Full details in `docs/ALGORITHMS.md`.
 
 ### Storage
 
-One new table in `db.py`: `chipin_history` (per-post log for cooldown + daily cap enforcement). Pruned by the existing 24h pruner task.
+One new table in `db.py`: `chimein_history` (per-post log for cooldown + daily cap enforcement). Pruned by the existing 24h pruner task.
 
 ### Observability
 
-Two new structured event kinds: `chipin_evaluated` (with `decision` field for which gate fired, including `mood_off_gate`) and `chipin_posted` (with score, vibe, hook). Filter on `EVENT ` in Railway logs and group by `event` for a chip-in funnel dashboard.
+Two new structured event kinds: `chimein_evaluated` (with `decision` field for which gate fired, including `mood_off_gate`, plus `mood` where relevant) and `chimein_posted` (with score, vibe, hook, mood). Filter on `EVENT ` in Railway logs and group by `event` for a chime-in funnel dashboard. The `mood` field lets you slice "did the chill threshold drop more candidates than the yaps one?"
 
 ### Knobs to tune
 
-All in `cogs/chipin.py`: `BUFFER_MIN_FOR_SCORE`, `COOLDOWN`, `DAILY_CAP`, `HOURS_START_ET`, `HOURS_END_ET_NEXT_DAY`, `THRESHOLD`, `SKIP_VIBES`, `TICK_SECONDS`.
+- `MOOD_TUNING` dict in `cogs/chimein.py` is the primary dial. Each mood has its own `threshold`, `daily_cap`, `cooldown`.
+- Other tunables in `cogs/chimein.py`: `BUFFER_MIN_FOR_SCORE`, `BUFFER_MAX`, `HOURS_START_ET`, `HOURS_END_ET_NEXT_DAY`, `SKIP_VIBES`, `TICK_SECONDS`.
+
+### Voice fixes (same commit)
+
+- **REGULARS RULE added to `persona.py`.** Jabs at named users in the channel are playful, the kind a regular at the bar laughs at. Toots never paints a patron as the villain ("X killed the momentum", "Y ruined the vibe") and verdicts on a topic land on the SUBJECT, not on the people. Reinforced in the `recap()` and `chimein_post()` system prompts.
+- **`/recap` prompt tightened.** Recap output was reading as a neutral beat-reporter summary with sprinkled slang. New structure: one descriptive setup line + one short verdict line on the subject. Banned hedge words ("kinda", "tho" as softener, "real quick", "had everyone in a mood"). Dropped the 2018-Twitter slang grab-bag in favor of a GOOD vs BAD example pair.
+- **Cadence-per-mood table** added to `docs/ALGORITHMS.md` and homepage so mods see in one place that the `mood` dial controls BOTH scheduled discourse and chime-in chattiness.
 
 ---
 

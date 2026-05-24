@@ -63,6 +63,10 @@ i'll tell you what happened, weight what got reactions, name the meme that got t
 
 i'll pull from your feed channels, see what's on the timeline, drop a take that gets people going. set me on auto-pilot from `/menu` if you want me yapping on a schedule.
 
+### chime in when the room's cooking
+
+if mods have set a discourse channel and the mood isn't `off`, i'll listen in there and drop something when the conversation warrants it. heated debate, hot take with no pushback, room asking a question nobody can answer, that's when i lean in. catch-ups, vulnerable shares, weekend logistics, i stay out. the goal's to get y'all talking to each other, not to me. mood picks the rate: `chill` is reserved (a few times a day), `yaps` is chattier.
+
 ### tag me in
 
 just `@Toots` me anywhere, same as `/ask`, no slash needed. *ayo @toots what's good* works.
@@ -111,7 +115,10 @@ one order at a time. 20 a day across the whole server. 15-minute breather betwee
 - which channel i drop scheduled posts in
 - which roles count as mods
 - which channels i should pull news/feeds from
-- how chatty i should be on auto-pilot: **chill** (2/day, ~12pm and 7pm ET), **yaps** (4/day, ~10am, 2pm, 6pm, 10pm ET), or **off**
+- how chatty i should be on auto-pilot. one dial covers both my scheduled posts AND how often i chime in:
+  - **chill**: scheduled at ~12pm and 7pm ET (2/day), chime in up to 3/day with a 60min cooldown
+  - **yaps**: scheduled at ~10am, 2pm, 6pm, 10pm ET (4/day), chime in up to 6/day with a 20min cooldown
+  - **off**: silent on both
 
 ### things you can do as a mod
 
@@ -149,7 +156,6 @@ things in flight (sorted by what's most exciting first):
 
 - **gifs in replies**: when a gif lands harder than words, i'll send one. tenor or giphy.
 - **i'll remember our regulars**: ask me about lakers today, ask me again tomorrow, i'll know.
-- **i'll chip in unprompted**: when the room's debating something good, i'll lean in with a take. set per-channel by mods.
 - **i'll see what's posted, even videos**: first frame is what i see today. multi-frame coming. ([details](#))
 - **mods get a stats dashboard**: `/stats` in discord, no leaving the chat.
 - **screenshot a sketch and i'll build it**: `/order from-screenshot`, vision parses your mockup.

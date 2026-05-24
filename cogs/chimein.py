@@ -1,23 +1,30 @@
-"""Chip-in: Toots leans into the conversation when she has something to say.
+"""Chime-in: Toots leans into the conversation when she has something to say.
 
 No commands of its own. Wires into existing settings:
 
   - Listen channel: the guild's `discourse_channel` (set via /menu).
-  - On/off control: the mood schedule (mood=off => no chip-in).
+  - On/off + cadence: the mood schedule. mood=off silences, chill is reserved
+    (3/day, 60min cooldown, 0.8 threshold), yaps is chatty (6/day, 20min
+    cooldown, 0.6 threshold). Mirrors the 2:4 ratio scheduled discourse
+    already uses.
 
 Algorithm (also documented in docs/ALGORITHMS.md):
   - on_message in the discourse channel appends to a per-channel deque (max 50).
   - tasks.loop(seconds=60) walks each guild with buffered activity:
       * mood != off
       * Buffer has >= BUFFER_MIN_FOR_SCORE new messages since last evaluation
-      * Outside cooldown (default 30 min since last chip-in this channel)
+      * Outside cooldown (mood-tuned: 60min chill / 20min yaps)
       * Within hours window (9am to 2am ET)
-      * Under daily cap (5 chip-ins per channel per 24h)
+      * Under daily cap (mood-tuned: 3 chill / 6 yaps)
     -> call Haiku to score (score, vibe, hook)
   - Then gate by:
       * vibe not in {vulnerable, catchup, other}
-      * score >= THRESHOLD (default 0.7)
+      * score >= mood-tuned THRESHOLD (0.8 chill / 0.6 yaps)
     -> call Sonnet to generate the actual post + send + record.
+
+The goal is to push the ROOM to keep talking to each other, not to start a
+back-and-forth with Toots. The chimein_post prompt enforces this; the
+on_message listener can stay dumb.
 
 Failures in any step go to events + skip cleanly (no crash, no spam).
 """
@@ -55,20 +62,12 @@ BUFFER_MIN_FOR_SCORE = 5
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
 
-# Don't chip in more often than this in a single channel.
-COOLDOWN = timedelta(minutes=30)
-# Hard cap per channel per rolling 24h. Stops runaway behavior on busy days.
-DAILY_CAP = 5
-
 # Hours window in ET. (9, 26) = 9am through 2am next day. Outside this we
-# treat the room as "sleeping" and don't fire chip-ins.
+# treat the room as "sleeping" and don't fire chime-ins regardless of mood.
 HOURS_START_ET = 9
 HOURS_END_ET_NEXT_DAY = 26  # 24 + 2 = 2am next day
 
-# Score threshold. Higher = more reserved Toots, lower = chattier.
-THRESHOLD = 0.7
-
-# Vibes that never get a chip-in regardless of score. Bartender doesn't
+# Vibes that never get a chime-in regardless of score. Bartender doesn't
 # interrupt vulnerable shares or casual catch-ups.
 SKIP_VIBES = {"vulnerable", "catchup", "other"}
 
@@ -76,8 +75,31 @@ SKIP_VIBES = {"vulnerable", "catchup", "other"}
 TICK_SECONDS = 60
 
 
-class ChipIn(commands.Cog):
-    """Background chip-in listener + scorer. No slash commands of its own."""
+class _MoodTuning:
+    """Cadence knobs per mood. Higher threshold = more reserved Toots."""
+
+    __slots__ = ("threshold", "daily_cap", "cooldown")
+
+    def __init__(self, *, threshold: float, daily_cap: int, cooldown: timedelta) -> None:
+        self.threshold = threshold
+        self.daily_cap = daily_cap
+        self.cooldown = cooldown
+
+
+# Mirrors the discourse scheduler's 2:4 chill:yaps post ratio. Chill is the
+# reserved bartender, yaps is the one leaning across the bar.
+MOOD_TUNING: dict[MoodMode, _MoodTuning] = {
+    MoodMode.CHILL: _MoodTuning(
+        threshold=0.8, daily_cap=3, cooldown=timedelta(minutes=60),
+    ),
+    MoodMode.YAPS: _MoodTuning(
+        threshold=0.6, daily_cap=6, cooldown=timedelta(minutes=20),
+    ),
+}
+
+
+class ChimeIn(commands.Cog):
+    """Background chime-in listener + scorer. No slash commands of its own."""
 
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
@@ -105,7 +127,7 @@ class ChipIn(commands.Cog):
         if message.guild is None:
             return
         if message.author.bot:
-            # Skip bot/webhook posts: chip-in should react to humans, not feed bots.
+            # Skip bot/webhook posts: chime-in should react to humans, not feed bots.
             return
         # Pure-attachment messages get added too (vision picks them up).
         if not message.content.strip() and not message.attachments and not message.embeds:
@@ -123,9 +145,9 @@ class ChipIn(commands.Cog):
     @tasks.loop(seconds=TICK_SECONDS)
     async def tick(self) -> None:
         try:
-            await self._maybe_chip_in_all()
+            await self._maybe_chime_in_all()
         except Exception:
-            log.exception("chip-in tick failed")
+            log.exception("chime-in tick failed")
 
     @tick.before_loop
     async def before_tick(self) -> None:
@@ -144,8 +166,8 @@ class ChipIn(commands.Cog):
                 continue
         self._listen_channels = fresh
 
-    async def _maybe_chip_in_all(self) -> None:
-        """Walk every (guild, channel) with buffered activity and try to chip in."""
+    async def _maybe_chime_in_all(self) -> None:
+        """Walk every (guild, channel) with buffered activity and try to chime in."""
         await self._refresh_listen_channels()
         for key in list(self._buffers.keys()):
             guild_id, channel_id = key
@@ -157,10 +179,10 @@ class ChipIn(commands.Cog):
             if self._new_since_eval[key] < BUFFER_MIN_FOR_SCORE:
                 continue
             try:
-                await self._maybe_chip_in_one(guild_id, channel_id)
+                await self._maybe_chime_in_one(guild_id, channel_id)
             except Exception:
                 log.exception(
-                    "chip-in one-channel evaluation failed: guild=%s channel=%s",
+                    "chime-in one-channel evaluation failed: guild=%s channel=%s",
                     guild_id, channel_id,
                 )
             finally:
@@ -168,14 +190,23 @@ class ChipIn(commands.Cog):
                 # post, the buffer's been considered. Next eval needs fresh signal.
                 self._new_since_eval[key] = 0
 
-    async def _maybe_chip_in_one(self, guild_id: int, channel_id: int) -> None:
+    async def _maybe_chime_in_one(self, guild_id: int, channel_id: int) -> None:
         # ---- Pre-flight gates --------------------------------------------------
         # Mood gate: piggyback on the discourse mood setting. mood=off => silent.
+        # The mood also picks the cadence knobs (threshold/cap/cooldown).
         schedule = await self.bot.db.get_schedule(guild_id)
         if schedule.mood == MoodMode.OFF:
             emit(
-                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="mood_off_gate",
+            )
+            return
+        tuning = MOOD_TUNING.get(schedule.mood)
+        if tuning is None:
+            # Defensive: if a new mood is added without tuning, skip rather than crash.
+            emit(
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                decision="mood_off_gate", mood=str(schedule.mood),
             )
             return
 
@@ -185,26 +216,27 @@ class ChipIn(commands.Cog):
         # Translate "9am to 2am next day" into a single test
         if not (et_hour_of_day >= HOURS_START_ET or et_hour_of_day < (HOURS_END_ET_NEXT_DAY - 24)):
             emit(
-                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="hours_gate", local_hour_et=et_hour_of_day,
             )
             return
 
-        # Cooldown
-        last_at = await self.bot.db.last_chipin_at(guild_id, channel_id)
-        if last_at is not None and datetime.now(UTC) - last_at < COOLDOWN:
+        # Cooldown (mood-tuned)
+        last_at = await self.bot.db.last_chimein_at(guild_id, channel_id)
+        if last_at is not None and datetime.now(UTC) - last_at < tuning.cooldown:
             emit(
-                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="cooldown_gate",
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                decision="cooldown_gate", mood=str(schedule.mood),
             )
             return
 
-        # Daily cap
-        count_today = await self.bot.db.chipin_count_today(guild_id, channel_id)
-        if count_today >= DAILY_CAP:
+        # Daily cap (mood-tuned)
+        count_today = await self.bot.db.chimein_count_today(guild_id, channel_id)
+        if count_today >= tuning.daily_cap:
             emit(
-                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="daily_cap_gate", count_today=count_today,
+                mood=str(schedule.mood),
             )
             return
 
@@ -213,24 +245,25 @@ class ChipIn(commands.Cog):
         msgs = list(self._buffers[key])
         buffer_blob = format_for_prompt(msgs)
         try:
-            score, vibe, hook = await self.bot.claude.chipin_score(buffer_blob)
+            score, vibe, hook = await self.bot.claude.chimein_score(buffer_blob)
         except Exception as exc:
             emit(
-                "error", source="chipin_score", error=type(exc).__name__,
+                "error", source="chimein_score", error=type(exc).__name__,
                 guild_id=guild_id, channel_id=channel_id,
             )
             return
 
         if vibe in SKIP_VIBES:
             emit(
-                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="vibe_gate", vibe=vibe, score=score,
             )
             return
-        if score < THRESHOLD:
+        if score < tuning.threshold:
             emit(
-                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="threshold_gate", vibe=vibe, score=score,
+                mood=str(schedule.mood),
             )
             return
 
@@ -247,19 +280,19 @@ class ChipIn(commands.Cog):
 
         image_urls = recent_image_urls(msgs, limit=5)
         try:
-            line = await self.bot.claude.chipin_post(
+            line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
             )
         except Exception as exc:
             emit(
-                "error", source="chipin_post", error=type(exc).__name__,
+                "error", source="chimein_post", error=type(exc).__name__,
                 guild_id=guild_id, channel_id=channel_id,
             )
             return
 
         if not line.strip():
             emit(
-                "chipin_evaluated", guild_id=guild_id, channel_id=channel_id,
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="empty_generation", vibe=vibe, score=score,
             )
             return
@@ -267,18 +300,19 @@ class ChipIn(commands.Cog):
         try:
             await channel.send(line)
         except discord.DiscordException:
-            log.exception("chip-in send failed for guild=%s channel=%s", guild_id, channel_id)
+            log.exception("chime-in send failed for guild=%s channel=%s", guild_id, channel_id)
             return
 
-        await self.bot.db.record_chipin(
+        await self.bot.db.record_chimein(
             guild_id, channel_id, score=score, vibe=vibe, hook=hook,
         )
         emit(
-            "chipin_posted",
+            "chimein_posted",
             guild_id=guild_id, channel_id=channel_id,
             score=score, vibe=vibe, hook=hook[:200],
+            mood=str(schedule.mood),
         )
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(ChipIn(cast("TootsiesBot", bot)))
+    await bot.add_cog(ChimeIn(cast("TootsiesBot", bot)))

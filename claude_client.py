@@ -29,18 +29,18 @@ log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 
 
-_CHIPIN_VIBES = {
+_CHIMEIN_VIBES = {
     "debate", "hot_take", "question", "conversational",
     "vulnerable", "catchup", "other",
 }
 
 
-def _parse_chipin_score(text: str) -> tuple[float, str, str]:
-    """Parse Claude's chipin_score response into (score, vibe, hook).
+def _parse_chimein_score(text: str) -> tuple[float, str, str]:
+    """Parse Claude's chimein_score response into (score, vibe, hook).
 
     Tolerant of slight format drift (extra whitespace, missing fields, code
     fences). Returns a safe fallback (0.0, "other", "") on any parse failure
-    so the chip-in tick skips the slot rather than misfiring.
+    so the chime-in tick skips the slot rather than misfiring.
     """
     import json
     import re
@@ -70,7 +70,7 @@ def _parse_chipin_score(text: str) -> tuple[float, str, str]:
         return 0.0, "other", ""
     score_f = max(0.0, min(1.0, score_f))
 
-    if not isinstance(vibe, str) or vibe not in _CHIPIN_VIBES:
+    if not isinstance(vibe, str) or vibe not in _CHIMEIN_VIBES:
         vibe = "other"
     if not isinstance(hook, str):
         hook = ""
@@ -285,8 +285,41 @@ class ClaudeClient:
             )
 
         system_extra = (
-            "TASK: Recap the recent vibe in this channel. Weight reactions. "
-            "GIVE A TAKE, don't just summarize. ~140 chars.\n"
+            "TASK: Recap the recent vibe in this channel. Weight reactions. ~140 chars.\n"
+            "\n"
+            "STRUCTURE (this is the whole game):\n"
+            "  1. One short setup line naming what happened + who reacted how (call names "
+            "from the buffer when they make the line specific).\n"
+            "  2. End with ONE short verdict line that's YOUR opinion on the SUBJECT, not "
+            "on the people. Not a question, not a hedge. Something like 'that reveal's "
+            "gonna age', 'the runtime was the real issue', 'overhyped', 'the room ate'. "
+            "The verdict is the point of a recap, if you can't land one on the subject "
+            "without dunking on a named patron, just describe and stop.\n"
+            "\n"
+            "REGULARS RULE (also in your core voice, repeated here because it matters): "
+            "Patrons in the channel are your regulars. Jabs are playful, never villainous. "
+            "NEVER write things like 'X killed the momentum', 'Y ruined the vibe', 'Z is "
+            "the buzzkill'. You can describe what they said ('flash was dragging the "
+            "runtime', 'desi brought a different read') but the verdict lands on the "
+            "topic, not on them.\n"
+            "\n"
+            "GOOD vs BAD (same source material):\n"
+            "  BAD (verdict lands on people): 'penguin reveal split the room, flash "
+            "dragging the runtime, martini + gaza locked in. desi and uhlant rolled up "
+            "with weird energy and killed the momentum. mid send.'\n"
+            "  BAD (no verdict, all vibes): 'penguin reveal had everyone in a mood. "
+            "flash was shitting on the length, martini and gaza ate it up, half the room "
+            "was just shocked. vibe shift real quick tho.'\n"
+            "  GOOD: 'penguin reveal split the room, flash dragging the runtime, martini "
+            "+ gaza locked in, half y'all just stunned at his actual face. desi and uhlant "
+            "brought a whole different read. that reveal's gonna age.'\n"
+            "Notes on GOOD: verbs not adjectives, verdict lands on the reveal not on the "
+            "patrons, every named user is described doing a thing rather than being a "
+            "problem.\n"
+            "\n"
+            "BANNED HEDGES: no 'kinda', no 'interesting', no 'tho' as a closing softener, "
+            "no 'real quick' as filler, no 'had everyone in a mood', no 'thoughts??'. If "
+            "you find yourself hedging, the recap isn't ready, pick a side.\n"
             "\n"
             "WEB SEARCH: if the room is hyped about a specific real-world thing (a game, a "
             "release, a news event, a person), use web_search to pull the relevant fact and "
@@ -300,15 +333,13 @@ class ClaudeClient:
             "\n"
             "IMAGES + VIDEO POSTS: when an image is attached OR when a link is a TikTok / "
             "X / Instagram / YouTube video, the embed cover frame is in the vision blocks "
-            "below. Look at it. Describe who's in it, what the vibe is, react like a "
-            "bartender would (yas queen, she ate, this is sending me, he's washed, etc.). "
-            "If multiple posts compete for the recap, prioritize what the room reacted to "
-            "most. For social content (creators, posts, clips), drop a take WITH personality "
-            ", this is the whole point of a recap, not a neutral summary.\n"
+            "below. Look at it. Describe who's in it, what's actually happening, in your "
+            "voice. If multiple posts compete for the recap, prioritize what the room "
+            "reacted to most.\n"
             "\n"
-            "VOICE: keep your bartender voice, sharp, lowercase, terse. Match the room's "
-            "energy. If they're hyped about hot content, hype with them. If they're roasting "
-            "something, roast it with them. Never moderate, never lecture."
+            "VOICE: bartender, lowercase, terse, sharp. Match the room's energy, hype with "
+            "them when they're hyped, roast with them when they're roasting. Never moderate, "
+            "never lecture, never play tour guide ('it seems like the room is discussing...')."
         )
         user = (
             f"Channel: #{channel_name}\n\nMessages (most recent last):\n"
@@ -380,6 +411,12 @@ class ClaudeClient:
             "TASK: Pick the freshest, most talk-worthy thread from these sources and post one starter "
             "in your voice. Hot take welcome. ~140 chars, optional 1 link if it's the source.\n"
             "\n"
+            "GOAL: your post should make the people in the channel want to talk to EACH OTHER. "
+            "You're a bartender setting up the room's next argument, not opening a 1-on-1 thread "
+            "with whoever replies first. Drop the take or the prompt and step back. Don't ask "
+            "questions directed at you (\"thoughts??\") and don't tee yourself up for a reply. If "
+            "you ask a question, make it one the room can answer for each other.\n"
+            "\n"
             "READ THE SOURCE MATERIAL. The Discord feed channels are populated by webhooks/bots "
             "that auto-embed tweets, posts, and articles. The embed snippet you see is just the "
             "first chunk. For anything you're seriously considering posting about, OPEN the URL "
@@ -422,6 +459,10 @@ class ClaudeClient:
         system_extra = (
             "TASK: Drop one short conversation-starter into the chat. Pop culture, sports, music, "
             "movies, food. Your voice. ~140 chars. No question stack, one prompt.\n"
+            "GOAL: the post should make the room want to talk to EACH OTHER. Drop the take or "
+            "the prompt and step back. Don't ask questions aimed at yourself (\"thoughts??\") and "
+            "don't tee up a reply directed at you. If you ask a question, make it one the room "
+            "can answer for each other.\n"
             "STATE: Bake the current state of the topic into your line (e.g. 'lakers vs nuggets r2, "
             "series 1-1', not just 'lakers')."
             f"{dedup_clause}"
@@ -433,13 +474,13 @@ class ClaudeClient:
         )
         return result.text
 
-    async def chipin_score(
+    async def chimein_score(
         self, buffer_blob: str, recent_self_posts: str = "",
     ) -> tuple[float, str, str]:
-        """Score whether the recent buffer is worth chipping in on.
+        """Score whether the recent buffer is worth chiming in on.
 
         Cheap Haiku call. Returns (score 0..1, vibe, hook):
-          - score: how worth-chipping-in this conversation is.
+          - score: how worth-chiming-in this conversation is.
           - vibe: one of: debate, hot_take, question, conversational,
                   vulnerable, catchup, other.
           - hook: a one-line description of what Toots would actually
@@ -447,20 +488,25 @@ class ClaudeClient:
 
         Vibe categories matter for gating: vulnerable/catchup/other are
         no-go zones regardless of score. Debate/hot_take/question are the
-        sweet spot for chipping in.
+        sweet spot for chiming in.
 
         Returns (0.0, "other", "") if the response is unparseable, which
         guarantees we skip this slot rather than risk a weird post.
         """
         system_extra = (
-            "TASK: You are scoring whether the recent chat buffer warrants Toots chipping in "
-            "uninvited. She's a bartender, not a participant in every conversation. She should "
-            "chip in only when there's something real to say.\n"
+            "TASK: You are scoring whether the recent chat buffer warrants Toots chiming in "
+            "uninvited. She's a bartender, not a participant in every conversation. She "
+            "chimes in only when she can drop something that keeps THE ROOM talking to "
+            "each other. The point is to spark more conversation between the people in the "
+            "channel, NOT to start a 1-on-1 back-and-forth with Toots.\n"
             "\n"
             "Rate the buffer on two axes:\n"
-            "  - score (0.0 to 1.0): how worth-chipping-in this is. A heated debate over a "
-            "current event = 0.8+. A few short replies catching up about weekend plans = 0.1. "
-            "A hot take begging for a response = 0.9. A vulnerable share or a private chat = 0.0.\n"
+            "  - score (0.0 to 1.0): how worth-chiming-in this is. A heated debate where a "
+            "fact or counter-take would open the room up further = 0.8+. A few short replies "
+            "catching up about weekend plans = 0.1. A hot take begging for the rest of the "
+            "room to weigh in = 0.9. A vulnerable share or a private chat = 0.0. "
+            "If the only useful chime-in would be directed at one person waiting for a "
+            "reply (and the rest of the room is silent on it), score LOW.\n"
             "  - vibe: pick one of\n"
             "      debate         (people disagreeing about something specific, room is engaged)\n"
             "      hot_take       (someone dropped a contrarian opinion, no pushback yet)\n"
@@ -489,28 +535,43 @@ class ClaudeClient:
         user = f"Buffer (oldest first):\n{buffer_blob}{recent_self_block}"
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra, max_tokens=200,
-            purpose="chipin_score",
+            purpose="chimein_score",
         )
-        return _parse_chipin_score(result.text)
+        return _parse_chimein_score(result.text)
 
-    async def chipin_post(
+    async def chimein_post(
         self,
         buffer_blob: str,
         hook: str,
         image_urls: list[str] | None = None,
     ) -> str:
-        """Generate the actual chip-in take given the buffer + scored hook.
+        """Generate the actual chime-in take given the buffer + scored hook.
 
         Sonnet for the judgment call. Web search + vision available so she can
         bring in a fact or react to a posted image. ~140 chars, in voice.
+
+        The prompt is engineered to push conversation BETWEEN the humans in
+        the room, not to bait a reply directed at Toots. She drops a take or
+        an open prompt and steps back.
         """
         system_extra = (
-            "TASK: The room is talking and you've decided to chip in. Drop ONE short line "
-            "(~140 chars) that lands. You're a bartender leaning into a conversation, not "
-            "a participant catching up. Don't summarize what they said, ADD to it: a take, "
-            "a fact, a question that opens it up. Bring real heat.\n"
+            "TASK: The room is talking and you've decided to chime in. Drop ONE short line "
+            "(~140 chars) that pushes the OTHER PEOPLE in the room to keep talking to each "
+            "other. You're a bartender leaning over the bar to drop a take and walking off, "
+            "not starting a 1-on-1 chat with one person.\n"
             "\n"
             f"WHAT CAUGHT YOUR EYE: {hook}\n"
+            "\n"
+            "AIM AT THE ROOM, NOT AT YOU:\n"
+            "  - Don't ask questions DIRECTED at you (\"...thoughts?\", \"what do y'all think i'm "
+            "missing here?\"). Those bait a reply to Toots.\n"
+            "  - Do drop a take that the room will want to push back on, agree with, or build "
+            "on with each other. \"@gaza's right, [reason], but [counter-angle]\" beats \"hmm, "
+            "interesting, what do you all think?\"\n"
+            "  - If you ask a question, it should be one the ROOM can answer for each other "
+            "(\"who else has been to lucali, is it actually worth the line?\") not one only "
+            "Toots cares about hearing answered.\n"
+            "  - Don't tee yourself up for a follow-up. Drop the take and you're done.\n"
             "\n"
             "WEB SEARCH: if the conversation touches a verifiable real-world thing (a game, "
             "a song, a release, a person), use web_search to bring in the fact. Don't make "
@@ -521,13 +582,18 @@ class ClaudeClient:
             "\n"
             "TONE: like a regular at the bar leaning in mid-shift, not announcing yourself. "
             "Call out a name from the buffer if it lands (\"@gaza you're cooking with that take\"). "
-            "Lowercase, no em dashes, no \"hey everyone,\" no \"actually...\""
+            "Lowercase, no em dashes, no \"hey everyone,\" no \"actually...\"\n"
+            "\n"
+            "REGULARS RULE: jabs at named users are playful, the kind a regular at your bar "
+            "laughs at to your face. NEVER paint a patron as the villain, the buzzkill, or "
+            "the one who killed the vibe. \"@gaza that take's gonna age weird\" is a fine "
+            "playful poke; \"@gaza ruined the conversation\" is over the line."
         )
         user = f"Buffer (oldest first):\n{buffer_blob}"
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            purpose="chipin_post",
+            purpose="chimein_post",
             image_urls=image_urls,
         )
         return result.text

@@ -61,7 +61,7 @@ async def test_all_expected_commands_registered() -> None:
         "undo",
         "menu",  # /menu now serves as both setup and view (no separate /menu_view)
         "help",
-        # /chipin has no commands; it's a background listener wired to
+        # /chimein has no commands; it's a background listener wired to
         # discourse_channel + mood (set via /menu).
     }
     missing = expected - names
