@@ -29,7 +29,12 @@ from discord.ext import commands, tasks
 from models import MoodMode
 from utils import bot_logs, voice
 from utils.events import emit
-from utils.feeds import format_for_prompt, recent_messages
+from utils.feeds import (
+    format_for_prompt,
+    hot_urls,
+    recent_image_urls,
+    recent_messages,
+)
 from utils.gates import require_configured
 from utils.metrics import track_command
 from utils.permissions import can_send_in
@@ -127,6 +132,11 @@ class Discourse(commands.Cog):
 
         sources: list[str] = []
 
+        # Collect across all feed channels AND the invoked channel so we can pass
+        # vision blocks + hot URLs to Claude (so Toots actually reads the tweets
+        # and their preview images, not just the bare embed text).
+        all_feed_msgs: list[discord.Message] = []
+
         # 1. Configured feed channels (category-filtered, or all if 'custom').
         feed_cat = None if category == "custom" else category
         feeds = await self.bot.db.get_feed_channels(guild.id, feed_cat)
@@ -135,10 +145,11 @@ class Discourse(commands.Cog):
             if isinstance(ch, discord.TextChannel):
                 # Feed channels are bot/webhook-posted; include_bots=True or we read nothing.
                 msgs = await recent_messages(
-                    ch, me, limit=10, within=timedelta(hours=24), include_bots=True
+                    ch, me, limit=10, within=timedelta(hours=24), include_bots=True,
                 )
                 if msgs:
                     sources.append(f"--- #{ch.name} (feed) ---\n{format_for_prompt(msgs)}")
+                    all_feed_msgs.extend(msgs)
 
         # 2. Current channel's last hour.
         if isinstance(interaction.channel, discord.TextChannel | discord.Thread):
@@ -149,6 +160,15 @@ class Discourse(commands.Cog):
                 sources.append(
                     f"--- #{interaction.channel.name} (last hour) ---\n{format_for_prompt(local)}"
                 )
+                all_feed_msgs.extend(local)
+
+        # Pull image URLs (preview frames from tweets, etc.) and hot URLs (the
+        # actual tweet/article links) from everything we just gathered. These
+        # let Toots SEE what's in the tweets and explicitly OPEN them via
+        # web_search to read replies / quoted tweets / thread context — same
+        # pattern we use for /recap (commit 8f00964 + 3c18f88).
+        image_urls = recent_image_urls(all_feed_msgs, limit=8)
+        feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
         # State-aware dedup: timestamped recent topics for this category. Manual /discourse
         # must always post (the user explicitly asked), so must_post=True instructs Claude to
@@ -163,6 +183,7 @@ class Discourse(commands.Cog):
         sources_blob = "\n\n".join(sources) if sources else "(no local sources, use web search)"
         line = await self.bot.claude.discourse(
             category, sources_blob, recent_with_timestamps=recent_blob, must_post=True,
+            image_urls=image_urls, hot_urls=feed_hot_urls,
         )
 
         if not line or line.strip().upper() == "EMPTY":

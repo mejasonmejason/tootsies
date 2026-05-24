@@ -281,12 +281,20 @@ class ClaudeClient:
         recent_with_timestamps: str = "",
         *,
         must_post: bool = True,
+        image_urls: list[str] | None = None,
+        hot_urls: list[tuple[str, int, str, str]] | None = None,
     ) -> str:
         """Generate a discourse-starter post pulling from feeds + web.
 
         State-aware dedup: `recent_with_timestamps` lists what's been posted in the last 72h.
         Bake current state into the post (e.g. "lakers vs nuggets r2, series 1-1") so future
         dedup checks can tell when a topic has materially evolved vs. when it's the same beat.
+
+        `image_urls`: preview frames from tweet embeds / posted images, attached as vision blocks.
+        `hot_urls`: (url, reactions, author, source_label) tuples from feed channels — gives
+        Claude an explicit "open these via web_search to read the actual tweet, replies, quoted
+        tweets" list. Without this, Toots only sees the embed snippet (first ~200 chars of the
+        tweet) which is often not enough for a real take.
 
         must_post=True  (manual /discourse): always produce a post. If the obvious topic is
                                               stale, pick a fresher angle. Never return EMPTY.
@@ -304,12 +312,38 @@ class ClaudeClient:
             if recent_with_timestamps
             else ""
         )
+
+        hot_urls_block = ""
+        if hot_urls:
+            lines = [
+                f"  - [{source}] {url}  (posted by {author}, {rxn} reaction(s))"
+                for url, rxn, author, source in hot_urls
+            ]
+            hot_urls_block = (
+                "\n\nLINKS IN THE FEEDS (open these via web_search to read the actual tweet / "
+                "post / article. The Discord embed snippet is just the first ~200 chars; the "
+                "full tweet, the quoted tweet (if any), and the top replies are often where the "
+                "actual story lives. For X/Twitter, follow the reply thread if it's part of the "
+                "conversation. The [source] tag tells you what kind of link it is even when "
+                "wrapped in an embed-fixer like fxtwitter or tnktok):\n" + "\n".join(lines)
+            )
+
         system_extra = (
             "TASK: Pick the freshest, most talk-worthy thread from these sources and post one starter "
             "in your voice. Hot take welcome. ~140 chars, optional 1 link if it's the source.\n"
+            "\n"
+            "READ THE SOURCE MATERIAL. The Discord feed channels are populated by webhooks/bots "
+            "that auto-embed tweets, posts, and articles. The embed snippet you see is just the "
+            "first chunk. For anything you're seriously considering posting about, OPEN the URL "
+            "via web_search to read the full tweet, the quoted tweet (if any), the top replies, "
+            "and reactions/engagement metrics. Don't form a take based on a 200-char preview alone.\n"
+            "\n"
+            "IMAGES: when tweet preview frames are attached as vision blocks, look at them. "
+            "If the picture matters (who's in it, what's happening, the meme), reference it.\n"
+            "\n"
             "STATE: Bake the current state of the topic into your line so we can tell later if it's "
             "the same beat or a new one (e.g. 'lakers vs nuggets r2, series tied 1-1', not just 'lakers')."
-            f"{dedup_clause}"
+            f"{hot_urls_block}{dedup_clause}"
         )
         user = f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
         result = await self._call(
@@ -318,6 +352,7 @@ class ClaudeClient:
             system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             purpose="discourse_manual" if must_post else "discourse_scheduled",
+            image_urls=image_urls,
         )
         return result.text
 
