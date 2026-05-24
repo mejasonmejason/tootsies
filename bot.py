@@ -57,8 +57,12 @@ class TootsiesBot(commands.Bot):
         # Sync per guild — pushes commands fast (~10s) instead of the global ~1hr propagation.
         for guild in self.guilds:
             try:
-                await self.tree.sync(guild=guild)
-                log.info("synced commands to guild %s (%d)", guild.name, guild.id)
+                synced = await self.tree.sync(guild=guild)
+                names = sorted(c.qualified_name for c in self.tree.walk_commands())
+                log.info(
+                    "synced %d commands to guild %s (%d): %s",
+                    len(synced), guild.name, guild.id, ", ".join(f"/{n}" for n in names),
+                )
                 await self.db.ensure_server(guild.id)
             except Exception:
                 log.exception("sync failed for guild %s", guild.id)
