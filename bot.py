@@ -57,11 +57,15 @@ class TootsiesBot(commands.Bot):
         # Sync per guild — pushes commands fast (~10s) instead of the global ~1hr propagation.
         for guild in self.guilds:
             try:
+                # Cogs register commands globally. Copy them onto this guild so the per-guild
+                # sync actually has something to push — gives ~10s propagation instead of the
+                # ~1h Discord takes for true global commands.
+                self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
-                names = sorted(c.qualified_name for c in self.tree.walk_commands())
                 log.info(
                     "synced %d commands to guild %s (%d): %s",
-                    len(synced), guild.name, guild.id, ", ".join(f"/{n}" for n in names),
+                    len(synced), guild.name, guild.id,
+                    ", ".join(f"/{c.name}" for c in synced),
                 )
                 await self.db.ensure_server(guild.id)
             except Exception:
@@ -74,6 +78,7 @@ class TootsiesBot(commands.Bot):
     async def on_guild_join(self, guild: discord.Guild) -> None:
         await self.db.ensure_server(guild.id)
         try:
+            self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
         except Exception:
             log.exception("sync on join failed")
