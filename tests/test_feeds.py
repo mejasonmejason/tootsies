@@ -1,4 +1,4 @@
-"""Tests for utils.feeds — media extraction, image-url harvesting, dead-channel logic."""
+"""Tests for utils.feeds, media extraction, image-url harvesting, dead-channel logic."""
 
 from __future__ import annotations
 

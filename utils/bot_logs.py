@@ -11,7 +11,7 @@ from utils.permissions import can_send_in
 
 log = logging.getLogger(__name__)
 
-# Verbosity ladder — events are emitted with a level; the server's BOT_LOGS_VERBOSITY decides
+# Verbosity ladder, events are emitted with a level; the server's BOT_LOGS_VERBOSITY decides
 # whether we actually post.
 LEVELS = {"errors": 0, "milestones": 1, "full": 2}
 

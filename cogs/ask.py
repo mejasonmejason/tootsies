@@ -42,7 +42,7 @@ class Ask(commands.Cog):
         user_id = interaction.user.id
         assert guild_id is not None
 
-        # Rate limit check first — fail fast before doing work.
+        # Rate limit check first, fail fast before doing work.
         try:
             allowed, _, _ = await check_user_limit(self.bot.db, user_id, guild_id, "ask")
         except Exception as exc:  # fail-open per plan: better to answer than to go silent
@@ -87,7 +87,7 @@ class Ask(commands.Cog):
             msgs = await recent_messages(channel, me, limit=30)
             context = format_for_prompt(msgs)
             # Pull image URLs so Toots can actually see what the room is reacting to.
-            # Bumped from 3 to 8 — lean toward accuracy / "she sees what we see" since
+            # Bumped from 3 to 8, lean toward accuracy / "she sees what we see" since
             # cost is still bounded by the hard cap inside _call().
             image_urls = recent_image_urls(msgs, limit=8)
         return await self.bot.claude.ask(
@@ -119,7 +119,7 @@ class Ask(commands.Cog):
             # Strip the auto-added mention prefix Discord injects on replies, then check again.
             stripped = re.sub(rf"^<@!?{me.id}>\s*", "", message.content, count=1)
             if me.mention not in stripped and f"<@{me.id}>" not in stripped and f"<@!{me.id}>" not in stripped:
-                # The only mention was the auto-reply prefix — ignore.
+                # The only mention was the auto-reply prefix, ignore.
                 return
 
         if not await self.bot.db.is_configured(message.guild.id):

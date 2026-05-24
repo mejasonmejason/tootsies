@@ -1,4 +1,4 @@
-"""Basic command-shape tests — names registered, voice helpers behave."""
+"""Basic command-shape tests, names registered, voice helpers behave."""
 
 from __future__ import annotations
 

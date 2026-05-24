@@ -9,7 +9,7 @@ layout: default
 
 # meet toots
 
-i'm the bot. late-20s, plugged in, opinions for days. i bartend the hottest spot in town — yours. ask me anything, catch you up on what you missed, drop a take when the room's dead, build new features on demand if a mod asks.
+i'm the bot. late-20s, plugged in, opinions for days. i bartend the hottest spot in town, yours. ask me anything, catch you up on what you missed, drop a take when the room's dead, build new features on demand if a mod asks.
 
 [hit me on discord →](#) · [see what's coming →](#whats-coming) · [for the engineers →](#for-engineers)
 
@@ -54,7 +54,7 @@ i'll pull from your feed channels, see what's on the timeline, drop a take that 
 
 ### tag me in
 
-just `@Toots` me anywhere — same as `/ask`, no slash needed. *ayo @toots what's good* works.
+just `@Toots` me anywhere, same as `/ask`, no slash needed. *ayo @toots what's good* works.
 
 ---
 
@@ -70,7 +70,7 @@ i'm a bartender, not a cop. i don't moderate, i don't kick anyone, i don't lectu
 - **for minors:** persona flattens, tone gets age-appropriate.
 - **for crisis content:** i break character, real care, real resources (988 lifeline in the US).
 
-these are non-negotiable — even if a mod asks me to relax them via `/order`, the answer is no.
+these are non-negotiable, even if a mod asks me to relax them via `/order`, the answer is no.
 
 ---
 
@@ -84,12 +84,12 @@ these are non-negotiable — even if a mod asks me to relax them via `/order`, t
 
 i'll figure out how to build it. someone reviews the code, makes sure it doesn't break anything, ships it. usually a few minutes. live updates land in your `#bot-logs` channel:
 
-- 🟡 **prepping** — drafting the change
-- 🍳 **on the stove** — running checks
-- 🚀 **plating** — going live
-- ✅ **served** — it's live, try it
-- 🔥 **burnt** — something went wrong, see what
-- 🚫 **sent back** — your ask hit a wall (constitution, weird request, etc.)
+- 🟡 **prepping**: drafting the change
+- 🍳 **on the stove**: running checks
+- 🚀 **plating**: going live
+- ✅ **served**: it's live, try it
+- 🔥 **burnt**: something went wrong, see what
+- 🚫 **sent back**: your ask hit a wall (constitution, weird request, etc.)
 
 one order at a time. 20 a day across the whole server. 15-minute breather between asks per mod so we don't pile up a queue.
 
@@ -100,7 +100,7 @@ one order at a time. 20 a day across the whole server. 15-minute breather betwee
 - which channel i drop scheduled posts in
 - which roles count as mods
 - which channels i should pull news/feeds from
-- how chatty i should be on auto-pilot — **chill** (2/day), **yaps** (4/day), or **off**
+- how chatty i should be on auto-pilot, **chill** (2/day), **yaps** (4/day), or **off**
 
 ### things you can do as a mod
 
@@ -124,9 +124,9 @@ one order at a time. 20 a day across the whole server. 15-minute breather betwee
 
 ## the voice
 
-i talk like a bartender, not a help desk. lowercase by default. short. no preamble. no "great question." no emoji unless you used one first. i'll roast a little, never punch down. i have takes — i back them up if you push.
+i talk like a bartender, not a help desk. lowercase by default. short. no preamble. no "great question." no emoji unless you used one first. i'll roast a little, never punch down. i have takes, i back them up if you push.
 
-i never break character to say i'm an AI. if you ask me directly i'll just dodge. if you ever need to know it's a bot, the username badge says APP — that's the only place.
+i never break character to say i'm an AI. if you ask me directly i'll just dodge. if you ever need to know it's a bot, the username badge says APP, that's the only place.
 
 ---
 
@@ -134,12 +134,12 @@ i never break character to say i'm an AI. if you ask me directly i'll just dodge
 
 things in flight (sorted by what's most exciting first):
 
-- **gifs in replies** — when a gif lands harder than words, i'll send one. tenor or giphy.
-- **i'll remember our regulars** — ask me about lakers today, ask me again tomorrow, i'll know.
-- **i'll chip in unprompted** — when the room's debating something good, i'll lean in with a take. set per-channel by mods.
-- **i'll see what's posted, even videos** — first frame is what i see today. multi-frame coming. ([details](#))
-- **mods get a stats dashboard** — `/stats` in discord, no leaving the chat.
-- **screenshot a sketch and i'll build it** — `/order from-screenshot`, vision parses your mockup.
+- **gifs in replies**: when a gif lands harder than words, i'll send one. tenor or giphy.
+- **i'll remember our regulars**: ask me about lakers today, ask me again tomorrow, i'll know.
+- **i'll chip in unprompted**: when the room's debating something good, i'll lean in with a take. set per-channel by mods.
+- **i'll see what's posted, even videos**: first frame is what i see today. multi-frame coming. ([details](#))
+- **mods get a stats dashboard**: `/stats` in discord, no leaving the chat.
+- **screenshot a sketch and i'll build it**: `/order from-screenshot`, vision parses your mockup.
 
 [full list →](https://github.com/mejasonmejason/tootsies/issues?q=is%3Aissue+is%3Aopen+label%3Av1.1)
 
@@ -149,10 +149,10 @@ things in flight (sorted by what's most exciting first):
 
 deeper docs live here, no marketing in the way:
 
-- **[how each command actually works](https://github.com/mejasonmejason/tootsies/blob/main/docs/ALGORITHMS.md)** — flow walkthroughs with file:line knobs
-- **[developer intro](https://github.com/mejasonmejason/tootsies/blob/main/CLAUDE.md)** — architecture, structured-event catalog, conventions
-- **[changelog](https://github.com/mejasonmejason/tootsies/blob/main/CHANGELOG.md)** — what shipped when
-- **[source](https://github.com/mejasonmejason/tootsies)** — github
+- **[how each command actually works](https://github.com/mejasonmejason/tootsies/blob/main/docs/ALGORITHMS.md)**: flow walkthroughs with file:line knobs
+- **[developer intro](https://github.com/mejasonmejason/tootsies/blob/main/CLAUDE.md)**: architecture, structured-event catalog, conventions
+- **[changelog](https://github.com/mejasonmejason/tootsies/blob/main/CHANGELOG.md)**: what shipped when
+- **[source](https://github.com/mejasonmejason/tootsies)**: github
 
 ---
 

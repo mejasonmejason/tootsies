@@ -1,4 +1,4 @@
-"""Tests for utils.permissions — mod role gating and channel access checks."""
+"""Tests for utils.permissions, mod role gating and channel access checks."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ async def test_is_mod_true_for_guild_owner() -> None:
 
 @pytest.mark.asyncio
 async def test_is_mod_true_for_manage_guild_permission() -> None:
-    """Anyone with manage_guild is a mod even if no roles match — server admins."""
+    """Anyone with manage_guild is a mod even if no roles match, server admins."""
     db = MagicMock()
     db.get_mod_roles = AsyncMock(return_value=[])
     member = _fake_member(user_id=1, guild_owner_id=999, manage_guild=True)

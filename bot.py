@@ -56,11 +56,11 @@ class TootsiesBot(commands.Bot):
             log.info("loaded %s", cog)
 
     async def on_ready(self) -> None:
-        # Sync per guild — pushes commands fast (~10s) instead of the global ~1hr propagation.
+        # Sync per guild, pushes commands fast (~10s) instead of the global ~1hr propagation.
         for guild in self.guilds:
             try:
                 # Cogs register commands globally. Copy them onto this guild so the per-guild
-                # sync actually has something to push — gives ~10s propagation instead of the
+                # sync actually has something to push, gives ~10s propagation instead of the
                 # ~1h Discord takes for true global commands.
                 self.tree.copy_global_to(guild=guild)
                 synced = await self.tree.sync(guild=guild)
@@ -162,7 +162,7 @@ async def _main() -> None:
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        # Windows or restricted environments don't support add_signal_handler — skip silently.
+        # Windows or restricted environments don't support add_signal_handler, skip silently.
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
 

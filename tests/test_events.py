@@ -1,4 +1,4 @@
-"""Tests for utils.events.emit — JSON shape, EVENT prefix, None stripping."""
+"""Tests for utils.events.emit, JSON shape, EVENT prefix, None stripping."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def test_emit_strips_none_fields(event_log: pytest.LogCaptureFixture) -> None:
 
 
 def test_emit_preserves_falsy_non_none_values(event_log: pytest.LogCaptureFixture) -> None:
-    """Strip None only — keep 0, False, "" since those are real values."""
+    """Strip None only, keep 0, False, "" since those are real values."""
     emit("command", cmd="ask", duration_ms=0, ok=False)
     payload = _payload(event_log.records[0].getMessage())
     assert payload["duration_ms"] == 0
@@ -57,7 +57,7 @@ def test_emit_preserves_falsy_non_none_values(event_log: pytest.LogCaptureFixtur
 def test_emit_serializes_non_native_types_via_default_str(
     event_log: pytest.LogCaptureFixture,
 ) -> None:
-    """asyncpg returns Decimal, datetime, etc — default=str rescues them."""
+    """asyncpg returns Decimal, datetime, etc, default=str rescues them."""
     from datetime import UTC, datetime
 
     emit("test", when=datetime(2026, 5, 24, tzinfo=UTC))

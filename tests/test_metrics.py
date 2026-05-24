@@ -1,4 +1,4 @@
-"""Tests for utils.metrics.track_command — signature preservation, error capture."""
+"""Tests for utils.metrics.track_command, signature preservation, error capture."""
 
 from __future__ import annotations
 

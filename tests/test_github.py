@@ -1,4 +1,4 @@
-"""Tests for utils.github — the issue body composer + HTTP client error paths."""
+"""Tests for utils.github, the issue body composer + HTTP client error paths."""
 
 from __future__ import annotations
 

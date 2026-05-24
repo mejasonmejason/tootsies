@@ -1,4 +1,4 @@
-"""Permission helpers — mod role checks + channel-permission introspection."""
+"""Permission helpers, mod role checks + channel-permission introspection."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from db import DB
 
 async def is_mod(db: DB, member: discord.Member) -> bool:
     """True if member has any configured mod role, OR is the guild owner, OR has manage_guild."""
-    # Owners and manage_guild always pass — safety net for un-configured guilds.
+    # Owners and manage_guild always pass, safety net for un-configured guilds.
     if member.guild.owner_id == member.id:
         return True
     if member.guild_permissions.manage_guild:

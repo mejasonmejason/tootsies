@@ -1,9 +1,9 @@
-"""Railway GraphQL API client — used by /undo.
+"""Railway GraphQL API client, used by /undo.
 
 We talk to the public GraphQL endpoint at backboard.railway.app. Behavior:
 1. Fetch the N most-recent SUCCESS deployments for the configured service.
 2. Skip the currently-active one (Railway injects RAILWAY_DEPLOYMENT_ID into the runtime).
-3. Redeploy the next-most-recent SUCCESS — `usePreviousImageTag` reuses the Docker image
+3. Redeploy the next-most-recent SUCCESS, `usePreviousImageTag` reuses the Docker image
    instead of rebuilding, which is the fastest correct rollback.
 
 The Railway API surface changes occasionally. If a future schema change breaks this, the
@@ -122,7 +122,7 @@ class RailwayClient:
         target = next((d for d in successes if d.id != current), None)
         if target is None:
             raise RailwayError(
-                "only one successful deployment exists — nothing to roll back to"
+                "only one successful deployment exists, nothing to roll back to"
             )
 
         new_id = await self.redeploy(target.id)

@@ -1,4 +1,4 @@
-"""Dataclasses for DB rows. Pure transport — no ORM behavior."""
+"""Dataclasses for DB rows. Pure transport, no ORM behavior."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ ORDER_STATUS_LABEL = {
     OrderStatus.SENT_BACK: "Sent back",
 }
 
-# Terminal states — order is done one way or another.
+# Terminal states, order is done one way or another.
 TERMINAL_STATUSES = {OrderStatus.SERVED, OrderStatus.BURNT, OrderStatus.SENT_BACK}
 
 

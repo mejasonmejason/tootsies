@@ -5,7 +5,7 @@ Wraps a cog's slash-command callback with `@track_command()`. Every invocation:
 - writes a row to the `command_metrics` table for time-series queries (latency,
   success rate, per-user volume) without needing external telemetry infra.
 
-Failures in the metrics path never block the command — we log and swallow.
+Failures in the metrics path never block the command, we log and swallow.
 """
 
 from __future__ import annotations

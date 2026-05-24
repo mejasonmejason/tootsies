@@ -1,4 +1,4 @@
-"""Unit tests for utils.rate_limits — daily caps + cooldowns + on-hit event emission."""
+"""Unit tests for utils.rate_limits, daily caps + cooldowns + on-hit event emission."""
 
 from __future__ import annotations
 

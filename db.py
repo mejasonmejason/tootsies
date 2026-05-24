@@ -12,7 +12,7 @@ from models import MoodMode, Order, OrderStatus, ScheduleState
 
 log = logging.getLogger(__name__)
 
-# Schema is idempotent — re-runs on every startup. Add new tables here; never drop columns
+# Schema is idempotent, re-runs on every startup. Add new tables here; never drop columns
 # from existing tables without a migration plan.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS servers (
@@ -179,7 +179,7 @@ class DB:
 
     def _pool(self) -> asyncpg.Pool:
         if self.pool is None:
-            raise RuntimeError("db not connected — call DB.connect() first")
+            raise RuntimeError("db not connected, call DB.connect() first")
         return self.pool
 
     # ---- servers ----------------------------------------------------------------
@@ -220,7 +220,7 @@ class DB:
         row = await self._pool().fetchrow(
             "SELECT kitchen_open FROM servers WHERE guild_id = $1", guild_id
         )
-        # Default open if no row yet — /menu hasn't been run but we shouldn't block.
+        # Default open if no row yet, /menu hasn't been run but we shouldn't block.
         return True if row is None else bool(row["kitchen_open"])
 
     # ---- settings ---------------------------------------------------------------
@@ -381,7 +381,7 @@ class DB:
         return [_row_to_order(r) for r in rows]
 
     async def last_failed_deploy(self, guild_id: int) -> Order | None:
-        """Most recent order — if it's burnt at the deploy step, we're pipeline-red."""
+        """Most recent order, if it's burnt at the deploy step, we're pipeline-red."""
         row = await self._pool().fetchrow(
             """
             SELECT * FROM orders WHERE guild_id = $1
@@ -485,7 +485,7 @@ class DB:
     async def recent_discourse_all(
         self, guild_id: int, limit: int = 20
     ) -> list[tuple[str, str, datetime]]:
-        """Recent topics across ALL categories — used by the mood scheduler's dedup."""
+        """Recent topics across ALL categories, used by the mood scheduler's dedup."""
         rows = await self._pool().fetch(
             """
             SELECT category, topic_summary, created_at FROM discourse_history

@@ -1,4 +1,4 @@
-"""Additional tests for utils.railway — _gql error paths + low-level methods.
+"""Additional tests for utils.railway, _gql error paths + low-level methods.
 
 The existing tests/test_railway.py covers the high-level rollback_to_previous flow.
 These tests target the underlying primitives.

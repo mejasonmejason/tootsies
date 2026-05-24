@@ -1,4 +1,4 @@
-"""/recap period:[1h|today] — channel-level summary in Toots voice."""
+"""/recap period:[1h|today], channel-level summary in Toots voice."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ class Recap(commands.Cog):
             return
 
         within = _period_to_window(period.value)
-        # /recap looks at more history than /ask — up to 200 over the period.
+        # /recap looks at more history than /ask, up to 200 over the period.
         # include_bots=True: a /recap should summarize EVERYTHING (webhook posts,
         # feed bots, the works), not just human chatter.
         msgs = await recent_messages(channel, me, limit=200, within=within, include_bots=True)
@@ -88,7 +88,7 @@ class Recap(commands.Cog):
         await interaction.response.defer(thinking=True)
         try:
             if is_channel_dead(msgs):
-                # Distinguish "quip vs. no info" — emit a structured diagnostic AND post
+                # Distinguish "quip vs. no info", emit a structured diagnostic AND post
                 # to #bot-logs at full verbosity so mods can tell whether Toots is being
                 # cute or whether something's actually wrong (perms, filtering, etc.).
                 diag = channel_dead_diagnostic(channel, me, msgs)

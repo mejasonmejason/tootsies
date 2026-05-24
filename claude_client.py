@@ -1,8 +1,8 @@
 """Anthropic client wrapper.
 
 Model routing:
-- HAIKU: /ask, /recap, /mood, ambient deflections — fast and cheap
-- SONNET: /discourse, /order pre-flight sanity check — needs judgment
+- HAIKU: /ask, /recap, /mood, ambient deflections, fast and cheap
+- SONNET: /discourse, /order pre-flight sanity check, needs judgment
 
 System prompt is cached (constitution + persona are stable across calls).
 """
@@ -39,7 +39,7 @@ def _time_context() -> str:
     now_utc = datetime.now(UTC)
     now_pt = now_utc.astimezone(PT)
     return (
-        f"[ctx — current time: {now_utc.strftime('%Y-%m-%d %H:%M')} UTC, "
+        f"[ctx, current time: {now_utc.strftime('%Y-%m-%d %H:%M')} UTC, "
         f"{now_pt.strftime('%Y-%m-%d %H:%M %Z')}, weekday: {now_utc.strftime('%A')}]\n\n"
     )
 
@@ -233,7 +233,7 @@ class ClaudeClient:
                 "\n\nLINKS THE ROOM SHARED (open these via web_search before recapping; "
                 "higher reaction counts matter more. The [source] tag tells you what kind "
                 "of content it is even if the host is an embed-fixer like fxtwitter or "
-                "tnktok — those redirect to the canonical site):\n" + "\n".join(lines)
+                "tnktok, those redirect to the canonical site):\n" + "\n".join(lines)
             )
 
         system_extra = (
@@ -247,7 +247,7 @@ class ClaudeClient:
             "\n"
             "LINKS: when URLs are shared (see LINKS THE ROOM SHARED below if present), OPEN "
             "them via web_search to know what's actually there. Don't punt with 'can't see "
-            "what's at the link' — the tool is right there. If a fetch fails, name what the "
+            "what's at the link', the tool is right there. If a fetch fails, name what the "
             "URL points to (the [source] tag tells you) and move on.\n"
             "\n"
             "IMAGES + VIDEO POSTS: when an image is attached OR when a link is a TikTok / "
@@ -256,9 +256,9 @@ class ClaudeClient:
             "bartender would (yas queen, she ate, this is sending me, he's washed, etc.). "
             "If multiple posts compete for the recap, prioritize what the room reacted to "
             "most. For social content (creators, posts, clips), drop a take WITH personality "
-            "— this is the whole point of a recap, not a neutral summary.\n"
+            ", this is the whole point of a recap, not a neutral summary.\n"
             "\n"
-            "VOICE: keep your bartender voice — sharp, lowercase, terse. Match the room's "
+            "VOICE: keep your bartender voice, sharp, lowercase, terse. Match the room's "
             "energy. If they're hyped about hot content, hype with them. If they're roasting "
             "something, roast it with them. Never moderate, never lecture."
         )
@@ -291,7 +291,7 @@ class ClaudeClient:
         dedup checks can tell when a topic has materially evolved vs. when it's the same beat.
 
         `image_urls`: preview frames from tweet embeds / posted images, attached as vision blocks.
-        `hot_urls`: (url, reactions, author, source_label) tuples from feed channels — gives
+        `hot_urls`: (url, reactions, author, source_label) tuples from feed channels, gives
         Claude an explicit "open these via web_search to read the actual tweet, replies, quoted
         tweets" list. Without this, Toots only sees the embed snippet (first ~200 chars of the
         tweet) which is often not enough for a real take.
@@ -359,7 +359,7 @@ class ClaudeClient:
     async def mood_post(self, recent_with_timestamps: str = "") -> str:
         """Ambient post for the scheduled mood ticker.
 
-        Returns literal "EMPTY" if recent topics cover the field and nothing has evolved —
+        Returns literal "EMPTY" if recent topics cover the field and nothing has evolved.
         the scheduler treats that as "skip this slot cleanly."
         """
         dedup_clause = (
@@ -453,6 +453,6 @@ class ClaudeClient:
         if upper.startswith("REJECT"):
             _, _, reason = text.partition(":")
             return "reject", reason.strip() or "no reason given"
-        # Unparseable — fail closed, log raw text for inspection.
+        # Unparseable, fail closed, log raw text for inspection.
         log.warning("preflight unparseable: %s", text)
         return "reject", f"unparseable preflight response: {text[:200]}"

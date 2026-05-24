@@ -1,4 +1,4 @@
-"""/menu — interactive setup AND current-state view, one command.
+"""/menu, interactive setup AND current-state view, one command.
 
 Layout (5 rows, Discord's hard cap):
   row 0: bot-logs channel select
@@ -39,7 +39,7 @@ MOOD_CYCLE = ["chill", "yaps", "off"]
 
 log = logging.getLogger(__name__)
 
-# Heuristics for first-time prefill — case-insensitive matches against
+# Heuristics for first-time prefill, case-insensitive matches against
 # channel/role names. Skipped entirely if the guild already has saved settings.
 CHANNEL_PATTERNS = {
     "bot_logs_channel": [r"^bot-?logs$", r"^back-?of-?house$"],
@@ -77,7 +77,7 @@ def _pattern_prefill(guild: discord.Guild) -> dict[str, object]:
 async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[str, object]:
     """Load saved settings (if any) and fill any gaps with pattern-based guesses.
 
-    A re-run of /menu after setup should reflect what's actually configured —
+    A re-run of /menu after setup should reflect what's actually configured.
     that makes /menu_view redundant. Pattern matching only kicks in for
     settings that haven't been saved yet.
     """
@@ -96,7 +96,7 @@ async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[st
     if saved_feed_channels:
         state["feed_channel_ids"] = [cid for cid, _cat in saved_feed_channels]
     # Mood is a real DB-backed value (defaulted to 'chill' by the schema), so it
-    # always exists — no need to fall back to pattern matching.
+    # always exists, no need to fall back to pattern matching.
     state["mood"] = saved_schedule.mood.value
 
     # Fill any remaining gaps from name-pattern heuristics.
@@ -151,7 +151,7 @@ class Settings(commands.Cog):
 def _safe_channel_default(
     guild: discord.Guild, channel_id: object,
 ) -> list[discord.SelectDefaultValue]:
-    """Return a default_values entry for a channel ID — only if it still exists."""
+    """Return a default_values entry for a channel ID, only if it still exists."""
     if not isinstance(channel_id, int):
         return []
     ch = guild.get_channel(channel_id)

@@ -1,4 +1,4 @@
-"""/help — what Toots does, who can run what, and the daily caps.
+"""/help, what Toots does, who can run what, and the daily caps.
 
 Available to everyone (not mod-gated). Toots-voice but lightly formal since
 it's reference text. Lives in its own cog so /order can later add categories
@@ -41,31 +41,31 @@ class Help(commands.Cog):
         embed.add_field(
             name="🗣️  everyone",
             value=(
-                "**`/ask <question>`** — ask me anything. takes, recs, scores, "
+                "**`/ask <question>`**: ask me anything. takes, recs, scores, "
                 "whatever. i read the room and check the web.\n"
-                "**`@Toots <question>`** — same thing, no slash. "
+                "**`@Toots <question>`**: same thing, no slash. "
                 "*ayo @Toots what's the move tonight* works.\n"
-                "**`/recap period:<last hour | last 24h | today>`** — what'd "
+                "**`/recap period:<last hour | last 24h | today>`**: what'd "
                 "you miss in here.\n"
                 "**`/discourse category:<pop | sports | cinema | hiphop | nba | "
-                "custom>`** — i drop a discussion starter."
+                "custom>`**, i drop a discussion starter."
             ),
             inline=False,
         )
         embed.add_field(
             name="👮  mods only",
             value=(
-                "**`/order new <feature>`** — tell me a new thing you want me to "
+                "**`/order new <feature>`**: tell me a new thing you want me to "
                 "do. i'll build it. one at a time, takes a few minutes.\n"
-                "**`/order status`** — see what i'm working on.\n"
-                "**`/order retry <number>`** — try again on something that "
+                "**`/order status`**: see what i'm working on.\n"
+                "**`/order retry <number>`**: try again on something that "
                 "didn't work.\n"
-                "**`/order cancel <number>`** — call it off.\n"
-                "**`/menu`** — set up my channels, mod roles, what to post on "
+                "**`/order cancel <number>`**: call it off.\n"
+                "**`/menu`**: set up my channels, mod roles, what to post on "
                 "auto-pilot, where to pull news from.\n"
-                "**`/close` / `/open`** — stop or restart taking `/order` "
+                "**`/close` / `/open`**: stop or restart taking `/order` "
                 "requests.\n"
-                "**`/undo`** — if a new feature broke me, roll me back to the "
+                "**`/undo`**: if a new feature broke me, roll me back to the "
                 "version before."
             ),
             inline=False,

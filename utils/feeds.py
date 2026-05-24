@@ -38,7 +38,7 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
     """Pull embed text, attachments, and embedded images out of a message."""
     refs: list[MediaRef] = []
 
-    # Embeds — Discord auto-unfurls links into embeds (X posts, articles, GIFs).
+    # Embeds, Discord auto-unfurls links into embeds (X posts, articles, GIFs).
     # Multi-image carousels (X with 4 photos, Bluesky multi-image posts) come
     # through as separate embeds on the same message, so iterating msg.embeds
     # already gets us all the frames in those cases.
@@ -54,7 +54,7 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
 
         # Pull BOTH embed.image and embed.thumbnail when both exist and differ
         # (Tier 1 stills boost). For TikTok / Twitter video embeds these are
-        # often two different frames of the same clip — the more frames Claude
+        # often two different frames of the same clip, the more frames Claude
         # sees, the better her take on what's actually in the video.
         seen_image_urls: set[str] = set()
         if embed.image and embed.image.url:
@@ -74,12 +74,12 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
         if embed.video and embed.video.url:
             refs.append(MediaRef(kind="video", label=f"embed video: {embed.video.url}"))
 
-    # Direct attachments — uploaded files.
+    # Direct attachments, uploaded files.
     for att in msg.attachments:
         ct = att.content_type or ""
         if ct.startswith("image/"):
             # Oversized images still get a ref (so Toots knows an image was posted)
-            # but no image_url — too big for the vision API.
+            # but no image_url, too big for the vision API.
             if att.size <= _VISION_MAX_BYTES:
                 refs.append(MediaRef(
                     kind="image", label=f"image: {att.filename}", image_url=att.url,
@@ -106,7 +106,7 @@ def recent_image_urls(messages: list[discord.Message], limit: int = 3) -> list[s
     Ranking: messages with reactions come first (highest count first),
     then messages with no reactions filled in most-recent first. The reasoning:
     if the room reacted to it, it's almost certainly more relevant to /recap
-    or /ask than something nobody engaged with — even if older.
+    or /ask than something nobody engaged with, even if older.
     """
     candidates: list[tuple[int, datetime, str]] = []
     for msg in messages:

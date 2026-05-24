@@ -1,6 +1,6 @@
 # tootsies
 
-A Discord bot for the Tootsies server. The bot is "Toots" — a hip city-girl bartender persona. Mods ship new features by typing `/order <feature>` in Discord; Claude writes the code, CI runs, Railway redeploys.
+A Discord bot for the Tootsies server. The bot is "Toots", a hip city-girl bartender persona. Mods ship new features by typing `/order <feature>` in Discord; Claude writes the code, CI runs, Railway redeploys.
 
 **→ For mods, members, and a single-page overview**: https://mejasonmejason.github.io/tootsies/
 
@@ -52,8 +52,8 @@ The bot pre-flight-checks via Sonnet, files a GitHub issue tagged `@claude`, the
 
 ### Reference
 
-- **[CLAUDE.md](CLAUDE.md)** — developer intro, structured event catalog, conventions
-- **[docs/ALGORITHMS.md](docs/ALGORITHMS.md)** — per-command flow + tunable knobs
-- **[CHANGELOG.md](CHANGELOG.md)** — what changed and when
-- **[EXECUTION_PLAN.md](EXECUTION_PLAN.md)** — frozen v1 design artifact
-- **[docs/](docs/)** — GitHub Pages source for the public site
+- **[CLAUDE.md](CLAUDE.md)**: developer intro, structured event catalog, conventions
+- **[docs/ALGORITHMS.md](docs/ALGORITHMS.md)**: per-command flow + tunable knobs
+- **[CHANGELOG.md](CHANGELOG.md)**: what changed and when
+- **[EXECUTION_PLAN.md](EXECUTION_PLAN.md)**: frozen v1 design artifact
+- **[docs/](docs/)**: GitHub Pages source for the public site

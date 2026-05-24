@@ -1,4 +1,4 @@
-"""Persona + constitution sanity — the things that should never quietly drift."""
+"""Persona + constitution sanity, the things that should never quietly drift."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from persona import PERSONA_CORE, system_prompt
 def test_constitution_contains_hard_rules() -> None:
     assert "HARD RULES" in CONSTITUTION
     assert "HOUSE RULES" in CONSTITUTION
-    # Concrete checks for the non-negotiables — if these slip, that's the alarm.
+    # Concrete checks for the non-negotiables, if these slip, that's the alarm.
     for needle in (
         "doxxing",
         "NSFW",
@@ -73,4 +73,42 @@ def test_no_em_dashes_in_persona_constitution_or_voice() -> None:
         "em dashes found in Toots-output surfaces: "
         + ", ".join(offenders.keys())
         + ". Use commas, periods, or parentheses instead."
+    )
+
+
+def test_no_em_dashes_anywhere_in_repo() -> None:
+    """Stricter than the persona test: NO em dashes anywhere in shipped code,
+    docs, or config. Reasoning: the original rule was about Toots's spoken
+    output, but em dashes look ugly in code comments and docs too, and they
+    creep back in if we only test the persona surfaces.
+
+    The test allow-lists:
+      - this file (it has the literal `"—"` character as the search string)
+      - EXECUTION_PLAN.md (frozen v1 design artifact, intentionally untouched)
+      - the .venv / __pycache__ build artifacts
+      - the docs/assets/banner.jpg binary
+    """
+    import subprocess
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["grep", "-rln", "—", str(repo_root)],
+        capture_output=True, text=True, check=False,
+    )
+    paths = [
+        line for line in result.stdout.strip().splitlines()
+        if line.strip()
+        and "/.venv/" not in line
+        and "/__pycache__/" not in line
+        and "/.git/" not in line
+        and not line.endswith(".jpg")
+        and not line.endswith(".png")
+        and not line.endswith(".webp")
+        and not line.endswith("EXECUTION_PLAN.md")
+        and not line.endswith("tests/test_persona.py")  # this file holds the search char
+    ]
+    assert not paths, (
+        "em dashes found in:\n  " + "\n  ".join(paths)
+        + "\nUse commas, periods, colons, or parentheses instead."
     )

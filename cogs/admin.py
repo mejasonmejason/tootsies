@@ -1,4 +1,4 @@
-"""/close /open /undo — mod-only kitchen + rollback controls."""
+"""/close /open /undo, mod-only kitchen + rollback controls."""
 
 from __future__ import annotations
 

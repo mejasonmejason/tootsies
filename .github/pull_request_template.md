@@ -22,7 +22,7 @@ For copy / persona / voice changes, quote 2-3 sample outputs:
 > "input"  →  "Toots' response"
 
 Delete this section if the change is backend-only (db schema, refactor,
-dep bump) — don't pad with "N/A".
+dep bump), don't pad with "N/A".
 -->
 
 ## Test plan

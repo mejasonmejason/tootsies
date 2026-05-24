@@ -1,4 +1,4 @@
-"""Smoke tests — modules import cleanly, bot constructs, cogs load."""
+"""Smoke tests, modules import cleanly, bot constructs, cogs load."""
 
 from __future__ import annotations
 

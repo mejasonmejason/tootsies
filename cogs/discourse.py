@@ -1,4 +1,4 @@
-"""/discourse — manual posts AND scheduled-posting control.
+"""/discourse, manual posts AND scheduled-posting control.
 
 Two modes on the same root command:
 
@@ -11,7 +11,7 @@ Two modes on the same root command:
       Controls the scheduled poster (posts land in the configured discourse channel, not the
       invoked one). chill = 2/day, yaps = 4/day, off = silent. Unlimited.
 
-The scheduler tick lives here too — when the cog is loaded, a tasks.loop runs every minute,
+The scheduler tick lives here too, when the cog is loaded, a tasks.loop runs every minute,
 checks each configured guild's schedule, and posts (or skips cleanly) as appropriate.
 """
 
@@ -78,7 +78,7 @@ class Discourse(commands.Cog):
     ) -> None:
         """Post one discourse starter now in the invoked channel.
 
-        Schedule control (chill/yaps/off) is in `/menu`, not here — keeps the
+        Schedule control (chill/yaps/off) is in `/menu`, not here, keeps the
         slash command focused on the one thing everyone needs.
         """
         if not await require_configured(interaction, self.bot.db):
@@ -165,7 +165,7 @@ class Discourse(commands.Cog):
         # Pull image URLs (preview frames from tweets, etc.) and hot URLs (the
         # actual tweet/article links) from everything we just gathered. These
         # let Toots SEE what's in the tweets and explicitly OPEN them via
-        # web_search to read replies / quoted tweets / thread context — same
+        # web_search to read replies / quoted tweets / thread context, same
         # pattern we use for /recap (commit 8f00964 + 3c18f88).
         image_urls = recent_image_urls(all_feed_msgs, limit=8)
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
@@ -255,7 +255,7 @@ class Discourse(commands.Cog):
         if me is None or not can_send_in(channel, me):
             return
 
-        # Cross-category dedup — scheduled posts span all topics, so we look at the whole
+        # Cross-category dedup, scheduled posts span all topics, so we look at the whole
         # 72h history and let Claude decide if anything fresh exists.
         recent = await self.bot.db.recent_discourse_all(guild_id, limit=20)
         recent_blob = "\n".join(
@@ -269,13 +269,13 @@ class Discourse(commands.Cog):
             log.exception("scheduled post claude call failed")
             line = voice.pick(voice.DISCOURSE_FALLBACK)
 
-        # Consume the slot regardless of whether we post — otherwise an EMPTY at 12:00 would
+        # Consume the slot regardless of whether we post, otherwise an EMPTY at 12:00 would
         # keep retrying every minute. Skipping cleanly means trying again at 19:00 (chill) or
         # the next yap slot.
         await self.bot.db.record_schedule_post(guild_id, today_utc)
 
         if not line or line.strip().upper() == "EMPTY":
-            log.info("scheduled slot skipped for guild %d — nothing fresh", guild_id)
+            log.info("scheduled slot skipped for guild %d, nothing fresh", guild_id)
             return
 
         try:

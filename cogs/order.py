@@ -1,4 +1,4 @@
-"""/order family — the mod-only feature pipeline.
+"""/order family, the mod-only feature pipeline.
 
 /order <feature>            file a new feature request (pre-flight checked)
 /order status [filter]      list orders
@@ -119,7 +119,7 @@ class Order(commands.GroupCog, name="order"):
             )
             return
 
-        # File the order — DB row first so we have the ID for the issue body.
+        # File the order, DB row first so we have the ID for the issue body.
         order = await self.bot.db.create_order(
             guild_id=guild_id, requester_id=user_id, request_text=feature, summary=reason,
         )

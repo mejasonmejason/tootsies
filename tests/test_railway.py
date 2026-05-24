@@ -1,4 +1,4 @@
-"""Railway client tests — exercise the rollback target-picking logic without hitting the API."""
+"""Railway client tests, exercise the rollback target-picking logic without hitting the API."""
 
 from __future__ import annotations
 

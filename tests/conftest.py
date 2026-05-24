@@ -7,7 +7,7 @@ from pathlib import Path
 # Add repo root to path so `import bot` works from tests/.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Tests run without real secrets — force-set to stubs so config.from_env() doesn't blow up.
+# Tests run without real secrets, force-set to stubs so config.from_env() doesn't blow up.
 # We overwrite (not setdefault) because CI/dev shells may have empty values set.
 for k, v in {
     "DISCORD_TOKEN": "test-token",
