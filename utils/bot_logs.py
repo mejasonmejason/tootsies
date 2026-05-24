@@ -115,10 +115,14 @@ async def maybe_post_db_error(
 ) -> None:
     """Post to #bot-logs only if `exc` is an asyncpg error. No-op otherwise.
 
-    Use from cog `except Exception` handlers, lets you keep the broad catch
-    while still surfacing DB-class failures with detail. Best-effort: any
-    failure inside the post itself is swallowed (we already lost the parent
-    exception's stack to the cog's logger).
+    Use from cog `except Exception` handlers in user-impact paths (where the
+    error caused a deflection, ignored request, or undelivered response).
+    Don't wire into background-task error handlers; those should emit `error`
+    EVENTs for the Railway dashboard but not surface in #bot-logs (see the
+    sibling maybe_post_prompt_error for the full rationale).
+
+    Best-effort: any failure inside the post itself is swallowed (we already
+    lost the parent exception's stack to the cog's logger).
     """
     if guild_id is None:
         return
@@ -178,7 +182,21 @@ async def maybe_post_prompt_error(
     fire more often than DB ones, are usually transient, and would spam
     milestones-mode mods.
 
-    Use from cog `except Exception` handlers alongside maybe_post_db_error.
+    WHERE TO CALL THIS FROM: only user-impact paths. The intent is that mods
+    see a log ONLY when the error caused a user-facing failure (deflection,
+    request ignored, response not delivered). Specifically:
+
+      DO call from: cog `except Exception` blocks that follow with a
+        voice.DB_ERROR quip or otherwise abandon the user's request
+        (cogs/ask.py, cogs/recap.py, cogs/discourse.py, cogs/order.py
+        preflight, bot.py on_app_command_error).
+
+      DO NOT call from: background tasks where a failure is silently
+        retried or skipped (chime-in tick scoring/posting, scheduled
+        discourse tick, the chime-in recent_messages fetch which
+        fails-open). Those should keep emitting `error` EVENTs for
+        the Railway dashboard, but they don't belong in #bot-logs.
+
     Best-effort: any failure inside the post itself is swallowed.
     """
     if guild_id is None:
