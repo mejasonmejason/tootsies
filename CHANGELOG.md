@@ -137,7 +137,7 @@ A wave of UX, accuracy, and content-quality fixes shipped same-day as v1.0.0 bas
 
 ### Persona & guardrails
 
-- Toots persona: late-20s bartender voice; sharp, lowercase, terse; ~140 char answer cap.
+- Toots persona: late-20s bartender voice; sharp, normal capitalization, terse; ~140 char answer cap.
 - **No em dashes**: enforced by test (`tests/test_persona.py::test_no_em_dashes_in_persona_constitution_or_voice`).
 - **Restate the question** on `/ask` so answers read self-contained later in scrollback. Restatement doesn't count toward the cap.
 - **Constitution** (`constitution.py`): no doxxing, no NSFW, no slurs, no impersonation, no medical/legal/financial advice, no moderation actions, guild-only, minors handled with flattened persona, crisis content breaks character with real resources. Cannot be loosened by `/order`.

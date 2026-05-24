@@ -9,80 +9,80 @@ from __future__ import annotations
 import random
 
 RATE_LIMIT_HIT = [
-    "off the clock for you tonight. try me tomorrow.",
-    "you've been talking my ear off. take five.",
-    "asked and answered. go ask someone else.",
-    "tab's closed. tomorrow.",
-    "you're cut off. drink some water.",
+    "Off the clock for you tonight. Try me tomorrow.",
+    "You've been talking my ear off. Take five.",
+    "Asked and answered. Go ask someone else.",
+    "Tab's closed. Tomorrow.",
+    "You're cut off. Drink some water.",
 ]
 
 PERMISSION_DENIED = [
-    "above my paygrade, that one.",
-    "they didn't give me the keys for that.",
-    "not my section.",
-    "the boss locked that one.",
-    "can't get to that. ask whoever runs the door.",
+    "Above my paygrade, that one.",
+    "They didn't give me the keys for that.",
+    "Not my section.",
+    "The boss locked that one.",
+    "Can't get to that. Ask whoever runs the door.",
 ]
 
 ORDER_REFUSED = [
-    "my bosses can't allow that one.",
-    "the house won't let me. ask for something else.",
-    "that's a no from upstairs.",
-    "not happening. pick something else off the menu.",
+    "My bosses can't allow that one.",
+    "The house won't let me. Ask for something else.",
+    "That's a no from upstairs.",
+    "Not happening. Pick something else off the menu.",
 ]
 
 PLUMBING_TOUCHED = [
-    "that's plumbing. ask the architect.",
-    "not my wrench. that one's the architect's call.",
-    "that's load-bearing, i don't touch the studs.",
+    "That's plumbing. Ask the architect.",
+    "Not my wrench. That one's the architect's call.",
+    "That's load-bearing, I don't touch the studs.",
 ]
 
 PIPELINE_RED = [
-    "kitchen's still cleaning up the last mess. hold tight.",
-    "we're 86'd on new orders until i clean up. give it a sec.",
-    "one sec. fixing a spill.",
+    "Kitchen's still cleaning up the last mess. Hold tight.",
+    "We're 86'd on new orders until I clean up. Give it a sec.",
+    "One sec. Fixing a spill.",
 ]
 
 DUPLICATE_ORDER = [
-    "already on the rail. give it a minute.",
-    "someone ordered that already. one's enough.",
-    "duplicate. check `/order status`.",
+    "Already on the rail. Give it a minute.",
+    "Someone ordered that already. One's enough.",
+    "Duplicate. Check `/order status`.",
 ]
 
 ORDER_IN_FLIGHT = [
-    "one ticket at a time. {ref} is still cooking, give it a sec.",
-    "line's forming. check `/order status` for what's ahead of you.",
-    "kitchen's working on one thing. hold up.",
-    "i'm not a short-order cook. one at a time.",
+    "One ticket at a time. {ref} is still cooking, give it a sec.",
+    "Line's forming. Check `/order status` for what's ahead of you.",
+    "Kitchen's working on one thing. Hold up.",
+    "I'm not a short-order cook. One at a time.",
 ]
 
 DB_ERROR = [
-    "kitchen's a mess right now. try in a sec.",
-    "give me a sec, reorganizing.",
-    "something's off back here. one moment.",
+    "Kitchen's a mess right now. Try in a sec.",
+    "Give me a sec, reorganizing.",
+    "Something's off back here. One moment.",
 ]
 
-PRE_SETUP = "bar's not open yet. a mod needs to run `/menu` first."
+PRE_SETUP = "Bar's not open yet. A mod needs to run `/menu` first."
 
 CHANNEL_DEAD = [
-    "dead in here. what'd you eat tonight, make it interesting.",
-    "absolutely nothing. you good? need a drink?",
-    "two memes and a 'gm.' tell me something.",
-    "crickets. whatever you're avoiding by checking in here, go do that.",
-    "your timeline's more active. what's going on with you?",
+    "Dead in here. What'd you eat tonight, make it interesting.",
+    "Absolutely nothing. You good? Need a drink?",
+    "Two memes and a 'gm.' Tell me something.",
+    "Crickets. Whatever you're avoiding by checking in here, go do that.",
+    "Your timeline's more active. What's going on with you?",
 ]
 
 DISCOURSE_FALLBACK = [
-    "ok give me your most controversial movie opinion. i'll start: oppenheimer was a snooze.",
-    "rank in order: bron, mj, kobe, kd. show your work.",
-    "what's the worst song you have on repeat right now. confess.",
-    "who's getting verzuz'd next. i'm taking nominations.",
+    "Ok give me your most controversial movie opinion. I'll start: Oppenheimer was a snooze.",
+    "Rank in order: Bron, MJ, Kobe, KD. Show your work.",
+    "What's the worst song you have on repeat right now. Confess.",
+    "Who's getting Verzuz'd next. I'm taking nominations.",
 ]
 
 KITCHEN_CLOSED = [
-    "kitchen's closed. mod call.",
-    "no orders right now. talk to a mod.",
-    "we're not taking orders. ask a mod why.",
+    "Kitchen's closed. Mod call.",
+    "No orders right now. Talk to a mod.",
+    "We're not taking orders. Ask a mod why.",
 ]
 
 
