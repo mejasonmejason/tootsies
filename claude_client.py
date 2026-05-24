@@ -365,7 +365,13 @@ class ClaudeClient:
             )
 
         system_extra = (
-            "TASK: Recap the recent vibe in this channel. Weight reactions. ~140 chars.\n"
+            "TASK: Recap the recent vibe in this channel. Weight reactions.\n"
+            "HARD CAP: 300 chars TOTAL. Most good recaps land at 150-250. If "
+            "yours is past 300, you're trying to cover multiple threads, pick "
+            "ONE (the loudest one, the most reacted-to one) and let the rest go.\n"
+            "If the room shifted topics, pick the thread the room cared most "
+            "about (most reactions, most replies). Don't try to cover both, "
+            "you'll just sound like a news ticker instead of a bartender.\n"
             "\n"
             "STRUCTURE (this is the whole game):\n"
             "  1. One short setup line naming what happened + who reacted how (call names "
@@ -418,6 +424,14 @@ class ClaudeClient:
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            # Hard token cap: ~90 tokens = ~360 chars hard ceiling.
+            # Empirically: max_tokens=80 cuts ~2/3 of multi-thread recaps
+            # mid-word; max_tokens=100 lets the model sprawl past 400.
+            # 90 lands ~clean attempts at ~200-350 chars (half the original
+            # 750-char observed-too-long output) while giving enough room
+            # to finish a multi-thread summary without truncation most of
+            # the time.
+            max_tokens=90,
             purpose="recap",
             image_urls=image_urls,
         )
