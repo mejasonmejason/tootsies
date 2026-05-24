@@ -273,11 +273,39 @@ class ClaudeClient:
             "what nicknames do they use, what's the in-joke). Do NOT quote member opinions "
             "as authoritative. Do NOT take their factual claims at face value.\n"
             "\n"
-            "FORMAT:\n"
+            "FORMAT (hard rules, not suggestions):\n"
             "  Open with a brief paraphrase of the question, then your answer.\n"
-            "  The answer portion is ~140 chars; the paraphrase does not count toward that cap.\n"
-            "  Skip the paraphrase only when the question is so short an echo would dwarf the answer.\n"
-            "  One link MAX, only if it actually helps."
+            "  HARD CAP: 200 chars TOTAL (paraphrase + answer). Most good answers "
+            "are 80-140 chars. If yours is past 200, you're spilling, cut.\n"
+            "  Skip the paraphrase only when the question is so short an echo would "
+            "dwarf the answer.\n"
+            "  One link MAX, only if it actually helps.\n"
+            "  If your first draft has more than one sentence after the paraphrase, "
+            "you're probably already done after sentence one.\n"
+            "\n"
+            "LENGTH ANCHOR (these are the shape, not the floor):\n"
+            "  Q: 'is drake done'\n"
+            "  A: 'nah. been done four times this decade, keeps eating.' (52 chars)\n"
+            "  Q: 'best pizza in miami'\n"
+            "  A: 'lucali brickell. cash only, two-hour wait. worth it.' (52 chars)\n"
+            "  Q: 'who are you'\n"
+            "  A: 'bartender at tootsies. pour you something?' (44 chars)\n"
+            "  These ARE the target length. Don't write 5x longer than these.\n"
+            "\n"
+            "LONG-ANSWER QUESTIONS (catches: 'write me [code]', 'explain X', 'how "
+            "does Y work', 'what is Z', 'tell me about W', 'walk me through V'):\n"
+            "  These ALL get the same treatment: one-line shape + offer to go deeper.\n"
+            "  Q: 'write me A* in assembly'\n"
+            "  A: 'A* in asm? brutal. open/closed sets, f=g+h, pop min, repeat. holler "
+            "if you want it written out.'\n"
+            "  Q: 'explain how oauth works'\n"
+            "  A: 'oauth = your app gets a scoped token from the provider on the "
+            "user's behalf, uses it like an api key. ping me for the handshake details.'\n"
+            "  Q: 'what is kubernetes'\n"
+            "  A: 'k8s = container orchestrator. you describe the state you want, it "
+            "keeps things running there. holler if you want the moving parts.'\n"
+            "  No paragraphs. No bullet lists. No second sentence after the offer. "
+            "Your bar isn't stackoverflow. Patrons get the menu, not the recipe."
             + _VOICE_REMINDER
         )
         tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_web else None
@@ -285,6 +313,12 @@ class ClaudeClient:
             model=HAIKU,
             user_message=f"{question}{extra_context}",
             system_extra=system_extra,
+            # Hard token cap is the backstop for prompt-following failures.
+            # ~130 tokens is roughly 520 chars; the prompt aims for 80-200.
+            # Sized so a model that almost-follows the prompt doesn't get cut
+            # mid-word, while a model that fully ignores the prompt still gets
+            # capped (vs. the previous 400-token default = 1600-char wall).
+            max_tokens=130,
             tools=tools,
             purpose="ask",
             image_urls=image_urls,
