@@ -1,0 +1,78 @@
+name: Close order issue after deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  close-on-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Extract issue number from merge commit
+        id: extract
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          # Look for "Part of #123" or "Fixes #123" in the merge commit message
+          ISSUE=$(echo "$COMMIT_MSG" | grep -ioP '(?:part of|fixes|closes|resolves)\s+#\K[0-9]+' | head -1)
+          if [ -z "$ISSUE" ]; then
+            echo "No order issue reference found in commit, skipping."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for Railway deploy
+        if: steps.extract.outputs.found == 'true'
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ] || [ -z "$RAILWAY_SERVICE_ID" ]; then
+            echo "::warning::RAILWAY_TOKEN or RAILWAY_SERVICE_ID not set, skipping deploy check."
+            exit 0
+          fi
+
+          echo "Waiting for Railway deploy to succeed..."
+          QUERY='query($serviceId: String!) {
+            deployments(input: { serviceId: $serviceId }, first: 1) {
+              edges { node { id status createdAt } }
+            }
+          }'
+
+          for i in $(seq 1 30); do
+            RESPONSE=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \
+              -H "Authorization: Bearer $RAILWAY_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\": \"$(echo $QUERY | tr '\n' ' ')\", \"variables\": {\"serviceId\": \"$RAILWAY_SERVICE_ID\"}}")
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.data.deployments.edges[0].node.status // "UNKNOWN"')
+            echo "Attempt $i/30: deploy status = $STATUS"
+
+            if [ "$STATUS" = "SUCCESS" ]; then
+              echo "Deploy succeeded!"
+              exit 0
+            elif [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
+              echo "::error::Deploy failed with status: $STATUS"
+              exit 1
+            fi
+
+            sleep 20
+          done
+
+          echo "::error::Timed out waiting for Railway deploy (10 min)"
+          exit 1
+
+      - name: Close the order issue
+        if: steps.extract.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ steps.extract.outputs.issue }}
+        run: |
+          gh issue close "$ISSUE" \
+            --repo "${{ github.repository }}" \
+            --comment "Deployed to Railway. Order served."
