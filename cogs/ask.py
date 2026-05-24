@@ -26,16 +26,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Cheap heuristic — if the question looks time-sensitive, give Claude web search.
-_TIMELY = re.compile(
-    r"\b(today|tonight|right now|currently|score|stock|price|news|just|breaking|live|tomorrow)\b",
-    re.IGNORECASE,
-)
-
-
-def _wants_web(question: str) -> bool:
-    return bool(_TIMELY.search(question))
-
 
 class Ask(commands.Cog):
     def __init__(self, bot: TootsiesBot) -> None:
@@ -96,7 +86,7 @@ class Ask(commands.Cog):
             msgs = await recent_messages(channel, me, limit=30)
             context = format_for_prompt(msgs)
         return await self.bot.claude.ask(
-            question, channel_context=context, use_web=_wants_web(question)
+            question, channel_context=context, use_web=True
         )
 
     @commands.Cog.listener()

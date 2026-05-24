@@ -139,11 +139,24 @@ class ClaudeClient:
             extra_context = f"\n\nRecent channel chatter (for vibe, don't quote it back):\n{channel_context}"
 
         system_extra = (
-            "TASK: Answer the user's question in your voice. Use channel chatter for vibe, not quotes. "
-            "Open with a brief paraphrase of the question, then your answer. "
-            "The answer portion is ~140 chars; the paraphrase does not count toward that cap. "
-            "Skip the paraphrase only when the question is so short an echo would dwarf the answer. "
-            "One link MAX, only if it actually helps."
+            "TASK: Answer the user's question in your voice.\n"
+            "\n"
+            "SOURCES (in this order of trust):\n"
+            "  1. Web search results, when the question is factual (artist discography, "
+            "scores, news, releases, who-is-who). Use the web_search tool for ANY question "
+            "that asks about real-world facts, even if you think you know the answer. "
+            "Channel members get things wrong, and your training data is months stale.\n"
+            "  2. Your own taste / opinion / hot take, for value judgments (best, worst, "
+            "ranking, vibe checks).\n"
+            "  3. Channel chatter, for VIBE-CALIBRATION ONLY (what's the room's energy, "
+            "what nicknames do they use, what's the in-joke). Do NOT quote member opinions "
+            "as authoritative. Do NOT take their factual claims at face value.\n"
+            "\n"
+            "FORMAT:\n"
+            "  Open with a brief paraphrase of the question, then your answer.\n"
+            "  The answer portion is ~140 chars; the paraphrase does not count toward that cap.\n"
+            "  Skip the paraphrase only when the question is so short an echo would dwarf the answer.\n"
+            "  One link MAX, only if it actually helps."
         )
         tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_web else None
         result = await self._call(
