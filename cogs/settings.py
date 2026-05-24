@@ -1,15 +1,15 @@
 """/menu, interactive setup AND current-state view, one command.
 
-Layout (5 rows, Discord's hard cap):
+Layout (5 rows, Discord's hard cap, all selects with auto-save):
   row 0: bot-logs channel select
   row 1: discourse channel select
   row 2: mod roles select
   row 3: feed channels select
-  row 4: [confirm & save] [cancel]
+  row 4: mood select (chill / yaps / off)
 
-Mood (chill / yaps / off) is intentionally NOT in this menu. It's controlled
-via `/discourse mood:<x>` so it can be changed on the fly without re-running
-the whole setup wizard. New servers default to `chill` via the schema default.
+Every change saves immediately to the DB, no confirm button. The view
+re-renders the summary embed after each change so the mod sees the
+current state. If they want to undo, just pick a different value.
 
 Pre-population priority:
   1. Saved settings from the DB (if /menu was run before)
@@ -35,7 +35,7 @@ from utils.permissions import is_mod
 if TYPE_CHECKING:
     from bot import TootsiesBot
 
-MOOD_CYCLE = ["chill", "yaps", "off"]
+MOOD_OPTIONS = ("chill", "yaps", "off")
 
 log = logging.getLogger(__name__)
 
@@ -225,11 +225,9 @@ class MenuView(discord.ui.View):
         self.add_item(_FeedSelect(
             self, _safe_channel_defaults(guild, prefill.get("feed_channel_ids")),
         ))
-
-        # The mood button's label is declared as "mood: chill" on the class but
-        # we want it to reflect the actual saved mood when /menu opens.
-        initial_mood = str(self.selected.get("mood", "chill"))
-        self.cycle_mood.label = f"mood: {initial_mood}"
+        self.add_item(_MoodSelect(
+            self, str(self.selected.get("mood", "chill")),
+        ))
 
     # ---- embed -----------------------------------------------------------------
 
@@ -237,20 +235,20 @@ class MenuView(discord.ui.View):
         e = discord.Embed(
             title="toots' menu",
             description=(
-                "set me up. each dropdown is labeled. click **mood** to cycle "
-                "how chatty i am on auto-pilot. hit **confirm & save** when "
-                "you're done. re-run `/menu` anytime to see and change these."
+                "every change saves the moment you pick it. re-run `/menu` "
+                "anytime to see current state or change anything. close this "
+                "message to dismiss."
             ),
             color=0x9b59b6,
         )
         e.add_field(
             name="📊  bot-logs channel",
-            value="where i narrate `/order` status (🟡 → 🍳 → ✅).",
+            value="where i narrate `/order` status (🟡 → 🍳 → ✅) + post mod-only error notices.",
             inline=False,
         )
         e.add_field(
             name="💬  discourse channel",
-            value="where my scheduled posts land.",
+            value="where my scheduled posts land + the channel i chime in on when the room's cooking.",
             inline=False,
         )
         e.add_field(
@@ -266,8 +264,10 @@ class MenuView(discord.ui.View):
         e.add_field(
             name="😎  mood",
             value=(
-                "scheduled posting cadence (US Pacific). cycles on click.\n"
-                "**chill**: 2/day (~12pm, 7pm) · **yaps**: 4/day (~10am, 2pm, 6pm, 10pm) · **off**: silent."
+                "how chatty i am on auto-pilot (US Eastern).\n"
+                "**chill**: scheduled at 12pm + 7pm ET, chime in up to 3/day\n"
+                "**yaps**: scheduled at 10am, 2pm, 6pm, 10pm ET, chime in up to 6/day\n"
+                "**off**: silent on both"
             ),
             inline=False,
         )
@@ -282,10 +282,11 @@ class MenuView(discord.ui.View):
         return True
 
     def _refresh_select_defaults(self) -> None:
-        """Sync each select's `default_values` to current `self.selected` before
-        any `edit_message(view=self)`. Without this, re-rendering the view (e.g.
-        on the mood button click) reverts dropdowns to their construction-time
-        defaults, visually clearing whatever the user had picked."""
+        """Sync each select's `default_values` (or `default` per-option for the
+        StringSelect mood picker) to current `self.selected` before any
+        `edit_message(view=self)`. Without this, re-rendering the view reverts
+        dropdowns to their construction-time defaults, visually clearing
+        whatever the user just picked."""
         for child in self.children:
             if isinstance(child, _BotLogsSelect):
                 child.default_values = _safe_channel_default(
@@ -303,122 +304,113 @@ class MenuView(discord.ui.View):
                 child.default_values = _safe_channel_defaults(
                     self.guild, self.selected.get("feed_channel_ids"),
                 )
+            elif isinstance(child, _MoodSelect):
+                # StringSelect uses per-option .default booleans, not
+                # default_values (which is for ChannelSelect/RoleSelect).
+                current = str(self.selected.get("mood", "chill"))
+                for opt in child.options:
+                    opt.default = (opt.value == current)
+                child.placeholder = f"😎 mood: {current}"
 
-    # ---- buttons (row 4) -------------------------------------------------------
+    # ---- autosave -------------------------------------------------------------
 
-    @discord.ui.button(label="confirm & save", style=discord.ButtonStyle.success, row=4)
-    async def confirm(
-        self, interaction: discord.Interaction, _btn: discord.ui.Button,
+    async def autosave(
+        self,
+        interaction: discord.Interaction,
+        key: str,
     ) -> None:
+        """Persist the just-changed setting + re-render the summary embed.
+
+        Called from each select's callback after self.selected[key] is updated.
+        Each setting writes to a different table, so we route by key. The
+        embed is re-rendered so the mod sees the new state immediately, and
+        the selects' default_values are refreshed so other selections don't
+        visually clear (Discord re-renders the whole view on edit_message).
+        """
         if not await self._check_actor(interaction):
             return
         if interaction.guild is None:
             return
         guild_id = interaction.guild.id
 
-        # Validate the bare minimum.
-        missing = []
-        if not self.selected.get("bot_logs_channel"):
-            missing.append("bot-logs channel")
-        if not self.selected.get("discourse_channel"):
-            missing.append("discourse channel")
-        mod_role_ids = self.selected.get("mod_role_ids") or []
-        if not isinstance(mod_role_ids, list) or not mod_role_ids:
-            missing.append("mod role(s)")
-        if missing:
-            await interaction.response.send_message(
-                f"need to pick: {', '.join(missing)}.", ephemeral=True,
-            )
-            return
+        try:
+            await self._persist_key(guild_id, key)
+        except Exception:
+            log.exception("autosave persist failed: key=%s guild=%s", key, guild_id)
+            # Don't block the visual update; the value is already in self.selected
+            # so a re-select will retry the write.
 
-        for key in ("bot_logs_channel", "discourse_channel"):
-            val = self.selected.get(key)
+        # Mark configured once required settings are all present. Idempotent.
+        required = ("bot_logs_channel", "discourse_channel", "mod_role_ids")
+        if all(self.selected.get(k) for k in required):
+            try:
+                await self.bot.db.mark_configured(guild_id)
+            except Exception:
+                log.exception("mark_configured failed for guild=%s", guild_id)
+
+        await self.bot.db.audit(
+            guild_id, self.actor_id, f"menu_set_{key}",
+            after={key: self.selected.get(key)},
+        )
+
+        # Refresh select defaults BEFORE edit_message or other selects will
+        # visually clear. Same gotcha that existed back when mood was a button.
+        self._refresh_select_defaults()
+        await interaction.response.edit_message(
+            embed=self._state_embed(), view=self,
+        )
+
+    async def _persist_key(self, guild_id: int, key: str) -> None:
+        """Route a single just-set value to its storage backend."""
+        val = self.selected.get(key)
+        if key in ("bot_logs_channel", "discourse_channel"):
             if val:
                 await self.bot.db.set_setting(
                     guild_id, key, int(cast("int", val)), self.actor_id,
                 )
-
-        await self.bot.db.set_setting(
-            guild_id, "per_user_daily_limit", 20, self.actor_id,
-        )
-        await self.bot.db.set_setting(
-            guild_id, "per_server_daily_limit", 20, self.actor_id,
-        )
-
-        await self.bot.db.set_mod_roles(
-            guild_id, [int(r) for r in cast("list[int]", mod_role_ids)],
-        )
-
-        feeds = self.selected.get("feed_channel_ids") or []
-        if isinstance(feeds, list):
-            await self.bot.db.set_feed_channels(
-                guild_id, [(int(c), None) for c in feeds],
+        elif key == "mod_role_ids":
+            if isinstance(val, list):
+                await self.bot.db.set_mod_roles(
+                    guild_id, [int(r) for r in cast("list[int]", val)],
+                )
+        elif key == "feed_channel_ids":
+            if isinstance(val, list):
+                await self.bot.db.set_feed_channels(
+                    guild_id, [(int(c), None) for c in val],
+                )
+        elif key == "mood" and isinstance(val, str):
+            await self.bot.db.set_schedule(
+                guild_id, MoodMode(val), self.actor_id,
             )
 
-        mood = self.selected.get("mood", "chill")
-        if isinstance(mood, str):
-            await self.bot.db.set_schedule(guild_id, MoodMode(mood), self.actor_id)
-
-        await self.bot.db.mark_configured(guild_id)
-        await self.bot.db.audit(
-            guild_id, self.actor_id, "menu_saved", after=self.selected,
-        )
-
-        for child in self.children:
-            if isinstance(child, discord.ui.Button | discord.ui.Select):
-                child.disabled = True
-
-        confirm_embed = discord.Embed(
-            title="locked in. bar's open.",
-            color=0x2ecc71,
+    def _state_embed(self) -> discord.Embed:
+        """Live state embed shown after each autosave."""
+        required = ("bot_logs_channel", "discourse_channel", "mod_role_ids")
+        ready = all(self.selected.get(k) for k in required)
+        title = "locked in. bar's open." if ready else "saving as you pick."
+        color = 0x2ecc71 if ready else 0x9b59b6
+        return discord.Embed(
+            title=title,
+            color=color,
             description=self._summary(),
-        )
-        await interaction.response.edit_message(
-            content=None, embed=confirm_embed, view=self,
-        )
-
-    @discord.ui.button(label="mood: chill", style=discord.ButtonStyle.secondary, row=4)
-    async def cycle_mood(
-        self, interaction: discord.Interaction, btn: discord.ui.Button,
-    ) -> None:
-        if not await self._check_actor(interaction):
-            return
-        current = str(self.selected.get("mood", "chill"))
-        i = MOOD_CYCLE.index(current) if current in MOOD_CYCLE else 0
-        new = MOOD_CYCLE[(i + 1) % len(MOOD_CYCLE)]
-        self.selected["mood"] = new
-        btn.label = f"mood: {new}"
-        # Critical: sync each select's default_values to what the user has
-        # picked so far. Otherwise edit_message re-renders the selects with
-        # their original construction-time defaults and visually clears any
-        # user input. (Was previously a bug when mood was a button.)
-        self._refresh_select_defaults()
-        await interaction.response.edit_message(view=self)
-
-    @discord.ui.button(label="cancel", style=discord.ButtonStyle.secondary, row=4)
-    async def cancel(
-        self, interaction: discord.Interaction, _btn: discord.ui.Button,
-    ) -> None:
-        if not await self._check_actor(interaction):
-            return
-        for child in self.children:
-            if isinstance(child, discord.ui.Button | discord.ui.Select):
-                child.disabled = True
-        await interaction.response.edit_message(
-            content="closed without saving.", embed=None, view=self,
         )
 
     def _summary(self) -> str:
         bot_logs = self.selected.get("bot_logs_channel")
         discourse = self.selected.get("discourse_channel")
         mod_roles = self.selected.get("mod_role_ids") or []
-        feeds = self.selected.get("feed_channel_ids") or []
+        feeds = cast("list[int]", self.selected.get("feed_channel_ids") or [])
+        feeds_label = (
+            "none" if not feeds
+            else f"{len(feeds)} channel" if len(feeds) == 1
+            else f"{len(feeds)} channels"
+        )
         return (
-            f"**bot-logs:** <#{bot_logs}>\n"
-            f"**discourse:** <#{discourse}>\n"
+            f"**bot-logs:** {f'<#{bot_logs}>' if bot_logs else '_(pick one)_'}\n"
+            f"**discourse:** {f'<#{discourse}>' if discourse else '_(pick one)_'}\n"
             f"**mod roles:** "
-            f"{', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles))}\n"
-            f"**feeds:** {len(cast('list[int]', feeds))} channel(s)\n"
+            f"{', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles)) or '_(pick at least one)_'}\n"
+            f"**feeds:** {feeds_label}\n"
             f"**mood:** {self.selected.get('mood', 'chill')}"
         )
 
@@ -440,7 +432,7 @@ class _BotLogsSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["bot_logs_channel"] = self.values[0].id
-        await interaction.response.defer()
+        await self.parent_view.autosave(interaction, "bot_logs_channel")
 
 
 class _DiscourseSelect(discord.ui.ChannelSelect):
@@ -457,7 +449,7 @@ class _DiscourseSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["discourse_channel"] = self.values[0].id
-        await interaction.response.defer()
+        await self.parent_view.autosave(interaction, "discourse_channel")
 
 
 class _ModRoleSelect(discord.ui.RoleSelect):
@@ -473,7 +465,7 @@ class _ModRoleSelect(discord.ui.RoleSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["mod_role_ids"] = [r.id for r in self.values]
-        await interaction.response.defer()
+        await self.parent_view.autosave(interaction, "mod_role_ids")
 
 
 class _FeedSelect(discord.ui.ChannelSelect):
@@ -490,7 +482,45 @@ class _FeedSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["feed_channel_ids"] = [c.id for c in self.values]
-        await interaction.response.defer()
+        await self.parent_view.autosave(interaction, "feed_channel_ids")
+
+
+class _MoodSelect(discord.ui.Select):
+    """Mood select on its own row. Replaces the cycling button so the option
+    list is visible up front instead of hidden behind clicks. Auto-saves like
+    the other selects."""
+
+    def __init__(self, parent: MenuView, current_mood: str) -> None:
+        super().__init__(
+            placeholder=f"😎 mood: {current_mood}",
+            min_values=1, max_values=1, row=4,
+            options=[
+                discord.SelectOption(
+                    label="chill", value="chill",
+                    description="2 scheduled posts/day, up to 3 chime-ins/day",
+                    default=(current_mood == "chill"),
+                ),
+                discord.SelectOption(
+                    label="yaps", value="yaps",
+                    description="4 scheduled posts/day, up to 6 chime-ins/day",
+                    default=(current_mood == "yaps"),
+                ),
+                discord.SelectOption(
+                    label="off", value="off",
+                    description="silent on both scheduled posts and chime-in",
+                    default=(current_mood == "off"),
+                ),
+            ],
+        )
+        self.parent_view = parent
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.parent_view.selected["mood"] = self.values[0]
+        # Update placeholder so the live state reads correctly when the embed
+        # re-renders (placeholder is what shows when nothing is "actively
+        # selected" in this turn, which happens after edit_message).
+        self.placeholder = f"😎 mood: {self.values[0]}"
+        await self.parent_view.autosave(interaction, "mood")
 
 
 async def setup(bot: commands.Bot) -> None:
