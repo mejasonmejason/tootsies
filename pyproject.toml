@@ -31,14 +31,24 @@ testpaths = ["tests"]
 # Coverage gate. CI fails if a change drops below this floor.
 # Ratchet up over time. NEVER lower this number without justification — the only
 # correct direction is up.
-addopts = "--cov=. --cov-report=term --cov-fail-under=40"
+# Aspiration per-file: core business logic at ≥80% (claude_client, rate_limits,
+# events, metrics, voice, persona, constitution, models, github, railway, feeds).
+# Discord cogs and db.py are exempt from the per-file aspiration (integration-
+# testable only).
+addopts = "--cov=. --cov-report=term --cov-fail-under=50"
 
 [tool.coverage.run]
+# Be sparing with omits — every excluded file is one we won't catch regressions
+# in. Only omit files where unit testing is genuinely impractical (Discord-only
+# I/O wrappers, async server entrypoints) AND the logic inside is trivial enough
+# that misses won't bite. When in doubt, write the test instead.
 omit = [
     ".venv/*",
     "tests/*",
     "*/__init__.py",
-    "bot.py",  # async entrypoint, exercised only via integration
+    "bot.py",            # async entrypoint, exercised only via integration
+    "utils/bot_logs.py", # thin discord channel-post wrapper, no branching logic
+    "utils/healthcheck.py",  # aiohttp setup boilerplate, all behavior is `is_healthy() → 200/503`
 ]
 
 [tool.coverage.report]

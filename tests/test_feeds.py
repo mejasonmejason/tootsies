@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import discord
+import pytest
 
 from utils.feeds import (
     channel_dead_diagnostic,
@@ -193,3 +194,120 @@ def test_channel_dead_diagnostic_reports_no_messages() -> None:
     diag = channel_dead_diagnostic(channel, me, [])
     assert diag["reason"] == "no_messages"
     assert diag["total_messages"] == 0
+
+
+# ---- recent_messages -------------------------------------------------------------
+
+
+def _fake_channel_with_history(messages: list, *, can_read_perm: bool = True) -> MagicMock:
+    """Build a channel whose .history() async-yields the given messages newest-first."""
+    channel = MagicMock(spec=discord.TextChannel)
+    perms = SimpleNamespace(view_channel=True, read_message_history=can_read_perm)
+    channel.permissions_for = MagicMock(return_value=perms)
+
+    async def fake_history(limit: int = 100):
+        for msg in messages[:limit]:
+            yield msg
+
+    channel.history = fake_history
+    return channel
+
+
+@pytest.mark.asyncio
+async def test_recent_messages_returns_empty_when_bot_cant_read() -> None:
+    """Permission gate: no read_message_history -> empty list, no fetch attempted."""
+    from utils.feeds import recent_messages
+
+    msgs = [_fake_msg(content="should not appear")]
+    channel = _fake_channel_with_history(msgs, can_read_perm=False)
+    me = MagicMock(spec=discord.Member)
+    out = await recent_messages(channel, me, limit=10)
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_recent_messages_returns_oldest_first() -> None:
+    """Channel.history yields newest-first; we reverse so callers see oldest-first."""
+    from utils.feeds import recent_messages
+
+    m1 = _fake_msg(content="first")  # oldest in conversation
+    m2 = _fake_msg(content="second")
+    m3 = _fake_msg(content="third")  # newest
+    # channel.history yields newest first by Discord convention
+    channel = _fake_channel_with_history([m3, m2, m1])
+    me = MagicMock(spec=discord.Member)
+    out = await recent_messages(channel, me, limit=10)
+    contents = [m.content for m in out]
+    assert contents == ["first", "second", "third"]
+
+
+@pytest.mark.asyncio
+async def test_recent_messages_skips_bots_by_default() -> None:
+    from utils.feeds import recent_messages
+
+    human = _fake_msg(content="hi", display_name="alice")
+    bot_msg = _fake_msg(content="beep", display_name="botty")
+    bot_msg.author.bot = True
+    channel = _fake_channel_with_history([bot_msg, human])
+    me = MagicMock(spec=discord.Member)
+    out = await recent_messages(channel, me, limit=10)
+    assert [m.author.display_name for m in out] == ["alice"]
+
+
+@pytest.mark.asyncio
+async def test_recent_messages_includes_bots_when_requested() -> None:
+    """/recap and /discourse feed reads need bot messages (webhooks, feed bots)."""
+    from utils.feeds import recent_messages
+
+    human = _fake_msg(content="hi", display_name="alice")
+    bot_msg = _fake_msg(content="news drop", display_name="botty")
+    bot_msg.author.bot = True
+    channel = _fake_channel_with_history([bot_msg, human])
+    me = MagicMock(spec=discord.Member)
+    out = await recent_messages(channel, me, limit=10, include_bots=True)
+    assert [m.author.display_name for m in out] == ["alice", "botty"]
+
+
+@pytest.mark.asyncio
+async def test_recent_messages_keeps_image_only_messages() -> None:
+    """A message with no text but an image attachment is still worth surfacing."""
+    from utils.feeds import recent_messages
+
+    image_only = _fake_msg(
+        content="",
+        attachments=[_fake_attachment("meme.png", "image/png", 1000, "https://cdn/m.png")],
+    )
+    channel = _fake_channel_with_history([image_only])
+    me = MagicMock(spec=discord.Member)
+    out = await recent_messages(channel, me, limit=10)
+    assert len(out) == 1
+
+
+@pytest.mark.asyncio
+async def test_recent_messages_skips_empty_messages_with_no_media() -> None:
+    from utils.feeds import recent_messages
+
+    empty = _fake_msg(content="")
+    real = _fake_msg(content="hi")
+    channel = _fake_channel_with_history([real, empty])
+    me = MagicMock(spec=discord.Member)
+    out = await recent_messages(channel, me, limit=10)
+    assert [m.content for m in out] == ["hi"]
+
+
+@pytest.mark.asyncio
+async def test_recent_messages_respects_within_cutoff() -> None:
+    """When `within` is passed, stop walking history once we cross that boundary."""
+    from datetime import UTC, datetime, timedelta
+
+    from utils.feeds import recent_messages
+
+    now = datetime.now(UTC)
+    fresh = _fake_msg(content="fresh")
+    fresh.created_at = now - timedelta(minutes=10)
+    stale = _fake_msg(content="stale")
+    stale.created_at = now - timedelta(hours=5)
+    channel = _fake_channel_with_history([fresh, stale])
+    me = MagicMock(spec=discord.Member)
+    out = await recent_messages(channel, me, limit=10, within=timedelta(hours=1))
+    assert [m.content for m in out] == ["fresh"]
