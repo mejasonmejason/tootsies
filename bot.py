@@ -36,6 +36,7 @@ COGS = [
     "cogs.order",
     "cogs.admin",
     "cogs.settings",
+    "cogs.help",
 ]
 
 
