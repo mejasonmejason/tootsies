@@ -315,11 +315,14 @@ class ClaudeClient:
             user_message=f"{question}{extra_context}",
             system_extra=system_extra,
             # Hard token cap is the backstop for prompt-following failures.
-            # ~80 tokens is roughly 320 chars; the prompt aims for 50-280.
-            # Sized so a tight model answer fits, an almost-tight one truncates
-            # just past the user-readable ~280 char target, and a runaway model
-            # can't dump (vs. the previous 400-token default = 1600-char wall).
-            max_tokens=80,
+            # ~130 tokens is roughly 520 chars; the prompt aims for 50-280.
+            # Bumped from 80 because the tighter setting was cutting some
+            # legit medium answers mid-word right at the 280 boundary. 130
+            # gives ~240 chars of buffer above the 280 char target so the
+            # model can land cleanly even when it slightly overshoots, while
+            # still capping any true runaway at ~520 chars (vs. the default
+            # 400 tokens = 1600 chars before any of this work).
+            max_tokens=130,
             tools=tools,
             purpose="ask",
             image_urls=image_urls,

@@ -67,6 +67,11 @@ class Ask(commands.Cog):
                 source="ask", user_id=user_id,
                 verbosity=self.bot.config.bot_logs_verbosity,
             )
+            await bot_logs.maybe_post_prompt_error(
+                self.bot, self.bot.db, guild_id, exc,
+                source="ask", user_id=user_id,
+                verbosity=self.bot.config.bot_logs_verbosity,
+            )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
 
@@ -156,6 +161,11 @@ class Ask(commands.Cog):
                     guild_id=message.guild.id, user_id=message.author.id,
                 )
                 await bot_logs.maybe_post_db_error(
+                    self.bot, self.bot.db, message.guild.id, exc,
+                    source="ask_mention", user_id=message.author.id,
+                    verbosity=self.bot.config.bot_logs_verbosity,
+                )
+                await bot_logs.maybe_post_prompt_error(
                     self.bot, self.bot.db, message.guild.id, exc,
                     source="ask_mention", user_id=message.author.id,
                     verbosity=self.bot.config.bot_logs_verbosity,

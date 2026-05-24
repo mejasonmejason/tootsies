@@ -113,6 +113,11 @@ class Discourse(commands.Cog):
                 source="discourse", user_id=interaction.user.id,
                 verbosity=self.bot.config.bot_logs_verbosity,
             )
+            await bot_logs.maybe_post_prompt_error(
+                self.bot, self.bot.db, guild_id, exc,
+                source="discourse", user_id=interaction.user.id,
+                verbosity=self.bot.config.bot_logs_verbosity,
+            )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
 

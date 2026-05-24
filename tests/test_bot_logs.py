@@ -158,3 +158,119 @@ async def test_post_db_error_passes_errors_level_through_to_post() -> None:
     kwargs = post.await_args.kwargs
     assert kwargs["level"] == "errors"
     assert kwargs["verbosity"] == "milestones"
+
+
+# ---- format_prompt_error -----------------------------------------------------
+
+
+def test_format_prompt_error_minimal_fields() -> None:
+    msg = bot_logs.format_prompt_error(exc_class="BadRequestError", source="ask")
+    assert "BadRequestError" in msg
+    assert "ask" in msg
+    assert msg.startswith("prompt error:")
+
+
+def test_format_prompt_error_includes_detail_truncated() -> None:
+    """Detail string carries actionable info ('unable to download', 'rate limit'),
+    truncated to keep mod-log messages compact."""
+    msg = bot_logs.format_prompt_error(
+        exc_class="BadRequestError", source="ask_mention",
+        guild_id=111, user_id=222,
+        detail="Unable to download the file. Please verify the URL.",
+    )
+    assert "<@222>" in msg
+    assert "111" in msg
+    assert "Unable to download the file" in msg
+    assert "ask_mention" in msg
+
+
+def test_format_prompt_error_truncates_long_detail() -> None:
+    long = "x" * 1000
+    msg = bot_logs.format_prompt_error(exc_class="X", source="y", detail=long)
+    # detail capped at 160 chars in the formatter
+    assert msg.count("x") <= 160
+
+
+def test_format_prompt_error_omits_optional_when_missing() -> None:
+    msg = bot_logs.format_prompt_error(exc_class="X", source="y")
+    assert "<@" not in msg
+    assert "detail=" not in msg
+    assert "guild=" not in msg
+
+
+# ---- maybe_post_prompt_error -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_maybe_post_prompt_error_fires_on_anthropic_api_error() -> None:
+    """Anthropic API errors should fire AND go through post() at level='full'
+    so only full-verbosity guilds see them."""
+    import anthropic
+    bot, db = _stub_bot_and_db()
+    # Use the actual error class so the isinstance check matches what prod hits.
+    exc = anthropic.APIError(
+        message="boom", request=MagicMock(), body=None,
+    )
+    with patch.object(bot_logs, "post", new=AsyncMock()) as post:
+        await bot_logs.maybe_post_prompt_error(
+            bot, db, guild_id=999, exc=exc, source="ask", user_id=42,
+            verbosity="full",
+        )
+    post.assert_awaited_once()
+    assert post.await_args is not None
+    kwargs = post.await_args.kwargs
+    assert kwargs["level"] == "full"
+    assert kwargs["verbosity"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_maybe_post_prompt_error_noop_on_asyncpg_exception() -> None:
+    """asyncpg errors should NOT route through prompt-error path; they have
+    their own DB-error pipeline that always surfaces."""
+    bot, db = _stub_bot_and_db()
+    exc = asyncpg.InterfaceError("pool closed")
+    with patch.object(bot_logs, "post", new=AsyncMock()) as post:
+        await bot_logs.maybe_post_prompt_error(
+            bot, db, guild_id=999, exc=exc, source="ask",
+        )
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_post_prompt_error_noop_on_plain_exception() -> None:
+    """Plain Exception (KeyError, ValueError, etc.) shouldn't surface to mods;
+    those are real bugs the dev should chase in Railway logs."""
+    bot, db = _stub_bot_and_db()
+    exc = KeyError("missing key")
+    with patch.object(bot_logs, "post", new=AsyncMock()) as post:
+        await bot_logs.maybe_post_prompt_error(
+            bot, db, guild_id=999, exc=exc, source="ask",
+        )
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_post_prompt_error_noop_without_guild_id() -> None:
+    import anthropic
+    bot, db = _stub_bot_and_db()
+    exc = anthropic.APIError(message="x", request=MagicMock(), body=None)
+    with patch.object(bot_logs, "post", new=AsyncMock()) as post:
+        await bot_logs.maybe_post_prompt_error(
+            bot, db, guild_id=None, exc=exc, source="ask",
+        )
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_post_prompt_error_swallows_post_failure() -> None:
+    import anthropic
+    bot, db = _stub_bot_and_db()
+    exc = anthropic.APIError(message="x", request=MagicMock(), body=None)
+    with patch.object(
+        bot_logs, "post",
+        new=AsyncMock(side_effect=RuntimeError("discord 403")),
+    ):
+        # Must NOT raise.
+        await bot_logs.maybe_post_prompt_error(
+            bot, db, guild_id=1, exc=exc, source="ask",
+        )

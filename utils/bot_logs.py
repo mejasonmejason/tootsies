@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+import anthropic
 import asyncpg
 import discord
 
@@ -130,3 +131,74 @@ async def maybe_post_db_error(
         )
     except Exception:
         log.exception("maybe_post_db_error: bot-logs post failed for %s", source)
+
+
+def format_prompt_error(
+    *,
+    exc_class: str,
+    source: str,
+    guild_id: int | None = None,
+    user_id: int | None = None,
+    detail: str | None = None,
+) -> str:
+    """Build a single-line mod-log message for a Claude prompt-layer error.
+
+    Mirrors `format_db_error` but for Anthropic API failures (BadRequestError,
+    RateLimitError, APITimeoutError, etc.). Includes a truncated detail string
+    when available because prompt errors often carry actionable info in their
+    message ("Unable to download the file", "rate limit exceeded", etc.) that
+    just an exception class wouldn't convey.
+    """
+    user_part = f"<@{user_id}>" if user_id else "n/a"
+    guild_part = f" guild=`{guild_id}`" if guild_id else ""
+    detail_part = f" detail=`{detail[:160]}`" if detail else ""
+    return (
+        f"prompt error: `{exc_class}` in `{source}`{detail_part}{guild_part} "
+        f"(user={user_part})"
+    )
+
+
+async def maybe_post_prompt_error(
+    bot: discord.Client,
+    db: DB,
+    guild_id: int | None,
+    exc: BaseException,
+    *,
+    source: str,
+    user_id: int | None = None,
+    verbosity: str = "milestones",
+) -> None:
+    """Post to #bot-logs only if `exc` is a Claude API error, AND only when the
+    server's verbosity is set to 'full'.
+
+    Filters OUT asyncpg errors (those route through maybe_post_db_error at
+    'errors' level which always fires). Filters IN `anthropic.APIError` and
+    its subclasses (BadRequestError on image-fetch failures, RateLimitError,
+    APITimeoutError, etc.). Gated to 'full' verbosity because prompt errors
+    fire more often than DB ones, are usually transient, and would spam
+    milestones-mode mods.
+
+    Use from cog `except Exception` handlers alongside maybe_post_db_error.
+    Best-effort: any failure inside the post itself is swallowed.
+    """
+    if guild_id is None:
+        return
+    if isinstance(exc, asyncpg.PostgresError | asyncpg.InterfaceError):
+        return  # handled by maybe_post_db_error at the 'errors' level
+    if not isinstance(exc, anthropic.APIError):
+        return
+    msg = format_prompt_error(
+        exc_class=type(exc).__name__,
+        source=source,
+        guild_id=guild_id,
+        user_id=user_id,
+        detail=str(exc) if str(exc) else None,
+    )
+    try:
+        await post(
+            bot, db, guild_id, msg,
+            level="full",
+            verbosity=verbosity,
+        )
+    except Exception:
+        log.exception("maybe_post_prompt_error: bot-logs post failed for %s", source)

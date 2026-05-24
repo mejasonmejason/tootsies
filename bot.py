@@ -124,6 +124,11 @@ class TootsiesBot(commands.Bot):
             source="app_command_handler", user_id=interaction.user.id,
             verbosity=self.config.bot_logs_verbosity,
         )
+        await bot_logs.maybe_post_prompt_error(
+            self, self.db, interaction.guild_id, error,
+            source="app_command_handler", user_id=interaction.user.id,
+            verbosity=self.config.bot_logs_verbosity,
+        )
         msg = voice.pick(voice.DB_ERROR)
         try:
             if interaction.response.is_done():

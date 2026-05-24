@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 import discord
@@ -18,11 +19,20 @@ from discord.ext import commands
 from models import ORDER_STATUS_EMOJI, ORDER_STATUS_LABEL, TERMINAL_STATUSES, OrderStatus
 from utils import bot_logs, voice
 from utils.events import emit
+from utils.feeds import format_for_prompt, recent_messages
 from utils.gates import require_configured
 from utils.github import issue_body_for_order
 from utils.metrics import track_command
 from utils.permissions import is_mod
 from utils.rate_limits import check_cooldown, check_server_limit, consume_server
+
+# How much recent channel chatter to pull as context for a /order. Used by both
+# the preflight check (so Sonnet can see what behavior the mod is reacting to)
+# and the GitHub issue body (so claude-code-action has evidence when patching).
+# Sized to bound token cost (~500-2000 tokens of chatter) while still covering
+# a normal "Toots is being weird in here" complaint window.
+ORDER_CONTEXT_LOOKBACK = timedelta(minutes=60)
+ORDER_CONTEXT_MSG_LIMIT = 30
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -81,9 +91,32 @@ class Order(commands.GroupCog, name="order"):
 
         await interaction.response.defer(thinking=True)
 
+        # Pull recent chatter from the channel where /order was invoked. For
+        # behavior-complaint orders ("toots is being weird in #discourse"),
+        # this lets preflight + claude-code-action see the actual evidence
+        # instead of working from the mod's one-line description alone. For
+        # straight "add a /weather command" orders the context is just noise
+        # the model ignores. Fail-open: if we can't pull context, ship the
+        # order anyway with no context.
+        channel_context = ""
+        me = interaction.guild.me
+        ch = interaction.channel
+        if me is not None and isinstance(ch, discord.TextChannel | discord.Thread):
+            try:
+                msgs = await recent_messages(
+                    ch, me, limit=ORDER_CONTEXT_MSG_LIMIT, within=ORDER_CONTEXT_LOOKBACK,
+                    include_bots=True,  # Toots's own posts are often the evidence
+                )
+                if msgs:
+                    channel_context = format_for_prompt(msgs, include_reactions=True)
+            except Exception:
+                log.exception("order context fetch failed (continuing without context)")
+
         # Pre-flight sanity check via Sonnet. Three-way: allow / plumbing / reject.
         try:
-            verdict, reason = await self.bot.claude.preflight_order(feature)
+            verdict, reason = await self.bot.claude.preflight_order(
+                feature, channel_context=channel_context,
+            )
         except Exception as exc:
             log.exception("preflight failed")
             emit(
@@ -91,6 +124,11 @@ class Order(commands.GroupCog, name="order"):
                 guild_id=guild_id, user_id=user_id,
             )
             await bot_logs.maybe_post_db_error(
+                self.bot, self.bot.db, guild_id, exc,
+                source="order_preflight", user_id=user_id,
+                verbosity=self.bot.config.bot_logs_verbosity,
+            )
+            await bot_logs.maybe_post_prompt_error(
                 self.bot, self.bot.db, guild_id, exc,
                 source="order_preflight", user_id=user_id,
                 verbosity=self.bot.config.bot_logs_verbosity,
@@ -129,7 +167,11 @@ class Order(commands.GroupCog, name="order"):
             guild_id=guild_id, requester_id=user_id, request_text=feature, summary=reason,
         )
         title = f"[order #{order.id}] {reason[:80]}"
-        body = issue_body_for_order(feature, reason, interaction.user.mention)
+        body = issue_body_for_order(
+            feature, reason, interaction.user.mention,
+            channel_context=channel_context,
+            channel_name=getattr(ch, "name", None) if ch else None,
+        )
 
         try:
             issue = await self.bot.gh.create_issue(title, body, labels=["order", "claude"])
