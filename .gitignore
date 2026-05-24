@@ -9,6 +9,10 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 *.log
 .DS_Store
 .idea/
