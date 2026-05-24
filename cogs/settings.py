@@ -1,9 +1,20 @@
-"""/menu — interactive setup wizard.
+"""/menu — interactive setup AND current-state view, one command.
 
-All channel/role/feed selectors live on the main view so a mod sees the actual Discord state
-in one screen. Pattern matching against Tootsies-style naming (`the-bar`, `chatter`, `bot-logs`,
-`Promoters`/`Bouncers`/`Janitors`) becomes the pre-selected default; you can override anything
-with one click. No nested sub-menus.
+Layout (5 rows, Discord's hard cap):
+  row 0: bot-logs channel select
+  row 1: discourse channel select
+  row 2: mod roles select
+  row 3: feed channels select
+  row 4: [confirm & save] [cancel]
+
+Mood (chill / yaps / off) is intentionally NOT in this menu. It's controlled
+via `/discourse mood:<x>` so it can be changed on the fly without re-running
+the whole setup wizard. New servers default to `chill` via the schema default.
+
+Pre-population priority:
+  1. Saved settings from the DB (if /menu was run before)
+  2. Pattern-matched best guesses (channel/role names like Promoters, bot-logs)
+  3. Empty (mod has to pick)
 """
 
 from __future__ import annotations
@@ -16,7 +27,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from models import MoodMode
 from utils import voice
 from utils.metrics import track_command
 from utils.permissions import is_mod
@@ -26,34 +36,67 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Heuristics for prefill — case-insensitive matches against channel/role names.
+# Heuristics for first-time prefill — case-insensitive matches against
+# channel/role names. Skipped entirely if the guild already has saved settings.
 CHANNEL_PATTERNS = {
     "bot_logs_channel": [r"^bot-?logs$", r"^back-?of-?house$"],
     "discourse_channel": [r"^chatter$", r"^general$", r"^lounge$", r"^the-?bar$"],
 }
-MOD_ROLE_PATTERNS = [r"^Promoters$", r"^Bouncers$", r"^Janitors$", r"^Moderators?$", r"^Mods?$", r"^Admin$"]
+MOD_ROLE_PATTERNS = [
+    r"^Promoters$", r"^Bouncers$", r"^Janitors$",
+    r"^Moderators?$", r"^Mods?$", r"^Admin$",
+]
 FEED_PATTERNS = [r"feed", r"alerts", r"x-?feed", r"tweets", r"news"]
-MOOD_CYCLE = ["chill", "yaps", "off"]
 
 
 def _match(name: str, patterns: list[str]) -> bool:
     return any(re.search(p, name, re.IGNORECASE) for p in patterns)
 
 
-def _prefill(guild: discord.Guild) -> dict[str, object]:
-    """Best-guess defaults derived from the guild's current channels and roles."""
+def _pattern_prefill(guild: discord.Guild) -> dict[str, object]:
+    """Best-guess defaults derived from the guild's current channels and roles.
+    Only used as fallback when nothing is saved yet."""
     out: dict[str, object] = {}
     for key, patterns in CHANNEL_PATTERNS.items():
         for ch in guild.text_channels:
             if _match(ch.name, patterns):
                 out[key] = ch.id
                 break
-    out["mod_role_ids"] = [r.id for r in guild.roles if _match(r.name, MOD_ROLE_PATTERNS)]
+    out["mod_role_ids"] = [
+        r.id for r in guild.roles if _match(r.name, MOD_ROLE_PATTERNS)
+    ]
     out["feed_channel_ids"] = [
         ch.id for ch in guild.text_channels if _match(ch.name, FEED_PATTERNS)
     ]
-    out["mood"] = "chill"
     return out
+
+
+async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[str, object]:
+    """Load saved settings (if any) and fill any gaps with pattern-based guesses.
+
+    A re-run of /menu after setup should reflect what's actually configured —
+    that makes /menu_view redundant. Pattern matching only kicks in for
+    settings that haven't been saved yet.
+    """
+    saved_settings = await bot.db.all_settings(guild.id)
+    saved_mod_roles = await bot.db.get_mod_roles(guild.id)
+    saved_feed_channels = await bot.db.get_feed_channels(guild.id)
+
+    state: dict[str, object] = {}
+    if "bot_logs_channel" in saved_settings:
+        state["bot_logs_channel"] = int(saved_settings["bot_logs_channel"])
+    if "discourse_channel" in saved_settings:
+        state["discourse_channel"] = int(saved_settings["discourse_channel"])
+    if saved_mod_roles:
+        state["mod_role_ids"] = list(saved_mod_roles)
+    if saved_feed_channels:
+        state["feed_channel_ids"] = [cid for cid, _cat in saved_feed_channels]
+
+    # Fill any remaining gaps from name-pattern heuristics.
+    guesses = _pattern_prefill(guild)
+    for key, value in guesses.items():
+        state.setdefault(key, value)
+    return state
 
 
 # ---- cog ------------------------------------------------------------------------
@@ -63,53 +106,43 @@ class Settings(commands.Cog):
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="menu", description="set toots up. (mods only)")
+    @app_commands.command(
+        name="menu",
+        description="set toots up (or see/edit current settings). mods only.",
+    )
     @track_command("menu")
     async def menu(self, interaction: discord.Interaction) -> None:
         member = interaction.user
         guild = interaction.guild
         if guild is None or not isinstance(member, discord.Member):
-            await interaction.response.send_message(voice.pick(voice.PERMISSION_DENIED), ephemeral=True)
+            await interaction.response.send_message(
+                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
+            )
             return
-        # Owner / manage_guild are always allowed even pre-configuration, so the first menu run
-        # works on a fresh install.
+        # Owner / manage_guild are always allowed even pre-configuration, so the
+        # first menu run works on a fresh install.
         if not (
             member.guild.owner_id == member.id
             or member.guild_permissions.manage_guild
             or await is_mod(self.bot.db, member)
         ):
-            await interaction.response.send_message(voice.pick(voice.PERMISSION_DENIED), ephemeral=True)
+            await interaction.response.send_message(
+                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
+            )
             return
 
-        view = MenuView(self.bot, guild, _prefill(guild), member.id)
+        initial = await _load_initial_state(self.bot, guild)
+        view = MenuView(self.bot, guild, initial, member.id)
         await interaction.response.send_message(
-            embed=view.help_embed(), view=view, ephemeral=True
+            embed=view.help_embed(), view=view, ephemeral=True,
         )
-
-    @app_commands.command(name="menu_view", description="see current settings.")
-    @track_command("menu_view")
-    async def menu_view(self, interaction: discord.Interaction) -> None:
-        if interaction.guild is None:
-            return
-        cfg = await self.bot.db.all_settings(interaction.guild.id)
-        mod_roles = await self.bot.db.get_mod_roles(interaction.guild.id)
-        feeds = await self.bot.db.get_feed_channels(interaction.guild.id)
-        schedule = await self.bot.db.get_schedule(interaction.guild.id)
-        lines = [
-            f"**mood:** {schedule.mood.value}",
-            f"**mod roles:** {', '.join(f'<@&{r}>' for r in mod_roles) or '(none)'}",
-            f"**feeds:** {len(feeds)} channel(s)",
-        ]
-        for k, v in sorted(cfg.items()):
-            lines.append(f"**{k}:** {v}")
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 # ---- view -----------------------------------------------------------------------
 
 
 def _safe_channel_default(
-    guild: discord.Guild, channel_id: object
+    guild: discord.Guild, channel_id: object,
 ) -> list[discord.SelectDefaultValue]:
     """Return a default_values entry for a channel ID — only if it still exists."""
     if not isinstance(channel_id, int):
@@ -117,11 +150,13 @@ def _safe_channel_default(
     ch = guild.get_channel(channel_id)
     if not isinstance(ch, discord.TextChannel):
         return []
-    return [discord.SelectDefaultValue(id=ch.id, type=discord.SelectDefaultValueType.channel)]
+    return [
+        discord.SelectDefaultValue(id=ch.id, type=discord.SelectDefaultValueType.channel),
+    ]
 
 
 def _safe_channel_defaults(
-    guild: discord.Guild, channel_ids: object
+    guild: discord.Guild, channel_ids: object,
 ) -> list[discord.SelectDefaultValue]:
     if not isinstance(channel_ids, list):
         return []
@@ -131,14 +166,14 @@ def _safe_channel_defaults(
             continue
         ch = guild.get_channel(cid)
         if isinstance(ch, discord.TextChannel):
-            out.append(
-                discord.SelectDefaultValue(id=ch.id, type=discord.SelectDefaultValueType.channel)
-            )
+            out.append(discord.SelectDefaultValue(
+                id=ch.id, type=discord.SelectDefaultValueType.channel,
+            ))
     return out
 
 
 def _safe_role_defaults(
-    guild: discord.Guild, role_ids: object
+    guild: discord.Guild, role_ids: object,
 ) -> list[discord.SelectDefaultValue]:
     if not isinstance(role_ids, list):
         return []
@@ -147,14 +182,14 @@ def _safe_role_defaults(
         if not isinstance(rid, int):
             continue
         if guild.get_role(rid) is not None:
-            out.append(
-                discord.SelectDefaultValue(id=rid, type=discord.SelectDefaultValueType.role)
-            )
+            out.append(discord.SelectDefaultValue(
+                id=rid, type=discord.SelectDefaultValueType.role,
+            ))
     return out
 
 
 class MenuView(discord.ui.View):
-    """One view, four selectors, three buttons. No sub-menus."""
+    """One view, four selectors, two bottom buttons. No sub-menus, no mood here."""
 
     def __init__(
         self,
@@ -166,21 +201,23 @@ class MenuView(discord.ui.View):
         super().__init__(timeout=600)
         self.bot = bot
         self.guild = guild
-        self.prefill = prefill
         self.actor_id = actor_id
-        # Channel/role state mirrors the selects' current values. We initialize from prefill so
-        # `Confirm` works even if the mod didn't touch any dropdown.
+        # Mirror of selects' current values. Initialized from prefill so `Confirm`
+        # works even if the mod didn't touch any dropdown.
         self.selected: dict[str, object] = dict(prefill)
 
-        bot_logs = _BotLogsSelect(self, _safe_channel_default(guild, prefill.get("bot_logs_channel")))
-        discourse = _DiscourseSelect(self, _safe_channel_default(guild, prefill.get("discourse_channel")))
-        mod_roles = _ModRoleSelect(self, _safe_role_defaults(guild, prefill.get("mod_role_ids")))
-        feeds = _FeedSelect(self, _safe_channel_defaults(guild, prefill.get("feed_channel_ids")))
-
-        self.add_item(bot_logs)
-        self.add_item(discourse)
-        self.add_item(mod_roles)
-        self.add_item(feeds)
+        self.add_item(_BotLogsSelect(
+            self, _safe_channel_default(guild, prefill.get("bot_logs_channel")),
+        ))
+        self.add_item(_DiscourseSelect(
+            self, _safe_channel_default(guild, prefill.get("discourse_channel")),
+        ))
+        self.add_item(_ModRoleSelect(
+            self, _safe_role_defaults(guild, prefill.get("mod_role_ids")),
+        ))
+        self.add_item(_FeedSelect(
+            self, _safe_channel_defaults(guild, prefill.get("feed_channel_ids")),
+        ))
 
     # ---- embed -----------------------------------------------------------------
 
@@ -188,42 +225,58 @@ class MenuView(discord.ui.View):
         e = discord.Embed(
             title="toots' menu",
             description=(
-                "pick the channels and roles below. i pre-selected my best guesses, "
-                "tweak whatever's wrong. then hit **confirm & save**."
+                "configure the four settings below. each dropdown is labeled with "
+                "what it controls. when you're happy, hit **confirm & save**.\n\n"
+                "_re-running `/menu` later shows your current settings so you can "
+                "tweak. for the scheduled-posting mood (chill / yaps / off), use_ "
+                "`/discourse mood:<x>` _instead — it's separate so you can change "
+                "it on the fly without re-running setup._"
             ),
             color=0x9b59b6,
         )
         e.add_field(
-            name="what each one means",
-            value=(
-                "**bot-logs channel**: where i narrate `/order` status (🟡→🍳→✅).\n"
-                "**discourse channel**: where scheduled discourse posts land.\n"
-                "**mod roles**: who can run `/order`, `/close`, `/open`, `/undo`, `/menu`.\n"
-                "**feed channels**: read-only sources i pull from for `/discourse` "
-                "(X feeds, news, alerts, etc.).\n"
-                "**mood**: chill (2/day), yaps (4/day), or off. Cycles on click."
-            ),
+            name="📊  bot-logs channel",
+            value="where I narrate `/order` status (🟡 → 🍳 → ✅).",
+            inline=False,
+        )
+        e.add_field(
+            name="💬  discourse channel",
+            value="where scheduled discourse posts land.",
+            inline=False,
+        )
+        e.add_field(
+            name="👮  mod roles",
+            value="who can run `/order`, `/close`, `/open`, `/undo`, `/menu`.",
+            inline=False,
+        )
+        e.add_field(
+            name="📰  feed channels",
+            value="read-only sources I pull from for `/discourse` (X feeds, news, alerts). optional.",
             inline=False,
         )
         return e
 
     async def _check_actor(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.actor_id:
-            await interaction.response.send_message("not your menu, regular.", ephemeral=True)
+            await interaction.response.send_message(
+                "not your menu, regular.", ephemeral=True,
+            )
             return False
         return True
 
     # ---- buttons (row 4) -------------------------------------------------------
 
     @discord.ui.button(label="confirm & save", style=discord.ButtonStyle.success, row=4)
-    async def confirm(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
+    async def confirm(
+        self, interaction: discord.Interaction, _btn: discord.ui.Button,
+    ) -> None:
         if not await self._check_actor(interaction):
             return
         if interaction.guild is None:
             return
         guild_id = interaction.guild.id
 
-        # Validate the bare minimum — bot_logs, discourse, and at least one mod role.
+        # Validate the bare minimum.
         missing = []
         if not self.selected.get("bot_logs_channel"):
             missing.append("bot-logs channel")
@@ -234,14 +287,16 @@ class MenuView(discord.ui.View):
             missing.append("mod role(s)")
         if missing:
             await interaction.response.send_message(
-                f"need to pick: {', '.join(missing)}.", ephemeral=True
+                f"need to pick: {', '.join(missing)}.", ephemeral=True,
             )
             return
 
         for key in ("bot_logs_channel", "discourse_channel"):
             val = self.selected.get(key)
             if val:
-                await self.bot.db.set_setting(guild_id, key, int(cast("int", val)), self.actor_id)
+                await self.bot.db.set_setting(
+                    guild_id, key, int(cast("int", val)), self.actor_id,
+                )
 
         await self.bot.db.set_setting(
             guild_id, "per_user_daily_limit", 20, self.actor_id,
@@ -250,21 +305,19 @@ class MenuView(discord.ui.View):
             guild_id, "per_server_daily_limit", 20, self.actor_id,
         )
 
-        mood = self.selected.get("mood", "chill")
-        if isinstance(mood, str):
-            await self.bot.db.set_schedule(guild_id, MoodMode(mood), self.actor_id)
-
         await self.bot.db.set_mod_roles(
-            guild_id, [int(r) for r in cast("list[int]", mod_role_ids)]
+            guild_id, [int(r) for r in cast("list[int]", mod_role_ids)],
         )
 
         feeds = self.selected.get("feed_channel_ids") or []
         if isinstance(feeds, list):
-            await self.bot.db.set_feed_channels(guild_id, [(int(c), None) for c in feeds])
+            await self.bot.db.set_feed_channels(
+                guild_id, [(int(c), None) for c in feeds],
+            )
 
         await self.bot.db.mark_configured(guild_id)
         await self.bot.db.audit(
-            guild_id, self.actor_id, "menu_saved", after=self.selected
+            guild_id, self.actor_id, "menu_saved", after=self.selected,
         )
 
         for child in self.children:
@@ -280,26 +333,17 @@ class MenuView(discord.ui.View):
             content=None, embed=confirm_embed, view=self,
         )
 
-    @discord.ui.button(label="mood: chill", style=discord.ButtonStyle.secondary, row=4)
-    async def cycle_mood(self, interaction: discord.Interaction, btn: discord.ui.Button) -> None:
-        if not await self._check_actor(interaction):
-            return
-        current = str(self.selected.get("mood", "chill"))
-        i = MOOD_CYCLE.index(current) if current in MOOD_CYCLE else 0
-        new = MOOD_CYCLE[(i + 1) % len(MOOD_CYCLE)]
-        self.selected["mood"] = new
-        btn.label = f"mood: {new}"
-        await interaction.response.edit_message(view=self)
-
     @discord.ui.button(label="cancel", style=discord.ButtonStyle.secondary, row=4)
-    async def cancel(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
+    async def cancel(
+        self, interaction: discord.Interaction, _btn: discord.ui.Button,
+    ) -> None:
         if not await self._check_actor(interaction):
             return
         for child in self.children:
             if isinstance(child, discord.ui.Button | discord.ui.Select):
                 child.disabled = True
         await interaction.response.edit_message(
-            content="closed without saving.", embed=None, view=self
+            content="closed without saving.", embed=None, view=self,
         )
 
     def _summary(self) -> str:
@@ -310,9 +354,9 @@ class MenuView(discord.ui.View):
         return (
             f"**bot-logs:** <#{bot_logs}>\n"
             f"**discourse:** <#{discourse}>\n"
-            f"**mod roles:** {', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles))}\n"
-            f"**feeds:** {len(cast('list[int]', feeds))} channel(s)\n"
-            f"**mood:** {self.selected.get('mood', 'chill')}"
+            f"**mod roles:** "
+            f"{', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles))}\n"
+            f"**feeds:** {len(cast('list[int]', feeds))} channel(s)"
         )
 
 
@@ -321,10 +365,10 @@ class MenuView(discord.ui.View):
 
 class _BotLogsSelect(discord.ui.ChannelSelect):
     def __init__(
-        self, parent: MenuView, defaults: list[discord.SelectDefaultValue]
+        self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="bot-logs channel (where status posts go)",
+            placeholder="📊 bot-logs channel",
             min_values=1, max_values=1, row=0,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
@@ -333,15 +377,15 @@ class _BotLogsSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["bot_logs_channel"] = self.values[0].id
-        await interaction.response.defer()  # silent — embed doesn't need refresh
+        await interaction.response.defer()
 
 
 class _DiscourseSelect(discord.ui.ChannelSelect):
     def __init__(
-        self, parent: MenuView, defaults: list[discord.SelectDefaultValue]
+        self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="discourse channel (where scheduled posts go)",
+            placeholder="💬 discourse channel",
             min_values=1, max_values=1, row=1,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
@@ -355,10 +399,10 @@ class _DiscourseSelect(discord.ui.ChannelSelect):
 
 class _ModRoleSelect(discord.ui.RoleSelect):
     def __init__(
-        self, parent: MenuView, defaults: list[discord.SelectDefaultValue]
+        self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="mod roles (Promoters, Bouncers, Janitors…)",
+            placeholder="👮 mod roles",
             min_values=1, max_values=10, row=2,
             default_values=defaults,
         )
@@ -371,10 +415,10 @@ class _ModRoleSelect(discord.ui.RoleSelect):
 
 class _FeedSelect(discord.ui.ChannelSelect):
     def __init__(
-        self, parent: MenuView, defaults: list[discord.SelectDefaultValue]
+        self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="feed channels (X feeds, news, optional)",
+            placeholder="📰 feed channels (optional)",
             min_values=0, max_values=25, row=3,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,

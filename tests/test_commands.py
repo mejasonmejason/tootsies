@@ -59,7 +59,7 @@ async def test_all_expected_commands_registered() -> None:
         "close",
         "open",
         "undo",
-        "menu",
+        "menu",  # /menu now serves as both setup and view (no separate /menu_view)
     }
     missing = expected - names
     assert not missing, f"missing commands: {missing}\nregistered: {sorted(names)}"
