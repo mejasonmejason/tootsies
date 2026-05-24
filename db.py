@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS orders (
     status TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    error_log TEXT
+    error_log TEXT,
+    announced_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS orders_guild_status_idx ON orders (guild_id, status);
 CREATE INDEX IF NOT EXISTS orders_issue_idx ON orders (issue_number);
@@ -211,6 +212,16 @@ CREATE TABLE IF NOT EXISTS chimein_history (
 CREATE INDEX IF NOT EXISTS chimein_history_channel_ts_idx
     ON chimein_history (guild_id, channel_id, posted_at DESC);
 CREATE INDEX IF NOT EXISTS command_metrics_guild_cmd_idx ON command_metrics (guild_id, command);
+
+-- Add announced_at column if missing (idempotent migration).
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'orders' AND column_name = 'announced_at'
+    ) THEN
+        ALTER TABLE orders ADD COLUMN announced_at TIMESTAMPTZ;
+    END IF;
+END $$;
 
 -- One-time backfill: mark stale non-terminal orders as served.
 -- Before the deploy workflow existed, orders got stuck at prepping/on_the_stove
@@ -750,6 +761,22 @@ class DB:
             guild_id, today,
         )
 
+    async def unannounced_terminal_orders(self) -> list[Order]:
+        rows = await self._fetch(
+            """
+            SELECT * FROM orders
+            WHERE status IN ('served', 'burnt', 'sent_back')
+              AND announced_at IS NULL
+            ORDER BY updated_at ASC
+            """
+        )
+        return [_row_to_order(r) for r in rows]
+
+    async def mark_announced(self, order_id: int) -> None:
+        await self._execute(
+            "UPDATE orders SET announced_at = NOW() WHERE id = $1", order_id
+        )
+
     async def all_configured_guilds(self) -> list[int]:
         rows = await self._fetch(
             "SELECT guild_id FROM servers WHERE configured = TRUE"
@@ -770,4 +797,5 @@ def _row_to_order(row: Any) -> Order:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         error_log=row["error_log"],
+        announced_at=row.get("announced_at"),
     )
