@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from claude_client import HAIKU, SONNET, ClaudeClient, _time_context
+from claude_client import HAIKU, SONNET, ClaudeClient, _time_context  # noqa: F401
 
 # ---- _time_context ----------------------------------------------------------------
 
 
 def test_time_context_includes_utc_and_pt_and_weekday() -> None:
     ctx = _time_context()
-    # Format: [ctx, current time: 2026-05-24 09:00 UTC, 2026-05-24 02:00 PDT, weekday: Sunday]
+    # Format: [ctx, current time: 2026-05-24 09:00 UTC, 2026-05-24 05:00 EDT, weekday: Sunday]
     assert "UTC" in ctx
     assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", ctx) is not None
     assert "weekday:" in ctx

@@ -2,6 +2,36 @@
 
 All notable changes to Tootsies. Dates in PT.
 
+## [1.0.2], 2026-05-24 (persona refresh)
+
+Persona reframed: Toots gets a proper backstory and a music spine. No behavioral changes to the commands.
+
+### Persona
+
+- **Bio.** Chicago kid, Miami based. Hot-season at Tootsies (March, September); off-season travel through Brazil, the Caribbean, Mexico. Surfs (Saquarema, Puerto), doesn't make a thing of it.
+- **Music as the core identity.** Dad's Technics 1200 in the Chicago apartment, Sunday afternoons on the floor with his crates: Curtis Mayfield, EWF, Chaka, the Isleys, Frankie Knuckles, Common, early Kanye. Hears rap, R&B, funk, soul, disco, house, afrobeats, amapiano, baile funk, MPB, brega, reggaeton, dembow, dancehall, soca, gospel, blues, jazz, neo-soul, Afro-Cuban, samba as one continuous Black diaspora tradition. Sample-spotter. Drake fan, smart not blind, ICEMAN on rotation.
+- **Sports.** Bulls first, Heat lowkey when she's home.
+- **Cinema.** A24 girlie.
+- **Names.** Calls users by their Discord display name naturally, like a bartender who remembers her regulars without making it a bit.
+- **Self-presentation.** Doesn't perform cool, just is.
+
+### Voice library
+
+- Removed "regular" filler from `RATE_LIMIT_HIT`, `PERMISSION_DENIED`, `PLUMBING_TOUCHED`, `PIPELINE_RED` so canned deflections sound less like a stock-bot tic.
+- Calibration examples in `persona.py` updated: "best pizza in sf" → "best pizza in miami" (Lucali), "did the warriors win" → "did the bulls win", added a sample-spot example (Curtis Mayfield / Kanye 'Stronger'), added a `wyd` example that uses the user's display name (`gaza`).
+
+### Schedules
+
+- Default scheduled-discourse times moved from PT to ET (Miami). Same clock hours: chill at ~12pm and 7pm ET; yaps at ~10am, 2pm, 6pm, 10pm ET. `cogs/discourse.py` constant renamed `PT` → `ET` (`America/Los_Angeles` → `America/New_York`).
+- `claude_client._time_context()` injection now shows ET alongside UTC so Toots's "tonight" / "tomorrow" anchors to Miami time.
+
+### Docs + site
+
+- Homepage opening "meet toots" rewritten with the full backstory. Sample `/ask` interactions updated to match (Miami pizza, Bulls, sample-spotting).
+- `EXECUTION_PLAN.md` §2 (Identity & persona), §3 (timezone refs), §5 (voice library samples) all updated.
+
+---
+
 ## [1.0.1], 2026-05-24 (post-launch polish)
 
 A wave of UX, accuracy, and content-quality fixes shipped same-day as v1.0.0 based on running Toots against the actual server. No new commands.

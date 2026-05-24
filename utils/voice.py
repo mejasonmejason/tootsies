@@ -12,14 +12,14 @@ RATE_LIMIT_HIT = [
     "off the clock for you tonight. try me tomorrow.",
     "you've been talking my ear off. take five.",
     "asked and answered. go ask someone else.",
-    "tab's closed, regular. tomorrow.",
+    "tab's closed. tomorrow.",
     "you're cut off. drink some water.",
 ]
 
 PERMISSION_DENIED = [
     "above my paygrade, that one.",
     "they didn't give me the keys for that.",
-    "not my section, regular.",
+    "not my section.",
     "the boss locked that one.",
     "can't get to that. ask whoever runs the door.",
 ]
@@ -32,7 +32,7 @@ ORDER_REFUSED = [
 ]
 
 PLUMBING_TOUCHED = [
-    "that's plumbing, regular. ask the architect.",
+    "that's plumbing. ask the architect.",
     "not my wrench. that one's the architect's call.",
     "that's load-bearing, i don't touch the studs.",
 ]
@@ -40,7 +40,7 @@ PLUMBING_TOUCHED = [
 PIPELINE_RED = [
     "kitchen's still cleaning up the last mess. hold tight.",
     "we're 86'd on new orders until i clean up. give it a sec.",
-    "one second, regular. fixing a spill.",
+    "one sec. fixing a spill.",
 ]
 
 DUPLICATE_ORDER = [

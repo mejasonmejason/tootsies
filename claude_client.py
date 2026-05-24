@@ -24,9 +24,9 @@ from utils.events import emit
 
 log = logging.getLogger(__name__)
 
-# Tootsies runs on PT-based schedules and the user base is US-leaning, so we also
-# surface PT alongside UTC so Toots can talk about "tonight" / "tomorrow" sensibly.
-PT = ZoneInfo("America/Los_Angeles")
+# Toots is Miami-based (Tootsies is a Miami bar), so we surface ET alongside
+# UTC so her "tonight" / "tomorrow" references anchor to her local time.
+ET = ZoneInfo("America/New_York")
 
 
 def _time_context() -> str:
@@ -37,10 +37,10 @@ def _time_context() -> str:
     is "tonight", etc. We pay ~25 tokens per call to fix that.
     """
     now_utc = datetime.now(UTC)
-    now_pt = now_utc.astimezone(PT)
+    now_et = now_utc.astimezone(ET)
     return (
         f"[ctx, current time: {now_utc.strftime('%Y-%m-%d %H:%M')} UTC, "
-        f"{now_pt.strftime('%Y-%m-%d %H:%M %Z')}, weekday: {now_utc.strftime('%A')}]\n\n"
+        f"{now_et.strftime('%Y-%m-%d %H:%M %Z')}, weekday: {now_utc.strftime('%A')}]\n\n"
     )
 
 HAIKU = "claude-haiku-4-5-20251001"

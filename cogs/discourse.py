@@ -1,18 +1,13 @@
-"""/discourse, manual posts AND scheduled-posting control.
-
-Two modes on the same root command:
+"""/discourse, the manual discussion-starter command, plus the scheduled poster.
 
   /discourse category:<pop|sports|cinema|hiphop|nba|custom>
-      Manual post. Toots drops a discourse starter into the channel where the command was run.
-      Pulls from configured feed channels + current channel's last hour + web. Counts against
-      the per-server daily limit.
+      Manual post. Toots drops a discourse starter into the channel where
+      the command was run. Pulls from configured feed channels + current
+      channel's last hour + web. Counts against the per-server daily limit.
 
-  /discourse mood:<chill|yaps|off|status>
-      Controls the scheduled poster (posts land in the configured discourse channel, not the
-      invoked one). chill = 2/day, yaps = 4/day, off = silent. Unlimited.
-
-The scheduler tick lives here too, when the cog is loaded, a tasks.loop runs every minute,
-checks each configured guild's schedule, and posts (or skips cleanly) as appropriate.
+Schedule control (chill / yaps / off) lives in /menu, not here. The scheduler
+tick runs every minute, checks each configured guild's mood, and posts (or
+skips cleanly) according to the configured cadence in US Eastern time (Miami).
 """
 
 from __future__ import annotations
@@ -47,7 +42,7 @@ log = logging.getLogger(__name__)
 
 CATEGORIES = ["pop", "sports", "cinema", "hiphop", "nba", "custom"]
 
-PT = ZoneInfo("America/Los_Angeles")
+ET = ZoneInfo("America/New_York")
 CHILL_TIMES = [time(12, 0), time(19, 0)]
 YAPS_TIMES = [time(10, 0), time(14, 0), time(18, 0), time(22, 0)]
 
@@ -211,9 +206,9 @@ class Discourse(commands.Cog):
     @tasks.loop(minutes=1)
     async def scheduler_tick(self) -> None:
         try:
-            now_pt = datetime.now(PT)
+            now_et = datetime.now(ET)
             for guild_id in await self.bot.db.all_configured_guilds():
-                await self._maybe_scheduled_post(guild_id, now_pt)
+                await self._maybe_scheduled_post(guild_id, now_et)
         except Exception:
             log.exception("discourse scheduler tick failed")
 
@@ -221,14 +216,14 @@ class Discourse(commands.Cog):
     async def before_tick(self) -> None:
         await self.bot.wait_until_ready()
 
-    async def _maybe_scheduled_post(self, guild_id: int, now_pt: datetime) -> None:
+    async def _maybe_scheduled_post(self, guild_id: int, now_et: datetime) -> None:
         state = await self.bot.db.get_schedule(guild_id)
         if state.mood == MoodMode.OFF:
             return
         schedule = CHILL_TIMES if state.mood == MoodMode.CHILL else YAPS_TIMES
 
         # Pick the most recent scheduled slot whose time has passed today.
-        current = now_pt.time().replace(second=0, microsecond=0)
+        current = now_et.time().replace(second=0, microsecond=0)
         due = [t for t in schedule if t <= current]
         if not due:
             return
@@ -236,10 +231,10 @@ class Discourse(commands.Cog):
 
         # If we've already consumed today's elapsed slots (whether or not we actually posted),
         # skip until the next slot.
-        today_utc = now_pt.astimezone(UTC).date()
+        today_utc = now_et.astimezone(UTC).date()
         if state.last_post_at is not None:
-            last_pt = state.last_post_at.astimezone(PT)
-            if last_pt.date() == now_pt.date() and state.posts_today >= expected:
+            last_et = state.last_post_at.astimezone(ET)
+            if last_et.date() == now_et.date() and state.posts_today >= expected:
                 return
 
         guild = self.bot.get_guild(guild_id)
