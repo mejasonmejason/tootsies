@@ -48,6 +48,7 @@ class Help(commands.Cog):
                 "  *ex:* `/ask who are you` → *bartender at tootsies. pour you something?*\n"
                 "**`@Toots <question>`**: same thing, no slash. "
                 "*ayo @Toots what's the move tonight* works.\n"
+                "  *ex:* `@Toots wyd` → *gaza, posted up. pour you something?*\n"
                 "**`/recap period:<last hour | last 24h | today>`**: what'd "
                 "you miss in here.\n"
                 "**`/discourse category:<pop | sports | cinema | hiphop | nba | "
