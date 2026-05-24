@@ -170,7 +170,10 @@ class Discourse(commands.Cog):
         for channel_id, _cat in feeds[:5]:
             ch = guild.get_channel(channel_id)
             if isinstance(ch, discord.TextChannel):
-                msgs = await recent_messages(ch, me, limit=10, within=timedelta(hours=24))
+                # Feed channels are bot/webhook-posted; include_bots=True or we read nothing.
+                msgs = await recent_messages(
+                    ch, me, limit=10, within=timedelta(hours=24), include_bots=True
+                )
                 if msgs:
                     sources.append(f"--- #{ch.name} (feed) ---\n{format_for_prompt(msgs)}")
 

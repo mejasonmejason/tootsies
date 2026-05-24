@@ -18,14 +18,21 @@ async def recent_messages(
     me: discord.Member,
     limit: int = 30,
     within: timedelta | None = None,
+    include_bots: bool = False,
 ) -> list[discord.Message]:
-    """Pull recent messages, skipping bot messages and empty content."""
+    """Pull recent messages, skipping empty content.
+
+    `include_bots` defaults False because for /ask the context is "what are humans
+    chatting about?". For /recap we want to summarize EVERYTHING that happened, and
+    for /discourse feed-channel reads the bot/webhook posts ARE the content, so the
+    caller passes True there.
+    """
     if not can_read(channel, me):
         return []
     cutoff = datetime.now(UTC) - within if within else None
     msgs: list[discord.Message] = []
     async for msg in channel.history(limit=limit * 2):
-        if msg.author.bot:
+        if msg.author.bot and not include_bots:
             continue
         if not msg.content.strip():
             continue

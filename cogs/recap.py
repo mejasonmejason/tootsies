@@ -73,7 +73,9 @@ class Recap(commands.Cog):
 
         within = _period_to_window(period.value)
         # /recap looks at more history than /ask — up to 200 over the period.
-        msgs = await recent_messages(channel, me, limit=200, within=within)
+        # include_bots=True: a /recap should summarize EVERYTHING (webhook posts,
+        # feed bots, the works), not just human chatter.
+        msgs = await recent_messages(channel, me, limit=200, within=within, include_bots=True)
 
         await interaction.response.defer(thinking=True)
         try:
