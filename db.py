@@ -7,10 +7,47 @@ from datetime import date, datetime
 from typing import Any
 
 import asyncpg
+import asyncpg.exceptions
 
 from models import MoodMode, Order, OrderStatus, ScheduleState
 
 log = logging.getLogger(__name__)
+
+
+def sql_op(query: str) -> str:
+    """Extract a coarse SQL op label (e.g. 'SELECT FROM discourse_schedule').
+
+    Stripped down so we never log full queries with $1/$2/etc. or params.
+    Returns at most ~50 chars, safe to ship to a public mod-log channel.
+    """
+    import re
+
+    q = " ".join(query.split())  # collapse whitespace
+    # UPDATE and DELETE name the table right after the verb; SELECT and INSERT
+    # need FROM/INTO. Walk those two cases separately so labels stay readable.
+    m = re.match(
+        r"^\s*(UPDATE|DELETE)\s+(?:FROM\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+        q,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        verb = m.group(1).upper()
+        table = m.group(2)
+        connector = "FROM" if verb == "DELETE" else ""
+        label = f"{verb} {connector} {table}".replace("  ", " ").strip()
+        return label[:50]
+    m = re.match(
+        r"^\s*(SELECT|INSERT|WITH)\b(?:.*?\b(FROM|INTO)\s+([A-Za-z_][A-Za-z0-9_]*))?",
+        q,
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        return q[:50]
+    verb = m.group(1).upper()
+    target_verb = (m.group(2) or "").upper()
+    table = m.group(3) or ""
+    label = f"{verb} {target_verb} {table}" if table else verb
+    return label[:50]
 
 # Schema is idempotent, re-runs on every startup. Add new tables here; never drop columns
 # from existing tables without a migration plan.
@@ -198,22 +235,56 @@ class DB:
             raise RuntimeError("db not connected, call DB.connect() first")
         return self.pool
 
+    # ---- internal: cached-plan retry wrapper -----------------------------------
+    # asyncpg keeps per-connection prepared statements. When the schema changes
+    # under a long-lived pool connection (column rename, new table, etc.) the
+    # cached plan raises InvalidCachedStatementError. The bad cache entry is
+    # discarded as part of the failure, so a single retry rebuilds the prepared
+    # statement and succeeds. Zero cost on the happy path; one extra round-trip
+    # on the (very rare) error path. Permanent statement_cache_size=0 was
+    # considered and rejected (10% per-query cost).
+
+    async def _run(self, method: str, query: str, *args: Any, **kwargs: Any) -> Any:
+        pool = self._pool()
+        fn = getattr(pool, method)
+        try:
+            return await fn(query, *args, **kwargs)
+        except asyncpg.exceptions.InvalidCachedStatementError:
+            # The bad cache entry has already been evicted; one more try rebuilds it.
+            log.warning(
+                "asyncpg cached plan invalid for %s; retrying once. op=%s",
+                method, sql_op(query),
+            )
+            return await fn(query, *args, **kwargs)
+
+    async def _execute(self, query: str, *args: Any, **kwargs: Any) -> Any:
+        return await self._run("execute", query, *args, **kwargs)
+
+    async def _fetch(self, query: str, *args: Any, **kwargs: Any) -> Any:
+        return await self._run("fetch", query, *args, **kwargs)
+
+    async def _fetchrow(self, query: str, *args: Any, **kwargs: Any) -> Any:
+        return await self._run("fetchrow", query, *args, **kwargs)
+
+    async def _fetchval(self, query: str, *args: Any, **kwargs: Any) -> Any:
+        return await self._run("fetchval", query, *args, **kwargs)
+
     # ---- servers ----------------------------------------------------------------
 
     async def ensure_server(self, guild_id: int) -> None:
-        await self._pool().execute(
+        await self._execute(
             "INSERT INTO servers (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING",
             guild_id,
         )
 
     async def is_configured(self, guild_id: int) -> bool:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT configured FROM servers WHERE guild_id = $1", guild_id
         )
         return bool(row and row["configured"])
 
     async def mark_configured(self, guild_id: int) -> None:
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO servers (guild_id, configured, configured_at)
             VALUES ($1, TRUE, NOW())
@@ -224,7 +295,7 @@ class DB:
         )
 
     async def set_kitchen_open(self, guild_id: int, open_: bool) -> None:
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO servers (guild_id, kitchen_open) VALUES ($1, $2)
             ON CONFLICT (guild_id) DO UPDATE SET kitchen_open = EXCLUDED.kitchen_open
@@ -233,7 +304,7 @@ class DB:
         )
 
     async def is_kitchen_open(self, guild_id: int) -> bool:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT kitchen_open FROM servers WHERE guild_id = $1", guild_id
         )
         # Default open if no row yet, /menu hasn't been run but we shouldn't block.
@@ -242,7 +313,7 @@ class DB:
     # ---- settings ---------------------------------------------------------------
 
     async def get_setting(self, guild_id: int, key: str) -> Any:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT value FROM settings WHERE guild_id = $1 AND key = $2", guild_id, key
         )
         return row["value"] if row else None
@@ -252,7 +323,7 @@ class DB:
     ) -> None:
         import json
 
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO settings (guild_id, key, value, updated_by, updated_at)
             VALUES ($1, $2, $3::jsonb, $4, NOW())
@@ -263,7 +334,7 @@ class DB:
         )
 
     async def all_settings(self, guild_id: int) -> dict[str, Any]:
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             "SELECT key, value FROM settings WHERE guild_id = $1", guild_id
         )
         return {r["key"]: r["value"] for r in rows}
@@ -280,7 +351,7 @@ class DB:
                 )
 
     async def get_mod_roles(self, guild_id: int) -> list[int]:
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             "SELECT role_id FROM mod_roles WHERE guild_id = $1", guild_id
         )
         return [r["role_id"] for r in rows]
@@ -302,12 +373,12 @@ class DB:
         self, guild_id: int, category: str | None = None
     ) -> list[tuple[int, str | None]]:
         if category:
-            rows = await self._pool().fetch(
+            rows = await self._fetch(
                 "SELECT channel_id, category FROM feed_channels WHERE guild_id = $1 AND category = $2",
                 guild_id, category,
             )
         else:
-            rows = await self._pool().fetch(
+            rows = await self._fetch(
                 "SELECT channel_id, category FROM feed_channels WHERE guild_id = $1", guild_id
             )
         return [(r["channel_id"], r["category"]) for r in rows]
@@ -317,7 +388,7 @@ class DB:
     async def create_order(
         self, guild_id: int, requester_id: int, request_text: str, summary: str
     ) -> Order:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             """
             INSERT INTO orders (guild_id, requester_id, request_text, summary, status)
             VALUES ($1, $2, $3, $4, $5)
@@ -351,22 +422,22 @@ class DB:
             args.append(error_log)
             sets.append(f"error_log = ${len(args)}")
         args.append(order_id)
-        await self._pool().execute(
+        await self._execute(
             f"UPDATE orders SET {', '.join(sets)} WHERE id = ${len(args)}", *args
         )
 
     async def get_order(self, order_id: int) -> Order | None:
-        row = await self._pool().fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
+        row = await self._fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
         return _row_to_order(row) if row else None
 
     async def get_order_by_issue(self, issue_number: int) -> Order | None:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT * FROM orders WHERE issue_number = $1", issue_number
         )
         return _row_to_order(row) if row else None
 
     async def in_flight_orders(self, guild_id: int) -> list[Order]:
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             """
             SELECT * FROM orders
             WHERE guild_id = $1 AND status NOT IN ('served', 'burnt', 'sent_back')
@@ -379,7 +450,7 @@ class DB:
     async def recent_orders(
         self, guild_id: int, since_days: int = 30, limit: int = 50
     ) -> list[Order]:
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             """
             SELECT * FROM orders
             WHERE guild_id = $1 AND created_at > NOW() - ($2 || ' days')::interval
@@ -390,7 +461,7 @@ class DB:
         return [_row_to_order(r) for r in rows]
 
     async def all_orders(self, guild_id: int, limit: int = 100) -> list[Order]:
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             "SELECT * FROM orders WHERE guild_id = $1 ORDER BY created_at DESC LIMIT $2",
             guild_id, limit,
         )
@@ -398,7 +469,7 @@ class DB:
 
     async def last_failed_deploy(self, guild_id: int) -> Order | None:
         """Most recent order, if it's burnt at the deploy step, we're pipeline-red."""
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             """
             SELECT * FROM orders WHERE guild_id = $1
             ORDER BY created_at DESC LIMIT 1
@@ -415,7 +486,7 @@ class DB:
     async def incr_user_rate(
         self, user_id: int, guild_id: int, command: str, day: date
     ) -> int:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             """
             INSERT INTO rate_limits (user_id, guild_id, command, day, count)
             VALUES ($1, $2, $3, $4, 1)
@@ -430,14 +501,14 @@ class DB:
     async def get_user_rate(
         self, user_id: int, guild_id: int, command: str, day: date
     ) -> int:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT count FROM rate_limits WHERE user_id=$1 AND guild_id=$2 AND command=$3 AND day=$4",
             user_id, guild_id, command, day,
         )
         return int(row["count"]) if row else 0
 
     async def incr_server_rate(self, guild_id: int, command: str, day: date) -> int:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             """
             INSERT INTO server_rate_limits (guild_id, command, day, count)
             VALUES ($1, $2, $3, 1)
@@ -450,14 +521,14 @@ class DB:
         return int(row["count"])
 
     async def get_server_rate(self, guild_id: int, command: str, day: date) -> int:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT count FROM server_rate_limits WHERE guild_id=$1 AND command=$2 AND day=$3",
             guild_id, command, day,
         )
         return int(row["count"]) if row else 0
 
     async def set_cooldown(self, user_id: int, guild_id: int, command: str) -> None:
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO cooldowns (user_id, guild_id, command, last_used_at)
             VALUES ($1, $2, $3, NOW())
@@ -470,7 +541,7 @@ class DB:
     async def get_cooldown(
         self, user_id: int, guild_id: int, command: str
     ) -> datetime | None:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT last_used_at FROM cooldowns WHERE user_id=$1 AND guild_id=$2 AND command=$3",
             user_id, guild_id, command,
         )
@@ -479,7 +550,7 @@ class DB:
     # ---- discourse history ------------------------------------------------------
 
     async def add_discourse(self, guild_id: int, category: str, summary: str) -> None:
-        await self._pool().execute(
+        await self._execute(
             "INSERT INTO discourse_history (guild_id, category, topic_summary) VALUES ($1, $2, $3)",
             guild_id, category, summary,
         )
@@ -488,7 +559,7 @@ class DB:
         self, guild_id: int, category: str, limit: int = 10
     ) -> list[tuple[str, datetime]]:
         """Recent topic summaries with timestamps for state-aware dedup. Last 72h."""
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             """
             SELECT topic_summary, created_at FROM discourse_history
             WHERE guild_id = $1 AND category = $2 AND created_at > NOW() - INTERVAL '72 hours'
@@ -502,7 +573,7 @@ class DB:
         self, guild_id: int, limit: int = 20
     ) -> list[tuple[str, str, datetime]]:
         """Recent topics across ALL categories, used by the mood scheduler's dedup."""
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             """
             SELECT category, topic_summary, created_at FROM discourse_history
             WHERE guild_id = $1 AND created_at > NOW() - INTERVAL '72 hours'
@@ -513,7 +584,7 @@ class DB:
         return [(r["category"], r["topic_summary"], r["created_at"]) for r in rows]
 
     async def prune_discourse(self) -> None:
-        await self._pool().execute(
+        await self._execute(
             "DELETE FROM discourse_history WHERE created_at < NOW() - INTERVAL '72 hours'"
         )
 
@@ -530,7 +601,7 @@ class DB:
     ) -> None:
         import json
 
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO audit_log (guild_id, actor_id, action, target, before, after)
             VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
@@ -541,7 +612,7 @@ class DB:
         )
 
     async def prune_audit(self) -> None:
-        await self._pool().execute(
+        await self._execute(
             "DELETE FROM audit_log WHERE timestamp < NOW() - INTERVAL '90 days'"
         )
 
@@ -557,7 +628,7 @@ class DB:
         ok: bool,
         error_class: str | None = None,
     ) -> None:
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO command_metrics
                 (guild_id, user_id, command, duration_ms, ok, error_class)
@@ -567,7 +638,7 @@ class DB:
         )
 
     async def prune_command_metrics(self) -> None:
-        await self._pool().execute(
+        await self._execute(
             "DELETE FROM command_metrics WHERE started_at < NOW() - INTERVAL '30 days'"
         )
 
@@ -587,7 +658,7 @@ class DB:
         vibe: str | None = None,
         hook: str | None = None,
     ) -> None:
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO chimein_history (guild_id, channel_id, score, vibe, hook)
             VALUES ($1, $2, $3, $4, $5)
@@ -598,7 +669,7 @@ class DB:
     async def last_chimein_at(
         self, guild_id: int, channel_id: int,
     ) -> datetime | None:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             """
             SELECT MAX(posted_at) AS last_at FROM chimein_history
             WHERE guild_id = $1 AND channel_id = $2
@@ -608,7 +679,7 @@ class DB:
         return row["last_at"] if row else None
 
     async def chimein_count_today(self, guild_id: int, channel_id: int) -> int:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             """
             SELECT COUNT(*) AS n FROM chimein_history
             WHERE guild_id = $1 AND channel_id = $2
@@ -619,14 +690,14 @@ class DB:
         return int(row["n"]) if row else 0
 
     async def prune_chimein_history(self) -> None:
-        await self._pool().execute(
+        await self._execute(
             "DELETE FROM chimein_history WHERE posted_at < NOW() - INTERVAL '90 days'"
         )
 
     # ---- discourse schedule -----------------------------------------------------
 
     async def get_schedule(self, guild_id: int) -> ScheduleState:
-        row = await self._pool().fetchrow(
+        row = await self._fetchrow(
             "SELECT * FROM discourse_schedule WHERE guild_id = $1", guild_id
         )
         if not row:
@@ -644,7 +715,7 @@ class DB:
         )
 
     async def set_schedule(self, guild_id: int, mood: MoodMode, actor_id: int) -> None:
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO discourse_schedule (guild_id, mood, last_changed_by, last_changed_at)
             VALUES ($1, $2, $3, NOW())
@@ -657,7 +728,7 @@ class DB:
         )
 
     async def record_schedule_post(self, guild_id: int, today: date) -> None:
-        await self._pool().execute(
+        await self._execute(
             """
             INSERT INTO discourse_schedule (guild_id, posts_today, posts_day, last_post_at)
             VALUES ($1, 1, $2, NOW())
@@ -674,7 +745,7 @@ class DB:
         )
 
     async def all_configured_guilds(self) -> list[int]:
-        rows = await self._pool().fetch(
+        rows = await self._fetch(
             "SELECT guild_id FROM servers WHERE configured = TRUE"
         )
         return [r["guild_id"] for r in rows]

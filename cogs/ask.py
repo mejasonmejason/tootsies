@@ -14,7 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils import voice
+from utils import bot_logs, voice
 from utils.events import emit
 from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
@@ -61,6 +61,11 @@ class Ask(commands.Cog):
             emit(
                 "error", source="ask", error=type(exc).__name__,
                 guild_id=guild_id, user_id=user_id,
+            )
+            await bot_logs.maybe_post_db_error(
+                self.bot, self.bot.db, guild_id, exc,
+                source="ask", user_id=user_id,
+                verbosity=self.bot.config.bot_logs_verbosity,
             )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
@@ -149,6 +154,11 @@ class Ask(commands.Cog):
                 emit(
                     "error", source="ask_mention", error=type(exc).__name__,
                     guild_id=message.guild.id, user_id=message.author.id,
+                )
+                await bot_logs.maybe_post_db_error(
+                    self.bot, self.bot.db, message.guild.id, exc,
+                    source="ask_mention", user_id=message.author.id,
+                    verbosity=self.bot.config.bot_logs_verbosity,
                 )
                 await message.reply(voice.pick(voice.DB_ERROR), mention_author=False)
                 return

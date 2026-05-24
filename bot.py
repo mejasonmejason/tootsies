@@ -17,7 +17,7 @@ from discord.ext import commands, tasks
 from claude_client import ClaudeClient
 from config import Config
 from db import DB
-from utils import voice
+from utils import bot_logs, voice
 from utils.events import emit
 from utils.github import GitHubClient
 from utils.healthcheck import HealthServer
@@ -118,6 +118,11 @@ class TootsiesBot(commands.Bot):
                 interaction.command.qualified_name
                 if interaction.command else None
             ),
+        )
+        await bot_logs.maybe_post_db_error(
+            self, self.db, interaction.guild_id, error,
+            source="app_command_handler", user_id=interaction.user.id,
+            verbosity=self.config.bot_logs_verbosity,
         )
         msg = voice.pick(voice.DB_ERROR)
         try:
