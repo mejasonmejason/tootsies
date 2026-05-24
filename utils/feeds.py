@@ -60,10 +60,15 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
     # Direct attachments — uploaded files.
     for att in msg.attachments:
         ct = att.content_type or ""
-        if ct.startswith("image/") and att.size <= _VISION_MAX_BYTES:
-            refs.append(MediaRef(
-                kind="image", label=f"image: {att.filename}", image_url=att.url,
-            ))
+        if ct.startswith("image/"):
+            # Oversized images still get a ref (so Toots knows an image was posted)
+            # but no image_url — too big for the vision API.
+            if att.size <= _VISION_MAX_BYTES:
+                refs.append(MediaRef(
+                    kind="image", label=f"image: {att.filename}", image_url=att.url,
+                ))
+            else:
+                refs.append(MediaRef(kind="image", label=f"image (too large): {att.filename}"))
         elif ct.startswith("video/"):
             refs.append(MediaRef(kind="video", label=f"video: {att.filename}"))
         elif ct.startswith("audio/"):

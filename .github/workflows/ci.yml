@@ -32,4 +32,6 @@ jobs:
         run: mypy .
 
       - name: pytest
+        # --cov + --cov-fail-under are configured in pyproject.toml [tool.pytest.ini_options]
+        # so this single invocation also enforces the coverage gate.
         run: pytest -q

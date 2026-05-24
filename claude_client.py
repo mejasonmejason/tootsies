@@ -88,7 +88,10 @@ class ClaudeClient:
         full_text = _time_context() + user_message
         if image_urls:
             user_content: list[dict[str, Any]] | str = [{"type": "text", "text": full_text}]
-            for url in image_urls[:5]:  # hard cap for cost control
+            # Hard cap at 10 images. Per-image fixed overhead (~85 tokens) + variable
+            # detail tokens add up fast, but we want to err on the side of seeing more
+            # context to make Toots feel sharp rather than confused.
+            for url in image_urls[:10]:
                 cast("list[dict[str, Any]]", user_content).append({
                     "type": "image",
                     "source": {"type": "url", "url": url},
@@ -198,12 +201,21 @@ class ClaudeClient:
         )
         return result.text
 
-    async def recap(self, channel_name: str, messages_blob: str) -> str:
+    async def recap(
+        self,
+        channel_name: str,
+        messages_blob: str,
+        image_urls: list[str] | None = None,
+    ) -> str:
         """Summarize a channel's recent activity with spice.
 
         Has web_search available so when the room is talking about a game / song /
         news event, the recap can fold in the actual facts instead of just naming
-        what they were discussing. Optional — the model decides when to invoke.
+        what they were discussing. Optional, the model decides when to invoke.
+
+        `image_urls` lets Toots actually see the memes/screenshots being reacted to,
+        so the recap can name the joke rather than just say "everyone reacted to an
+        image".
         """
         system_extra = (
             "TASK: Recap the recent vibe in this channel. Weight reactions. Be spicy but kind. "
@@ -213,13 +225,17 @@ class ClaudeClient:
             "release, a news event, a person), use web_search to pull the relevant fact and "
             "fold it into the recap. Example: 'room is buzzing about the lakers game' becomes "
             "'room is buzzing about the lakers losing 105-110 to denver, AD dropped 32'. "
-            "Don't search for vibes or in-jokes, only for verifiable facts the room references."
+            "Don't search for vibes or in-jokes, only for verifiable facts the room references.\n"
+            "\n"
+            "IMAGES: if images are attached, the room may have been reacting to them. Reference "
+            "what's IN the meme/screenshot when relevant, not just that an image exists."
         )
         user = f"Channel: #{channel_name}\n\nMessages (most recent last):\n{messages_blob}"
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             purpose="recap",
+            image_urls=image_urls,
         )
         return result.text
 

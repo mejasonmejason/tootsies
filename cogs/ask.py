@@ -86,10 +86,10 @@ class Ask(commands.Cog):
         ):
             msgs = await recent_messages(channel, me, limit=30)
             context = format_for_prompt(msgs)
-            # Pull image URLs from the few most-recent messages so Toots can actually
-            # see what the room is reacting to. Cap is intentionally small (cost +
-            # avoid drowning the prompt with old visuals).
-            image_urls = recent_image_urls(msgs, limit=3)
+            # Pull image URLs so Toots can actually see what the room is reacting to.
+            # Bumped from 3 to 8 — lean toward accuracy / "she sees what we see" since
+            # cost is still bounded by the hard cap inside _call().
+            image_urls = recent_image_urls(msgs, limit=8)
         return await self.bot.claude.ask(
             question, channel_context=context, use_web=True, image_urls=image_urls,
         )

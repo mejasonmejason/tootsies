@@ -26,3 +26,25 @@ disable_error_code = ["misc"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# Coverage gate. CI fails if a change drops total below this threshold.
+# Ratchet up over time as more cogs get unit coverage.
+# Coverage gate. CI fails if a change drops below this floor.
+# Ratchet up over time. NEVER lower this number without justification — the only
+# correct direction is up.
+addopts = "--cov=. --cov-report=term --cov-fail-under=40"
+
+[tool.coverage.run]
+omit = [
+    ".venv/*",
+    "tests/*",
+    "*/__init__.py",
+    "bot.py",  # async entrypoint, exercised only via integration
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

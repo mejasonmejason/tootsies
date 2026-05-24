@@ -16,6 +16,7 @@ from utils.feeds import (
     channel_dead_diagnostic,
     format_for_prompt,
     is_channel_dead,
+    recent_image_urls,
     recent_messages,
 )
 from utils.gates import require_configured
@@ -105,7 +106,10 @@ class Recap(commands.Cog):
                 line = voice.pick(voice.CHANNEL_DEAD)
             else:
                 blob = format_for_prompt(msgs, include_reactions=True)
-                line = await self.bot.claude.recap(channel.name, blob)
+                # Surface recent images to recap too so Toots can name the meme that
+                # got the reactions, not just say "an image had reactions".
+                image_urls = recent_image_urls(msgs, limit=8)
+                line = await self.bot.claude.recap(channel.name, blob, image_urls=image_urls)
         except Exception as exc:
             log.exception("recap failed")
             emit(
