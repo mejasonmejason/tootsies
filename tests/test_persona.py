@@ -134,6 +134,79 @@ def test_room_directed_prompts_have_room_framing() -> None:
         )
 
 
+def test_user_facing_prompts_share_length_rules() -> None:
+    """Every user-facing prompt should append _LENGTH_RULES so the cap
+    wording is the same across surfaces. Patching one prompt's length
+    block should NOT silently leave the others on different rules (the
+    bug we hit before this refactor: /ask had a "HARD CAP 280" block
+    inline, /recap had a different "HARD CAP 300" block, /discourse +
+    /mood_post had no cap wording at all).
+    """
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    expected = {"ask", "recap", "discourse", "mood_post", "chimein_post", "deflect"}
+    for name in expected:
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        assert "_LENGTH_RULES" in src, (
+            f"user-facing prompt {name!r} should append _LENGTH_RULES so "
+            "all surfaces share the same length discipline"
+        )
+
+
+def test_tool_using_prompts_have_tool_discipline() -> None:
+    """Every prompt that has access to a tool (web_search, vision) should
+    append _TOOL_DISCIPLINE so the model uses tools SILENTLY and doesn't
+    leak meta-commentary like "i need to search those links to see what
+    landed" into the user-facing output.
+
+    deflect has no tools, so it skips. chimein_score is a JSON classifier
+    that intentionally skips all shared blocks.
+    """
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    has_tools = {"ask", "recap", "discourse", "mood_post", "chimein_post"}
+    for name in has_tools:
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        assert "_TOOL_DISCIPLINE" in src, (
+            f"tool-using prompt {name!r} should append _TOOL_DISCIPLINE so "
+            "the model uses tools silently instead of narrating them"
+        )
+
+
+def test_max_tokens_uses_shared_constants_not_magic_numbers() -> None:
+    """Per-surface max_tokens should come from MAX_TOKENS_REPLY /
+    MAX_TOKENS_POST / MAX_TOKENS_DEFLECT, not bare integers. This is the
+    structural enforcement of "all surfaces share the same boundary rules"
+    -- you can't silently bump /ask's cap without touching the named
+    constant that /recap, /chimein_post, and /deflect also reference.
+    """
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    expected_constant = {
+        "ask": "MAX_TOKENS_REPLY",
+        "recap": "MAX_TOKENS_REPLY",
+        "discourse": "MAX_TOKENS_POST",
+        "mood_post": "MAX_TOKENS_POST",
+        "chimein_post": "MAX_TOKENS_REPLY",
+        "deflect": "MAX_TOKENS_DEFLECT",
+    }
+    for name, constant in expected_constant.items():
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        assert constant in src, (
+            f"prompt {name!r} should use {constant} for its max_tokens "
+            "(not a bare integer; the shared constants prevent drift)"
+        )
+
+
 def test_no_em_dashes_in_persona_constitution_or_voice() -> None:
     """Toots never uses em dashes (see plan §2). This test fails loudly if one slips into
     a place that affects her output: the constitution, persona, voice examples, or any
