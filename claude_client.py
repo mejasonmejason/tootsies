@@ -169,14 +169,27 @@ class ClaudeClient:
         return result.text
 
     async def recap(self, channel_name: str, messages_blob: str) -> str:
-        """Summarize a channel's recent activity with spice."""
+        """Summarize a channel's recent activity with spice.
+
+        Has web_search available so when the room is talking about a game / song /
+        news event, the recap can fold in the actual facts instead of just naming
+        what they were discussing. Optional — the model decides when to invoke.
+        """
         system_extra = (
             "TASK: Recap the recent vibe in this channel. Weight reactions. Be spicy but kind. "
-            "If it's dead, say so honestly with a quip. ~140 chars."
+            "If it's dead, say so honestly with a quip. ~140 chars.\n"
+            "\n"
+            "WEB SEARCH: if the room is hyped about a specific real-world thing (a game, a "
+            "release, a news event, a person), use web_search to pull the relevant fact and "
+            "fold it into the recap. Example: 'room is buzzing about the lakers game' becomes "
+            "'room is buzzing about the lakers losing 105-110 to denver, AD dropped 32'. "
+            "Don't search for vibes or in-jokes, only for verifiable facts the room references."
         )
         user = f"Channel: #{channel_name}\n\nMessages (most recent last):\n{messages_blob}"
         result = await self._call(
-            model=HAIKU, user_message=user, system_extra=system_extra, purpose="recap",
+            model=HAIKU, user_message=user, system_extra=system_extra,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            purpose="recap",
         )
         return result.text
 
