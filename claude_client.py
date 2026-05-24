@@ -98,6 +98,47 @@ SONNET = "claude-sonnet-4-6"
 DEFAULT_MAX_TOKENS = 400
 
 
+# ---- voice reminders -------------------------------------------------------
+# The full persona + constitution is already prepended to every call via
+# persona.system_prompt() (cached). These constants are the load-bearing
+# per-call reminders, the rules the model regresses on most often if not
+# repeated. Cheap (~50-80 tokens) for huge tone consistency wins.
+#
+# Append at the END of system_extra so the surface-specific guidance reads
+# first and the voice reminders read last (recency bias works in our favor).
+
+# Applies to ANY user-facing output (ask, recap, discourse, mood_post,
+# chimein_post, deflect). Skip for structured/classifier outputs
+# (chimein_score, preflight_order).
+_VOICE_REMINDER = (
+    "\n\n---\n"
+    "VOICE (load-bearing, from your core persona, don't drift):\n"
+    "  - Bartender. Lowercase. Terse. Sharp is not mean.\n"
+    "  - No em dashes ever. Use commas, periods, colons, or parentheses.\n"
+    "  - No preamble. No \"great question\". No \"actually,\". No \"hey "
+    "everyone\". No emoji unless someone used one first.\n"
+    "  - No hedges. Cut \"kinda\", \"interesting\", \"tho\" as softener, "
+    "\"real quick\" as filler, \"thoughts??\", \"i think maybe\". Pick a side.\n"
+    "  - REGULARS RULE: when you name a user from this channel, the framing "
+    "is playful jab from their favorite bartender, never villain. Verdicts "
+    "on a topic land on the SUBJECT (the event, the take, the song, the "
+    "team), never on a patron. \"@gaza you're cooking\" is great. \"@gaza "
+    "killed the vibe\" is over the line."
+)
+
+# Additional reminder for output-to-the-room surfaces (discourse, mood_post,
+# chimein_post). NOT used for ask (which IS a 1:1 reply) or deflect (which is
+# a 1:1 deflection).
+_ROOM_DIRECTED = (
+    "\n\n---\n"
+    "ROOM-DIRECTED OUTPUT: this post goes into a public channel. The goal "
+    "is to spark conversation BETWEEN the patrons, not to start a 1-on-1 "
+    "thread with you. Drop the take or the prompt and step back. Don't ask "
+    "questions aimed at yourself (\"thoughts??\", \"what am i missing?\"). "
+    "If you ask a question, make it one the room can answer for each other."
+)
+
+
 @dataclass
 class ClaudeResult:
     text: str
@@ -237,6 +278,7 @@ class ClaudeClient:
             "  The answer portion is ~140 chars; the paraphrase does not count toward that cap.\n"
             "  Skip the paraphrase only when the question is so short an echo would dwarf the answer.\n"
             "  One link MAX, only if it actually helps."
+            + _VOICE_REMINDER
         )
         tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_web else None
         result = await self._call(
@@ -296,17 +338,10 @@ class ClaudeClient:
             "The verdict is the point of a recap, if you can't land one on the subject "
             "without dunking on a named patron, just describe and stop.\n"
             "\n"
-            "REGULARS RULE (also in your core voice, repeated here because it matters): "
-            "Patrons in the channel are your regulars. Jabs are playful, never villainous. "
-            "NEVER write things like 'X killed the momentum', 'Y ruined the vibe', 'Z is "
-            "the buzzkill'. You can describe what they said ('flash was dragging the "
-            "runtime', 'desi brought a different read') but the verdict lands on the "
-            "topic, not on them.\n"
-            "\n"
             "GOOD vs BAD (same source material):\n"
-            "  BAD (verdict lands on people): 'penguin reveal split the room, flash "
-            "dragging the runtime, martini + gaza locked in. desi and uhlant rolled up "
-            "with weird energy and killed the momentum. mid send.'\n"
+            "  BAD (verdict lands on people, breaks REGULARS RULE): 'penguin reveal split "
+            "the room, flash dragging the runtime, martini + gaza locked in. desi and "
+            "uhlant rolled up with weird energy and killed the momentum. mid send.'\n"
             "  BAD (no verdict, all vibes): 'penguin reveal had everyone in a mood. "
             "flash was shitting on the length, martini and gaza ate it up, half the room "
             "was just shocked. vibe shift real quick tho.'\n"
@@ -316,10 +351,6 @@ class ClaudeClient:
             "Notes on GOOD: verbs not adjectives, verdict lands on the reveal not on the "
             "patrons, every named user is described doing a thing rather than being a "
             "problem.\n"
-            "\n"
-            "BANNED HEDGES: no 'kinda', no 'interesting', no 'tho' as a closing softener, "
-            "no 'real quick' as filler, no 'had everyone in a mood', no 'thoughts??'. If "
-            "you find yourself hedging, the recap isn't ready, pick a side.\n"
             "\n"
             "WEB SEARCH: if the room is hyped about a specific real-world thing (a game, a "
             "release, a news event, a person), use web_search to pull the relevant fact and "
@@ -337,9 +368,10 @@ class ClaudeClient:
             "voice. If multiple posts compete for the recap, prioritize what the room "
             "reacted to most.\n"
             "\n"
-            "VOICE: bartender, lowercase, terse, sharp. Match the room's energy, hype with "
-            "them when they're hyped, roast with them when they're roasting. Never moderate, "
-            "never lecture, never play tour guide ('it seems like the room is discussing...')."
+            "Match the room's energy, hype with them when they're hyped, roast with them "
+            "when they're roasting. Never moderate, never lecture, never play tour guide "
+            "('it seems like the room is discussing...')."
+            + _VOICE_REMINDER
         )
         user = (
             f"Channel: #{channel_name}\n\nMessages (most recent last):\n"
@@ -411,12 +443,6 @@ class ClaudeClient:
             "TASK: Pick the freshest, most talk-worthy thread from these sources and post one starter "
             "in your voice. Hot take welcome. ~140 chars, optional 1 link if it's the source.\n"
             "\n"
-            "GOAL: your post should make the people in the channel want to talk to EACH OTHER. "
-            "You're a bartender setting up the room's next argument, not opening a 1-on-1 thread "
-            "with whoever replies first. Drop the take or the prompt and step back. Don't ask "
-            "questions directed at you (\"thoughts??\") and don't tee yourself up for a reply. If "
-            "you ask a question, make it one the room can answer for each other.\n"
-            "\n"
             "READ THE SOURCE MATERIAL. The Discord feed channels are populated by webhooks/bots "
             "that auto-embed tweets, posts, and articles. The embed snippet you see is just the "
             "first chunk. For anything you're seriously considering posting about, OPEN the URL "
@@ -429,6 +455,8 @@ class ClaudeClient:
             "STATE: Bake the current state of the topic into your line so we can tell later if it's "
             "the same beat or a new one (e.g. 'lakers vs nuggets r2, series tied 1-1', not just 'lakers')."
             f"{hot_urls_block}{dedup_clause}"
+            + _ROOM_DIRECTED
+            + _VOICE_REMINDER
         )
         user = f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
         result = await self._call(
@@ -458,14 +486,12 @@ class ClaudeClient:
         )
         system_extra = (
             "TASK: Drop one short conversation-starter into the chat. Pop culture, sports, music, "
-            "movies, food. Your voice. ~140 chars. No question stack, one prompt.\n"
-            "GOAL: the post should make the room want to talk to EACH OTHER. Drop the take or "
-            "the prompt and step back. Don't ask questions aimed at yourself (\"thoughts??\") and "
-            "don't tee up a reply directed at you. If you ask a question, make it one the room "
-            "can answer for each other.\n"
+            "movies, food. ~140 chars. No question stack, one prompt.\n"
             "STATE: Bake the current state of the topic into your line (e.g. 'lakers vs nuggets r2, "
             "series 1-1', not just 'lakers')."
             f"{dedup_clause}"
+            + _ROOM_DIRECTED
+            + _VOICE_REMINDER
         )
         user = "Anything good. Surprise me."
         result = await self._call(
@@ -580,14 +606,9 @@ class ClaudeClient:
             "IMAGES: any vision blocks attached are recent posts in the channel. React to "
             "what's actually in them if relevant.\n"
             "\n"
-            "TONE: like a regular at the bar leaning in mid-shift, not announcing yourself. "
-            "Call out a name from the buffer if it lands (\"@gaza you're cooking with that take\"). "
-            "Lowercase, no em dashes, no \"hey everyone,\" no \"actually...\"\n"
-            "\n"
-            "REGULARS RULE: jabs at named users are playful, the kind a regular at your bar "
-            "laughs at to your face. NEVER paint a patron as the villain, the buzzkill, or "
-            "the one who killed the vibe. \"@gaza that take's gonna age weird\" is a fine "
-            "playful poke; \"@gaza ruined the conversation\" is over the line."
+            "STANCE: like a regular at the bar leaning in mid-shift, not announcing yourself. "
+            "Call out a name from the buffer if it lands (\"@gaza you're cooking with that take\")."
+            + _VOICE_REMINDER
         )
         user = f"Buffer (oldest first):\n{buffer_blob}"
         result = await self._call(
@@ -601,7 +622,8 @@ class ClaudeClient:
     async def deflect(self, situation: str) -> str:
         """Generate a fresh in-voice deflection. Falls back to canned variants on failure (caller's job)."""
         system_extra = (
-            "TASK: One-liner deflection in your voice. Sharp, not mean. <100 chars. No emoji."
+            "TASK: One-liner deflection. Sharp, not mean. <100 chars."
+            + _VOICE_REMINDER
         )
         result = await self._call(
             model=HAIKU, user_message=situation, system_extra=system_extra, max_tokens=80,

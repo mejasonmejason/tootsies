@@ -48,6 +48,91 @@ def test_system_prompt_appends_extras() -> None:
     assert "TASK: testing extra" in sp
 
 
+def test_user_facing_prompts_share_voice_reminder() -> None:
+    """Every user-facing prompt should append _VOICE_REMINDER.
+
+    Persona is already prepended via system_prompt() (cached), but the
+    load-bearing per-call reminders (REGULARS RULE, hedge ban, em-dash ban)
+    are appended at the end of each system_extra so recency keeps them top
+    of mind for the model. If a new user-facing prompt skips it, this test
+    catches the drift instead of letting it slip into prod.
+
+    Classifier/structured outputs (chimein_score, preflight_order) intentionally
+    skip the voice reminder, they return JSON / fixed-token verdicts, not Toots
+    voice.
+    """
+    import inspect
+
+    from claude_client import _VOICE_REMINDER, ClaudeClient
+
+    expected_voice = {
+        "ask", "recap", "discourse", "mood_post",
+        "chimein_post", "deflect",
+    }
+    expected_no_voice = {
+        "chimein_score",         # JSON classifier
+        "preflight_order",       # ALLOW/PLUMBING/REJECT classifier
+    }
+
+    for name in expected_voice:
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        assert "_VOICE_REMINDER" in src, (
+            f"user-facing prompt {name!r} should append _VOICE_REMINDER to "
+            "its system_extra so persona reminders stay top of mind"
+        )
+
+    for name in expected_no_voice:
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        assert "_VOICE_REMINDER" not in src, (
+            f"classifier prompt {name!r} should NOT include _VOICE_REMINDER, "
+            "it returns structured output not Toots voice"
+        )
+    # Sanity: the constant itself is non-empty.
+    assert _VOICE_REMINDER.strip()
+
+
+def test_room_directed_prompts_have_room_framing() -> None:
+    """Output-to-room prompts must push the room to talk to each other, either
+    via the shared _ROOM_DIRECTED constant or via richer surface-specific wording.
+
+    discourse + mood_post use the shared constant. chimein_post has its own
+    more detailed AIM AT THE ROOM block (with examples) because it's the
+    highest-risk surface for misfiring (unprompted, into an active conversation).
+    ask/deflect are 1:1 replies and skip both.
+    """
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    uses_shared = {"discourse", "mood_post"}
+    has_own_room_block = {"chimein_post"}
+    one_to_one = {"ask", "deflect"}
+
+    for name in uses_shared:
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        assert "_ROOM_DIRECTED" in src, (
+            f"room-output prompt {name!r} should append _ROOM_DIRECTED"
+        )
+
+    for name in has_own_room_block:
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        # Must have SOME room-direction wording even if not the shared constant.
+        assert "AIM AT THE ROOM" in src or "_ROOM_DIRECTED" in src, (
+            f"chime-in prompt {name!r} needs room-direction guidance"
+        )
+
+    for name in one_to_one:
+        method = getattr(ClaudeClient, name)
+        src = inspect.getsource(method)
+        assert "_ROOM_DIRECTED" not in src, (
+            f"1:1-reply prompt {name!r} should NOT include _ROOM_DIRECTED"
+        )
+
+
 def test_no_em_dashes_in_persona_constitution_or_voice() -> None:
     """Toots never uses em dashes (see plan §2). This test fails loudly if one slips into
     a place that affects her output: the constitution, persona, voice examples, or any
