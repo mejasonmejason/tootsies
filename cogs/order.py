@@ -90,6 +90,11 @@ class Order(commands.GroupCog, name="order"):
                 "error", source="order_preflight", error=type(exc).__name__,
                 guild_id=guild_id, user_id=user_id,
             )
+            await bot_logs.maybe_post_db_error(
+                self.bot, self.bot.db, guild_id, exc,
+                source="order_preflight", user_id=user_id,
+                verbosity=self.bot.config.bot_logs_verbosity,
+            )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
             return
 

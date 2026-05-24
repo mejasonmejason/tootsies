@@ -47,7 +47,6 @@ omit = [
     "tests/*",
     "*/__init__.py",
     "bot.py",            # async entrypoint, exercised only via integration
-    "utils/bot_logs.py", # thin discord channel-post wrapper, no branching logic
     "utils/healthcheck.py",  # aiohttp setup boilerplate, all behavior is `is_healthy() → 200/503`
 ]
 
