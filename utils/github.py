@@ -70,8 +70,35 @@ class GitHubClient:
             r.raise_for_status()
 
 
-def issue_body_for_order(request_text: str, summary: str, requester_tag: str) -> str:
-    """Compose the /order issue body that triggers claude-code-action."""
+def issue_body_for_order(
+    request_text: str,
+    summary: str,
+    requester_tag: str,
+    channel_context: str = "",
+    channel_name: str | None = None,
+) -> str:
+    """Compose the /order issue body that triggers claude-code-action.
+
+    `channel_context` is the last hour of messages from the channel where /order
+    was invoked, formatted via utils.feeds.format_for_prompt. Behavior-fix
+    orders need this as evidence; pure feature-adds get a context block that's
+    safe to ignore.
+    """
+    context_block = ""
+    if channel_context:
+        ch_label = f"#{channel_name}" if channel_name else "the channel where /order was invoked"
+        context_block = (
+            "\n## Channel context (last 60 min)\n"
+            f"This is the recent chatter in {ch_label}. If the request is about "
+            "how Toots is behaving (responses, takes, chime-in misfires, recap "
+            "quality, etc.), this is the evidence. If the request is a pure "
+            "feature-add ('add a /weather command'), this context is just noise; "
+            "ignore it.\n"
+            "\n"
+            "```\n"
+            f"{channel_context}\n"
+            "```\n"
+        )
     return (
         "@claude please implement this feature for the Tootsies bot. "
         "Stay within the constitution defined in `constitution.py` and the persona in `persona.py`. "
@@ -80,4 +107,5 @@ def issue_body_for_order(request_text: str, summary: str, requester_tag: str) ->
         f"**Requested by:** {requester_tag}\n"
         f"**Summary:** {summary}\n\n"
         f"**Original request:**\n> {request_text}\n"
+        + context_block
     )

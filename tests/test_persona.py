@@ -32,7 +32,8 @@ def test_persona_voice_markers() -> None:
     """The persona should still describe Toots's distinctive voice."""
     assert "Toots" in PERSONA_CORE
     assert "bartender" in PERSONA_CORE.lower()
-    assert "140" in PERSONA_CORE  # length cap reminder
+    assert "280" in PERSONA_CORE  # length cap reminder (was ~140 chars,
+    # tightened to "280 chars total" with hard token-budget enforcement)
 
 
 def test_system_prompt_composes_all_layers() -> None:
