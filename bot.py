@@ -21,6 +21,7 @@ from utils import bot_logs, voice
 from utils.events import emit, emit_error
 from utils.github import GitHubClient
 from utils.healthcheck import HealthServer
+from utils.link_enrich import close_session as close_link_enrich_session
 from utils.permissions import can_send_in
 
 INTENTS = discord.Intents.default()
@@ -185,6 +186,7 @@ async def _main() -> None:
         finally:
             await health.stop()
             await bot.gh.close()
+            await close_link_enrich_session()
             await bot.db.close()
 
     bot_task = asyncio.create_task(runner())

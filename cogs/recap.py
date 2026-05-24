@@ -21,6 +21,7 @@ from utils.feeds import (
     recent_messages,
 )
 from utils.gates import require_configured
+from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
 from utils.rate_limits import check_user_limit, consume_user
 
@@ -113,8 +114,15 @@ class Recap(commands.Cog):
                 # Surface popular URLs separately so Toots is explicitly nudged to
                 # OPEN them (fixes the "can't peep what's at the link" failure mode).
                 url_list = hot_urls(msgs, limit=8)
+                # Pre-fetch enriched content for known social platforms (X, TikTok,
+                # YouTube, Reddit, Bluesky) so Claude reads tweet text / captions /
+                # comments directly instead of bouncing off login walls via
+                # web_search. Failures fall through silently per URL.
+                enriched_map = await enrich_batch([u for u, _, _, _ in url_list])
+                enriched = [v for v in enriched_map.values() if v is not None]
                 line = await self.bot.claude.recap(
                     channel.name, blob, image_urls=image_urls, hot_urls=url_list,
+                    enriched_links=enriched,
                 )
         except Exception as exc:
             log.exception("recap failed")

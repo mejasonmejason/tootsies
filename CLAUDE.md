@@ -94,6 +94,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `error` | cogs/* + bot.py error handler | source (e.g. `ask`, `order_preflight`, `undo`), error (exception class), guild_id, user_id, optional context |
 | `recap_deflected` | cogs/recap.py | guild_id, user_id, period, channel_id, channel_name, reason (`no_permission`/`no_messages`), can_read_history, total_messages |
 | `discourse_fallback` | cogs/discourse.py | guild_id, user_id, category, source_count, recent_topic_count, reason |
+| `link_enrich` | utils/link_enrich.py | platform, url_host, ok, duration_ms, cache_hit |
 
 **Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to
 the table above + the events.py docstring. Use snake_case for kinds and fields. Don't

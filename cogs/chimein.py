@@ -42,7 +42,8 @@ from discord.ext import commands, tasks
 
 from models import MoodMode
 from utils.events import emit, emit_error
-from utils.feeds import format_for_prompt, recent_image_urls
+from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
+from utils.link_enrich import enrich_batch
 from utils.permissions import can_send_in
 
 if TYPE_CHECKING:
@@ -279,9 +280,18 @@ class ChimeIn(commands.Cog):
             return
 
         image_urls = recent_image_urls(msgs, limit=5)
+        # Pre-fetch enriched social-link content. Chime-in is latency-sensitive
+        # (the tick blocks the next eval), so we cap concurrency at 5 and the
+        # per-URL timeout in link_enrich is 2s, bounding the worst case.
+        chime_hot_urls = hot_urls(msgs, limit=5)
+        enriched_map = await enrich_batch(
+            [u for u, _, _, _ in chime_hot_urls], concurrency=5,
+        )
+        enriched = [v for v in enriched_map.values() if v is not None]
         try:
             line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
+                enriched_links=enriched,
             )
         except Exception as exc:
             emit_error(
