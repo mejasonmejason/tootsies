@@ -360,6 +360,41 @@ def test_format_for_prompt_handles_empty_message_list() -> None:
     assert format_for_prompt([]) == "(no recent messages)"
 
 
+def test_format_for_prompt_strips_html_tags_from_message_content() -> None:
+    """Claude cite tags that leak into Discord history must not re-enter prompts."""
+    msg = _fake_msg(
+        content='Thunder lead 2-1. <cite index="1-1">Game 4 tips off at 8 p.m.</cite>',
+        display_name="Tootsie's",
+    )
+    rendered = format_for_prompt([msg])
+    assert "<cite" not in rendered
+    assert "</cite>" not in rendered
+    assert "Game 4 tips off at 8 p.m." in rendered
+
+
+def test_format_for_prompt_decodes_html_entities_in_message_content() -> None:
+    msg = _fake_msg(content="it&#39;s &amp; that&#39;s &lt;ok&gt;", display_name="user")
+    rendered = format_for_prompt([msg])
+    assert "it's & that's" in rendered
+    assert "&amp;" not in rendered
+    assert "&#39;" not in rendered
+
+
+def test_extract_media_strips_html_from_embed_title_and_description() -> None:
+    embed = _fake_embed(
+        title='<b>Lakers Win</b>',
+        description='Score: &lt;105&gt;-110 OT <em>overtime thriller</em>',
+        url="https://x.com/a/b",
+    )
+    refs = extract_media(_fake_msg(embeds=[embed]))
+    embed_ref = next(r for r in refs if r.kind == "embed")
+    assert "<b>" not in embed_ref.label
+    assert "</b>" not in embed_ref.label
+    assert "<em>" not in embed_ref.label
+    assert "Lakers Win" in embed_ref.label
+    assert "<105>" in embed_ref.label  # entity decoded
+
+
 # ---- dead-channel helpers --------------------------------------------------------
 
 

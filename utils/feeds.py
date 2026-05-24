@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -17,6 +18,19 @@ _VISION_MAX_BYTES = 5 * 1024 * 1024
 
 def _truncate(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
+
+
+# Matches any HTML tag, including ones with attributes like <cite index="1-1">.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and decode entities from Discord message text.
+
+    Claude web-search responses embed <cite index="..."> tags that persist
+    verbatim in Discord history. Strip them before feeding context back to Claude.
+    """
+    return html.unescape(_HTML_TAG_RE.sub("", text))
 
 
 @dataclass
@@ -45,9 +59,9 @@ def extract_media(msg: discord.Message) -> list[MediaRef]:
     for embed in msg.embeds:
         text_parts: list[str] = []
         if embed.title:
-            text_parts.append(_truncate(embed.title, 120))
+            text_parts.append(_truncate(_strip_html(embed.title), 120))
         if embed.description:
-            text_parts.append(_truncate(embed.description, 200))
+            text_parts.append(_truncate(_strip_html(embed.description), 200))
         if text_parts:
             url_suffix = f" ({embed.url})" if embed.url else ""
             refs.append(MediaRef(kind="embed", label=" / ".join(text_parts) + url_suffix))
@@ -234,7 +248,7 @@ def format_for_prompt(messages: list[discord.Message], include_reactions: bool =
     lines: list[str] = []
     for m in messages:
         name = m.author.display_name
-        body = _truncate(m.content.replace("\n", " "), 200)
+        body = _truncate(_strip_html(m.content).replace("\n", " "), 200)
         line = f"{name}: {body}" if body else f"{name}:"
         media = extract_media(m)
         if media:
