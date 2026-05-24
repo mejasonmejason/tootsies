@@ -45,6 +45,7 @@ class Help(commands.Cog):
             value=(
                 "**`/ask <question>`**: ask me anything. takes, recs, scores, "
                 "whatever. i read the room and check the web.\n"
+                "  *ex:* `/ask who are you` → *bartender at tootsies. pour you something?*\n"
                 "**`@Toots <question>`**: same thing, no slash. "
                 "*ayo @Toots what's the move tonight* works.\n"
                 "**`/recap period:<last hour | last 24h | today>`**: what'd "
@@ -71,8 +72,10 @@ class Help(commands.Cog):
         embed.add_field(
             name="👮  mods only",
             value=(
-                "**`/order new <feature>`**: tell me a new thing you want me to "
-                "do. i'll build it. one at a time, takes a few minutes.\n"
+                "**`/order new <feature>`**: tell me a new thing you want me "
+                "to do. i'll build it. one at a time, takes a few minutes.\n"
+                "  *ex:* `/order new add a /weather command` → i file an "
+                "issue, claude writes the PR, CI + railway deploy. ~5 min.\n"
                 "**`/order status`**: see what i'm working on.\n"
                 "**`/order retry <number>`**: try again on something that "
                 "didn't work.\n"
