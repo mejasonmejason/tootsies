@@ -211,6 +211,12 @@ CREATE TABLE IF NOT EXISTS chimein_history (
 CREATE INDEX IF NOT EXISTS chimein_history_channel_ts_idx
     ON chimein_history (guild_id, channel_id, posted_at DESC);
 CREATE INDEX IF NOT EXISTS command_metrics_guild_cmd_idx ON command_metrics (guild_id, command);
+
+-- One-time backfill: mark stale non-terminal orders as served.
+-- Before the deploy workflow existed, orders got stuck at prepping/on_the_stove
+-- even after their PRs merged and deployed. Safe to re-run (WHERE filters).
+UPDATE orders SET status = 'served', updated_at = NOW()
+WHERE status NOT IN ('served', 'burnt', 'sent_back');
 """
 
 
