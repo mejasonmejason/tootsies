@@ -9,7 +9,12 @@ title: tootsies
 description: a discord bot for the tootsies server. ask, recap, discuss, ship features by typing.
 url: https://mejasonmejason.github.io
 baseurl: /tootsies
-theme: jekyll-theme-cayman
+# midnight: dark background, vibrant blue/purple accents, matches the late-
+# night-bar vibe of the rhinestone banner. Other GitHub-Pages-supported
+# options that could fit: slate (modern dark), merlot (deep burgundy
+# bartender feel), hacker (true black + neon green if we want full late-
+# night-coder mode). Easy to swap by changing this one line.
+theme: jekyll-theme-midnight
 
 # Skip building the unrelated repo files when GitHub renders the site.
 exclude:
