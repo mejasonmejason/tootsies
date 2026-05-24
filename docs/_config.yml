@@ -9,9 +9,11 @@ title: tootsies
 description: a discord bot for the tootsies server. ask, recap, discuss, ship features by typing.
 url: https://mejasonmejason.github.io
 baseurl: /tootsies
-# minimal: clean, light, no chrome. Lets the rhinestone banner and the
-# Toots-voice copy carry the personality without the theme competing.
-theme: jekyll-theme-minimal
+# midnight: dark background with vibrant blue/purple accents. Matches the
+# late-night-bar vibe of the rhinestone banner. Custom overlay in
+# assets/css/style.scss adds shimmer headings, cyan inline code, and a
+# subtle purple accent strip on code blocks.
+theme: jekyll-theme-midnight
 
 # Skip building the unrelated repo files when GitHub renders the site.
 exclude:
