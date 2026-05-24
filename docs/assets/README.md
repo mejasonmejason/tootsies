@@ -1,7 +1,5 @@
 # docs/assets
 
-Put the Tootsies banner here as **`banner.png`**.
+Holds the static images for the GitHub Pages site rendered from `docs/`.
 
-Recommended: PNG, ~1400 px wide, transparent or black background, the diamond-encrusted "Tootsies" wordmark.
-
-The site renders `<img src="assets/banner.png" />` from `docs/index.md`, so the filename matters.
+- **`banner.jpg`** — the rhinestone-encrusted "Tootsies" wordmark shown at the top of `docs/index.md`. Replace this if you want to swap the banner; if you change the extension, update the `<img>` tag in `docs/index.md` too.

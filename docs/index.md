@@ -4,7 +4,7 @@ layout: default
 ---
 
 <p align="center">
-  <img src="assets/banner.png" alt="Tootsies" width="700"/>
+  <img src="assets/banner.jpg" alt="Tootsies" width="700"/>
 </p>
 
 # tootsies
