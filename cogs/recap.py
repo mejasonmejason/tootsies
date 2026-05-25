@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, cast
@@ -23,6 +24,7 @@ from utils.feeds import (
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
+from utils.perplexity import build_search_query
 from utils.rate_limits import check_user_limit, consume_user
 
 if TYPE_CHECKING:
@@ -118,11 +120,31 @@ class Recap(commands.Cog):
                 # YouTube, Reddit, Bluesky) so Claude reads tweet text / captions /
                 # comments directly instead of bouncing off login walls via
                 # web_search. Failures fall through silently per URL.
-                enriched_map = await enrich_batch([u for u, _, _, _ in url_list])
+                # Run link enrichment and Perplexity search in parallel.
+                enrich_coro = enrich_batch([u for u, _, _, _ in url_list])
+                pplx = self.bot.perplexity
+                summary_hint = blob[:300]
+                pplx_coro = (
+                    pplx.search(
+                        build_search_query(summary_hint, surface="recap"),
+                        purpose="recap",
+                    )
+                    if pplx
+                    else None
+                )
+                if pplx_coro:
+                    enriched_map, pplx_result = await asyncio.gather(
+                        enrich_coro, pplx_coro,
+                    )
+                else:
+                    enriched_map = await enrich_coro
+                    pplx_result = None
+
                 enriched = [v for v in enriched_map.values() if v is not None]
                 line = await self.bot.claude.recap(
                     channel.name, blob, image_urls=image_urls, hot_urls=url_list,
                     enriched_links=enriched,
+                    perplexity_context=pplx_result,
                 )
         except Exception as exc:
             log.exception("recap failed")

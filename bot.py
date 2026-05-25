@@ -24,6 +24,7 @@ from utils.github import GitHubClient
 from utils.healthcheck import HealthServer
 from utils.link_enrich import close_session as close_link_enrich_session
 from utils.permissions import can_send_in
+from utils.perplexity import PerplexityClient
 
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True
@@ -50,6 +51,11 @@ class TootsiesBot(commands.Bot):
         self.db = DB(config.database_url)
         self.claude = ClaudeClient(config.anthropic_api_key)
         self.gh = GitHubClient(config.github_token, config.github_repo)
+        self.perplexity: PerplexityClient | None = (
+            PerplexityClient(config.perplexity_api_key)
+            if config.perplexity_api_key
+            else None
+        )
         self._ready_once = False
 
     async def setup_hook(self) -> None:
@@ -211,6 +217,8 @@ async def _main() -> None:
         finally:
             await health.stop()
             await bot.gh.close()
+            if bot.perplexity:
+                await bot.perplexity.close()
             await close_link_enrich_session()
             await bot.db.close()
 

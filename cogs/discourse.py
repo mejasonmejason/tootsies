@@ -13,6 +13,7 @@ Each configured discourse channel gets its own independent slot tracking.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, cast
@@ -35,6 +36,7 @@ from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
 from utils.permissions import can_send_in
+from utils.perplexity import build_search_query
 from utils.rate_limits import check_server_limit, consume_server
 
 if TYPE_CHECKING:
@@ -197,10 +199,32 @@ class Discourse(commands.Cog):
 
         image_urls = recent_image_urls(all_feed_msgs, limit=8)
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
-        enriched_map = await enrich_batch([u for u, _, _, _ in feed_hot_urls])
-        enriched = [v for v in enriched_map.values() if v is not None]
 
-        recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
+        # Run link enrichment, Perplexity search, and DB history fetch in parallel.
+        enrich_coro = enrich_batch([u for u, _, _, _ in feed_hot_urls])
+        pplx = self.bot.perplexity
+        pplx_coro = (
+            pplx.search(
+                build_search_query(
+                    "", surface="discourse",
+                    category=category, channel_name=channel.name,
+                ),
+                purpose="discourse",
+            )
+            if pplx
+            else None
+        )
+        db_coro = self.bot.db.recent_discourse_all(guild.id, limit=20)
+
+        if pplx_coro:
+            enriched_map, pplx_result, recent_all = await asyncio.gather(
+                enrich_coro, pplx_coro, db_coro,
+            )
+        else:
+            enriched_map, recent_all = await asyncio.gather(enrich_coro, db_coro)
+            pplx_result = None
+
+        enriched = [v for v in enriched_map.values() if v is not None]
         recent_count = len(recent_all)
         recent_blob = "\n".join(
             f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
@@ -213,6 +237,7 @@ class Discourse(commands.Cog):
             channel_name=channel.name, must_post=must_post,
             image_urls=image_urls, hot_urls=feed_hot_urls,
             enriched_links=enriched,
+            perplexity_context=pplx_result,
         )
 
         if not line or line.strip().upper() == "EMPTY":

@@ -65,6 +65,9 @@ Known kinds (keep this list in sync with what's emitted):
   - link_enrich        : per-URL social-link enrichment attempt (utils/link_enrich.py)
       platform (twitter|tiktok|youtube|reddit|bluesky), url_host, ok,
       duration_ms, cache_hit
+  - perplexity_search   : Perplexity Sonar API call (utils/perplexity.py)
+      purpose (ask|recap|discourse|chimein), ok, duration_ms,
+      input_tokens, output_tokens, response_chars, error (on failure)
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.

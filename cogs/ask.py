@@ -6,6 +6,7 @@ swapping interfaces.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING, cast
@@ -20,6 +21,7 @@ from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
+from utils.perplexity import build_search_query
 from utils.rate_limits import check_user_limit, consume_user
 
 # Match raw http(s) URLs in the user's question or pulled channel context.
@@ -117,13 +119,35 @@ class Ask(commands.Cog):
         # up" narration risk). Cap to 10 URLs total per ask to bound latency.
         text_for_urls = f"{question}\n{context}"
         raw_urls = _URL_IN_TEXT_RE.findall(text_for_urls)[:10]
-        enriched_map = await enrich_batch(raw_urls) if raw_urls else {}
+
+        # Run link enrichment and Perplexity search in parallel.
+        enrich_coro = enrich_batch(raw_urls) if raw_urls else None
+        pplx = self.bot.perplexity
+        pplx_coro = (
+            pplx.search(build_search_query(question, surface="ask"), purpose="ask")
+            if pplx
+            else None
+        )
+
+        if enrich_coro and pplx_coro:
+            enriched_map, pplx_result = await asyncio.gather(enrich_coro, pplx_coro)
+        elif enrich_coro:
+            enriched_map = await enrich_coro
+            pplx_result = None
+        elif pplx_coro:
+            enriched_map = {}
+            pplx_result = await pplx_coro
+        else:
+            enriched_map = {}
+            pplx_result = None
+
         enriched = [e for e in enriched_map.values() if e is not None]
 
         return await self.bot.claude.ask(
             question, channel_context=context, use_web=True,
             image_urls=image_urls,
             enriched_links=enriched if enriched else None,
+            perplexity_context=pplx_result,
         )
 
     @commands.Cog.listener()

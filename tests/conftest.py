@@ -15,6 +15,7 @@ for k, v in {
     "GITHUB_TOKEN": "test-gh-token",
     "GITHUB_REPO": "test/repo",
     "DATABASE_URL": "postgres://test:test@localhost:5432/test",
+    "PERPLEXITY_API_KEY": "",
     "BOT_LOGS_VERBOSITY": "milestones",
 }.items():
     if not os.environ.get(k):

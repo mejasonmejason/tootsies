@@ -31,6 +31,7 @@ Failures in any step go to events + skip cleanly (no crash, no spam).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
@@ -45,6 +46,7 @@ from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
 from utils.link_enrich import enrich_batch
 from utils.permissions import can_send_in
+from utils.perplexity import build_search_query
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -285,15 +287,32 @@ class ChimeIn(commands.Cog):
 
         image_urls = recent_image_urls(msgs, limit=5)
         chime_hot_urls = hot_urls(msgs, limit=5)
-        enriched_map = await enrich_batch(
+
+        # Run link enrichment and Perplexity search in parallel.
+        enrich_coro = enrich_batch(
             [u for u, _, _, _ in chime_hot_urls], concurrency=5,
         )
+        pplx = self.bot.perplexity
+        pplx_coro = (
+            pplx.search(
+                build_search_query(hook, surface="chimein"), purpose="chimein",
+            )
+            if pplx
+            else None
+        )
+        if pplx_coro:
+            enriched_map, pplx_result = await asyncio.gather(enrich_coro, pplx_coro)
+        else:
+            enriched_map = await enrich_coro
+            pplx_result = None
+
         enriched = [v for v in enriched_map.values() if v is not None]
 
         try:
             line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
                 enriched_links=enriched, recent_posts=recent_posts,
+                perplexity_context=pplx_result,
             )
         except Exception as exc:
             emit_error(
