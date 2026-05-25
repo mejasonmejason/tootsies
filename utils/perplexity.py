@@ -29,7 +29,10 @@ log = logging.getLogger(__name__)
 
 _API_URL = "https://api.perplexity.ai/chat/completions"
 _MODEL = "sonar"
-_TIMEOUT_SECONDS = 5.0
+# 5s was too tight: production saw recurring TimeoutErrors on /ask under normal
+# Sonar latency. 8s captures the slow-but-functional tail without extending
+# user-facing latency (the call runs in parallel with Claude, which dominates).
+_TIMEOUT_SECONDS = 8.0
 
 
 class PerplexityClient:
