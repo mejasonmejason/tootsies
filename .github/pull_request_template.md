@@ -2,6 +2,12 @@
 
 <!-- 1-3 bullets on what changed and why. -->
 
+## Closes
+
+<!-- Link related issues so they auto-close on merge:
+     "Closes #17", "Fixes #10", "Related to #11".
+     Delete this section if no issues apply. -->
+
 ## Preview
 
 <!--
