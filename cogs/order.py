@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 import discord
@@ -26,12 +25,6 @@ from utils.metrics import track_command
 from utils.permissions import is_mod
 from utils.rate_limits import check_cooldown, check_server_limit, consume_server
 
-# How much recent channel chatter to pull as context for a /order. Used by both
-# the preflight check (so Sonnet can see what behavior the mod is reacting to)
-# and the GitHub issue body (so claude-code-action has evidence when patching).
-# Sized to bound token cost (~500-2000 tokens of chatter) while still covering
-# a normal "Toots is being weird in here" complaint window.
-ORDER_CONTEXT_LOOKBACK = timedelta(minutes=60)
 ORDER_CONTEXT_MSG_LIMIT = 100
 
 if TYPE_CHECKING:
@@ -104,7 +97,7 @@ class Order(commands.GroupCog, name="order"):
         if me is not None and isinstance(ch, discord.TextChannel | discord.Thread):
             try:
                 msgs = await recent_messages(
-                    ch, me, limit=ORDER_CONTEXT_MSG_LIMIT, within=ORDER_CONTEXT_LOOKBACK,
+                    ch, me, limit=ORDER_CONTEXT_MSG_LIMIT,
                     include_bots=True,  # Toots's own posts are often the evidence
                 )
                 if msgs:
