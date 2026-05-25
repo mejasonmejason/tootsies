@@ -11,16 +11,13 @@ Every change saves immediately to the DB, no confirm button. The view
 re-renders the summary embed after each change so the mod sees the
 current state. If they want to undo, just pick a different value.
 
-Pre-population priority:
-  1. Saved settings from the DB (if /menu was run before)
-  2. Pattern-matched best guesses (channel/role names like Promoters, bot-logs)
-  3. Empty (mod has to pick)
+Pre-population: saved settings from the DB (if /menu was run before),
+otherwise empty (mod has to pick).
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, cast
 
 import discord
@@ -39,70 +36,25 @@ MOOD_OPTIONS = ("chill", "yaps", "off")
 
 log = logging.getLogger(__name__)
 
-# Heuristics for first-time prefill, case-insensitive matches against
-# channel/role names. Skipped entirely if the guild already has saved settings.
-CHANNEL_PATTERNS = {
-    "bot_logs_channel": [r"^bot-?logs$", r"^back-?of-?house$"],
-    "discourse_channel": [r"^chatter$", r"^general$", r"^lounge$", r"^the-?bar$"],
-}
-MOD_ROLE_PATTERNS = [
-    r"^Promoters$", r"^Bouncers$", r"^Janitors$",
-    r"^Moderators?$", r"^Mods?$", r"^Admin$",
-]
-FEED_PATTERNS = [r"feed", r"alerts", r"x-?feed", r"tweets", r"news"]
-
-
-def _match(name: str, patterns: list[str]) -> bool:
-    return any(re.search(p, name, re.IGNORECASE) for p in patterns)
-
-
-def _pattern_prefill(guild: discord.Guild) -> dict[str, object]:
-    """Best-guess defaults derived from the guild's current channels and roles.
-    Only used as fallback when nothing is saved yet."""
-    out: dict[str, object] = {}
-    for key, patterns in CHANNEL_PATTERNS.items():
-        for ch in guild.text_channels:
-            if _match(ch.name, patterns):
-                out[key] = ch.id
-                break
-    out["mod_role_ids"] = [
-        r.id for r in guild.roles if _match(r.name, MOD_ROLE_PATTERNS)
-    ]
-    out["feed_channel_ids"] = [
-        ch.id for ch in guild.text_channels if _match(ch.name, FEED_PATTERNS)
-    ]
-    return out
-
 
 async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[str, object]:
-    """Load saved settings (if any) and fill any gaps with pattern-based guesses.
-
-    A re-run of /menu after setup should reflect what's actually configured.
-    that makes /menu_view redundant. Pattern matching only kicks in for
-    settings that haven't been saved yet.
-    """
+    """Load saved settings from the DB. Empty selects if nothing saved yet."""
     saved_settings = await bot.db.all_settings(guild.id)
     saved_mod_roles = await bot.db.get_mod_roles(guild.id)
+    saved_discourse_channels = await bot.db.get_discourse_channels(guild.id)
     saved_feed_channels = await bot.db.get_feed_channels(guild.id)
     saved_schedule = await bot.db.get_schedule(guild.id)
 
     state: dict[str, object] = {}
     if "bot_logs_channel" in saved_settings:
         state["bot_logs_channel"] = int(saved_settings["bot_logs_channel"])
-    if "discourse_channel" in saved_settings:
-        state["discourse_channel"] = int(saved_settings["discourse_channel"])
+    if saved_discourse_channels:
+        state["discourse_channel_ids"] = saved_discourse_channels
     if saved_mod_roles:
         state["mod_role_ids"] = list(saved_mod_roles)
     if saved_feed_channels:
         state["feed_channel_ids"] = [cid for cid, _cat in saved_feed_channels]
-    # Mood is a real DB-backed value (defaulted to 'chill' by the schema), so it
-    # always exists, no need to fall back to pattern matching.
     state["mood"] = saved_schedule.mood.value
-
-    # Fill any remaining gaps from name-pattern heuristics.
-    guesses = _pattern_prefill(guild)
-    for key, value in guesses.items():
-        state.setdefault(key, value)
     return state
 
 
@@ -217,7 +169,7 @@ class MenuView(discord.ui.View):
             self, _safe_channel_default(guild, prefill.get("bot_logs_channel")),
         ))
         self.add_item(_DiscourseSelect(
-            self, _safe_channel_default(guild, prefill.get("discourse_channel")),
+            self, _safe_channel_defaults(guild, prefill.get("discourse_channel_ids")),
         ))
         self.add_item(_ModRoleSelect(
             self, _safe_role_defaults(guild, prefill.get("mod_role_ids")),
@@ -247,8 +199,8 @@ class MenuView(discord.ui.View):
             inline=False,
         )
         e.add_field(
-            name="💬  discourse channel",
-            value="where my scheduled posts land + the channel i chime in on when the room's cooking.",
+            name="💬  discourse channels",
+            value="where my scheduled posts land + the channels i chime in on when the room's cooking.",
             inline=False,
         )
         e.add_field(
@@ -293,8 +245,8 @@ class MenuView(discord.ui.View):
                     self.guild, self.selected.get("bot_logs_channel"),
                 )
             elif isinstance(child, _DiscourseSelect):
-                child.default_values = _safe_channel_default(
-                    self.guild, self.selected.get("discourse_channel"),
+                child.default_values = _safe_channel_defaults(
+                    self.guild, self.selected.get("discourse_channel_ids"),
                 )
             elif isinstance(child, _ModRoleSelect):
                 child.default_values = _safe_role_defaults(
@@ -341,7 +293,7 @@ class MenuView(discord.ui.View):
             # so a re-select will retry the write.
 
         # Mark configured once required settings are all present. Idempotent.
-        required = ("bot_logs_channel", "discourse_channel", "mod_role_ids")
+        required = ("bot_logs_channel", "discourse_channel_ids", "mod_role_ids")
         if all(self.selected.get(k) for k in required):
             try:
                 await self.bot.db.mark_configured(guild_id)
@@ -363,10 +315,15 @@ class MenuView(discord.ui.View):
     async def _persist_key(self, guild_id: int, key: str) -> None:
         """Route a single just-set value to its storage backend."""
         val = self.selected.get(key)
-        if key in ("bot_logs_channel", "discourse_channel"):
+        if key == "bot_logs_channel":
             if val:
                 await self.bot.db.set_setting(
                     guild_id, key, int(cast("int", val)), self.actor_id,
+                )
+        elif key == "discourse_channel_ids":
+            if isinstance(val, list):
+                await self.bot.db.set_discourse_channels(
+                    guild_id, [int(c) for c in val],
                 )
         elif key == "mod_role_ids":
             if isinstance(val, list):
@@ -385,7 +342,7 @@ class MenuView(discord.ui.View):
 
     def _state_embed(self) -> discord.Embed:
         """Live state embed shown after each autosave."""
-        required = ("bot_logs_channel", "discourse_channel", "mod_role_ids")
+        required = ("bot_logs_channel", "discourse_channel_ids", "mod_role_ids")
         ready = all(self.selected.get(k) for k in required)
         title = "locked in. bar's open." if ready else "saving as you pick."
         color = 0x2ecc71 if ready else 0x9b59b6
@@ -397,7 +354,11 @@ class MenuView(discord.ui.View):
 
     def _summary(self) -> str:
         bot_logs = self.selected.get("bot_logs_channel")
-        discourse = self.selected.get("discourse_channel")
+        discourse_ids = cast("list[int]", self.selected.get("discourse_channel_ids") or [])
+        discourse_label = (
+            "_(pick at least one)_" if not discourse_ids
+            else ", ".join(f"<#{c}>" for c in discourse_ids)
+        )
         mod_roles = self.selected.get("mod_role_ids") or []
         feeds = cast("list[int]", self.selected.get("feed_channel_ids") or [])
         feeds_label = (
@@ -406,7 +367,7 @@ class MenuView(discord.ui.View):
         )
         return (
             f"**bot-logs:** {f'<#{bot_logs}>' if bot_logs else '_(pick one)_'}\n"
-            f"**discourse:** {f'<#{discourse}>' if discourse else '_(pick one)_'}\n"
+            f"**discourse:** {discourse_label}\n"
             f"**mod roles:** "
             f"{', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles)) or '_(pick at least one)_'}\n"
             f"**feeds:** {feeds_label}\n"
@@ -439,16 +400,16 @@ class _DiscourseSelect(discord.ui.ChannelSelect):
         self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="💬 discourse channel",
-            min_values=1, max_values=1, row=1,
+            placeholder="💬 discourse channels",
+            min_values=1, max_values=25, row=1,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
         )
         self.parent_view = parent
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        self.parent_view.selected["discourse_channel"] = self.values[0].id
-        await self.parent_view.autosave(interaction, "discourse_channel")
+        self.parent_view.selected["discourse_channel_ids"] = [c.id for c in self.values]
+        await self.parent_view.autosave(interaction, "discourse_channel_ids")
 
 
 class _ModRoleSelect(discord.ui.RoleSelect):

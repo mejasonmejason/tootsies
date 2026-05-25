@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 import discord
@@ -26,8 +25,7 @@ from utils.metrics import track_command
 from utils.permissions import is_mod
 from utils.rate_limits import check_cooldown, check_server_limit, consume_server
 
-ORDER_CONTEXT_MSG_LIMIT = 30
-ORDER_CONTEXT_LOOKBACK = timedelta(minutes=60)
+ORDER_CONTEXT_MSG_LIMIT = 100
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -98,14 +96,10 @@ class Order(commands.GroupCog, name="order"):  # type: ignore[call-arg]
         ch = interaction.channel
         if me is not None and isinstance(ch, discord.TextChannel | discord.Thread):
             try:
-                by_count = await recent_messages(
-                    ch, me, limit=ORDER_CONTEXT_MSG_LIMIT, include_bots=True,
-                )
-                by_time = await recent_messages(
-                    ch, me, limit=100, within=ORDER_CONTEXT_LOOKBACK,
+                msgs = await recent_messages(
+                    ch, me, limit=ORDER_CONTEXT_MSG_LIMIT,
                     include_bots=True,
                 )
-                msgs = by_time if len(by_time) > len(by_count) else by_count
                 if msgs:
                     channel_context = format_for_prompt(msgs, include_reactions=True)
             except Exception:

@@ -109,8 +109,8 @@ DEFAULT_MAX_TOKENS = 400
 # Append at the END of system_extra so the surface-specific guidance reads
 # first and the voice reminders read last (recency bias works in our favor).
 
-# Applies to ANY user-facing output (ask, recap, discourse, mood_post,
-# chimein_post, deflect). Skip for structured/classifier outputs
+# Applies to ANY user-facing output (ask, recap, discourse, chimein_post,
+# deflect). Skip for structured/classifier outputs
 # (chimein_score, preflight_order).
 _VOICE_REMINDER = (
     "\n\n---\n"
@@ -128,8 +128,8 @@ _VOICE_REMINDER = (
     "killed the vibe\" is over the line."
 )
 
-# Additional reminder for output-to-the-room surfaces (discourse, mood_post,
-# chimein_post). NOT used for ask (which IS a 1:1 reply) or deflect (which is
+# Additional reminder for output-to-the-room surfaces (discourse, chimein_post).
+# NOT used for ask (which IS a 1:1 reply) or deflect (which is
 # a 1:1 deflection).
 _ROOM_DIRECTED = (
     "\n\n---\n"
@@ -214,10 +214,9 @@ _TOOL_DISCIPLINE = (
 # doesn't get cut mid-word.
 MAX_TOKENS_REPLY = 130
 
-# Output-to-room posts: longer cap because these post into a public channel
-# and benefit from a sentence of context-setting before the take. ~800 char
-# ceiling.
-MAX_TOKENS_POST = 200
+# Output-to-room posts: same tweet-length target as replies. 280 chars is
+# ~70 tokens; 100 gives buffer so a clean sentence doesn't get cut mid-word.
+MAX_TOKENS_POST = 100
 
 # One-liner deflections: ~320 char ceiling. Below the reply cap because
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
@@ -340,7 +339,7 @@ class ClaudeClient:
         duration_ms = int((time.monotonic() - start) * 1000)
         text_parts: list[str] = []
         # Tool-use diagnostics: track every tool the model invoked so we can
-        # debug "why did mood_post say jimmy butler is on the heat" in the
+        # debug "why did discourse say jimmy butler is on the heat" in the
         # future. If web_search wasn't called for a sports claim, that's the
         # bug. If it WAS called and returned nothing useful, that's a different
         # bug. The structured event gives us the answer without re-running.
@@ -595,7 +594,7 @@ class ClaudeClient:
 
     async def discourse(
         self,
-        category: str,
+        category: str | None,
         sources_blob: str,
         recent_with_timestamps: str = "",
         *,
@@ -653,21 +652,43 @@ class ClaudeClient:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
 
         system_extra = (
-            "TASK: Pick the freshest, most talk-worthy thread from these "
-            "sources and post one starter in your voice. Hot take welcome. "
-            "Optional 1 link if it's the source.\n"
+            "TASK: Post one conversation-starter in your voice. Hot take "
+            "welcome. Optional 1 link if it's the source.\n"
             "\n"
-            "READ THE SOURCE MATERIAL. The Discord feed channels are populated "
-            "by webhooks/bots that auto-embed tweets, posts, and articles. The "
-            "embed snippet you see is just the first chunk. For anything you're "
+            "ALWAYS web_search. Whether the channel is active or quiet, "
+            "search for the latest on whatever you're about to post about. "
+            "Your training data is months stale, scores change by the "
+            "minute, and trades/drops/drama move fast. An uninformed take "
+            "is worse than no take.\n"
+            "\n"
+            "ACTIVE CHANNEL: the conversation tells you what matters. Stay "
+            "on-topic, riff on what people are already discussing, but "
+            "bring real context they might not have (current score, latest "
+            "news, what just happened). Add to the conversation, don't "
+            "change the subject.\n"
+            "\n"
+            "QUIET CHANNEL: the room needs a spark. Use web_search to find "
+            "what's breaking RIGHT NOW that fits this channel's vibe. "
+            "Search for today's news, scores, drops, drama, whatever the "
+            "room would care about. Bring the outside world in.\n"
+            "\n"
+            "The channel name and recent conversation tell you what this room "
+            "is about. Stay on-topic for this channel. A sports channel wants "
+            "sports; a movie channel wants cinema. If no category is specified, "
+            "read the room and match the energy.\n"
+            "\n"
+            "READ THE SOURCE MATERIAL. Feed channels are populated by "
+            "webhooks/bots that auto-embed tweets, posts, and articles. The "
+            "embed snippet is just the first chunk. For anything you're "
             "seriously considering posting about, OPEN the URL via web_search "
             "(silently, per tool rules below) to read the full tweet, quoted "
             "tweet if any, top replies, and reactions. Don't form a take based "
             "on a 200-char preview alone.\n"
             "\n"
-            "IMAGES: when tweet preview frames are attached as vision blocks, "
-            "look at them. If the picture matters (who's in it, what's "
-            "happening, the meme), reference it.\n"
+            "IMAGES + REACTIONS: when vision blocks are attached, look at "
+            "them. If the picture matters (who's in it, the meme, the "
+            "screenshot), reference it. Messages with reactions are signal: "
+            "the room is telling you what they care about. Lean into those.\n"
             "\n"
             "STATE: Bake the current state of the topic into your line so we "
             "can tell later if it's the same beat or a new one (e.g. 'lakers "
@@ -681,7 +702,11 @@ class ClaudeClient:
             f"{hot_urls_block}{enriched_block}{dedup_clause}"
             + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
-        user = f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
+        user = (
+            f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
+            if category
+            else f"Read the room.\n\nAvailable sources:\n{sources_blob}"
+        )
         result = await self._call(
             model=SONNET,
             user_message=user,
@@ -690,54 +715,6 @@ class ClaudeClient:
             max_tokens=MAX_TOKENS_POST,
             purpose="discourse_manual" if must_post else "discourse_scheduled",
             image_urls=image_urls,
-        )
-        return result.text
-
-    async def mood_post(self, recent_with_timestamps: str = "") -> str:
-        """Ambient post for the scheduled mood ticker.
-
-        Returns literal "EMPTY" if recent topics cover the field and nothing has evolved.
-        the scheduler treats that as "skip this slot cleanly."
-        """
-        dedup_clause = (
-            f"\n\nRECENTLY POSTED (last 72h):\n{recent_with_timestamps}\n"
-            "If a topic listed above has materially evolved (score change, news drop, new beef), "
-            "going again is fine. Otherwise pick a DIFFERENT subject. If you genuinely can't think "
-            "of anything fresh that isn't a repeat, return EMPTY (literally the word EMPTY) and "
-            "we'll skip this slot."
-            if recent_with_timestamps
-            else ""
-        )
-        system_extra = (
-            "TASK: Drop one short conversation-starter into the chat. Pop "
-            "culture, sports, music, movies, food. No question stack, one "
-            "prompt.\n"
-            "STATE: Bake the current state of the topic into your line (e.g. "
-            "'lakers vs nuggets r2, series 1-1', not just 'lakers').\n"
-            "\n"
-            "VERIFY BEFORE YOU POST. Your training data is months stale and "
-            "sports/news drift the fastest. If your line makes a SPECIFIC "
-            "real-world claim (a game result, a roster spot, a trade, a "
-            "score, a stat, a news event, a release date, a tip-off time, "
-            "a schedule), use web_search first to verify it. If you reference "
-            "WHEN something happens ('tonight', 'tips off at X', 'this "
-            "weekend'), search for the actual time and state it precisely. "
-            "Never hedge with 'looks like' or 'about to'. Don't invent. "
-            "If web_search returns nothing "
-            "current you can verify, pick a different angle or return EMPTY "
-            "(literally the word EMPTY) to skip this slot. A hallucinated "
-            "sports result (e.g. 'jimmy butler on the heat' when he's been "
-            "traded) goes out PUBLIC and damages credibility, way worse than "
-            "skipping a tick."
-            f"{dedup_clause}"
-            + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
-        )
-        user = "Anything good. Surprise me."
-        result = await self._call(
-            model=HAIKU, user_message=user, system_extra=system_extra,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            max_tokens=MAX_TOKENS_POST,
-            purpose="mood_scheduled",
         )
         return result.text
 
@@ -812,6 +789,7 @@ class ClaudeClient:
         hook: str,
         image_urls: list[str] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
+        recent_posts: str = "",
     ) -> str:
         """Generate the actual chime-in take given the buffer + scored hook.
 
@@ -843,20 +821,33 @@ class ClaudeClient:
             "  - Don't tee yourself up for a follow-up. Drop the take and "
             "you're done.\n"
             "\n"
-            "WEB SEARCH + IMAGES: if the conversation touches a verifiable "
-            "real-world thing (a game, a song, a release, a person), or has "
-            "a vision block of a recent post, use those to ground your take. "
-            "Don't make things up. (Use silently, per tool rules below.)\n"
+            "WEB SEARCH: ALWAYS search for the current state of whatever "
+            "the room is discussing before you post. Scores, standings, "
+            "news, drama all move fast. If the conversation touches anything "
+            "verifiable (a game, a song, a release, a person), get the "
+            "latest so your take is informed, not stale. "
+            "(Use silently, per tool rules below.)\n"
+            "\n"
+            "IMAGES + REACTIONS: when vision blocks are attached, look at "
+            "them. If the picture matters (who's in it, the meme, the "
+            "screenshot), reference it. Messages with reactions are signal: "
+            "the room is telling you what they care about. Lean into those.\n"
             "\n"
             "STANCE: like a regular at the bar leaning in mid-shift, not "
             "announcing yourself. Call out a name from the buffer if it lands "
             "(\"@gaza you're cooking with that take\")."
             + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
+        dedup_block = ""
+        if recent_posts:
+            dedup_block = (
+                f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat these topics, "
+                f"find a different angle or stay quiet):\n{recent_posts}"
+            )
         enriched_block = ""
         if enriched_links:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
-        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}"
+        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}{dedup_block}"
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],

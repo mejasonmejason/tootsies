@@ -112,9 +112,9 @@ class ChimeIn(commands.Cog):
         # We track this so we only score when there's *new* signal, not just on
         # the time interval.
         self._new_since_eval: defaultdict[tuple[int, int], int] = defaultdict(int)
-        # guild_id -> discourse_channel_id. Refreshed each tick so /menu edits
-        # take effect within a tick instead of needing a restart.
-        self._listen_channels: dict[int, int] = {}
+        # guild_id -> set of discourse channel IDs. Refreshed each tick so /menu
+        # edits take effect within a tick instead of needing a restart.
+        self._listen_channels: dict[int, set[int]] = {}
         self.tick.start()
 
     async def cog_unload(self) -> None:
@@ -133,9 +133,8 @@ class ChimeIn(commands.Cog):
         # Pure-attachment messages get added too (vision picks them up).
         if not message.content.strip() and not message.attachments and not message.embeds:
             return
-        # Only buffer if this is the guild's configured discourse channel.
-        listen_channel = self._listen_channels.get(message.guild.id)
-        if listen_channel is None or listen_channel != message.channel.id:
+        listen_channels = self._listen_channels.get(message.guild.id)
+        if not listen_channels or message.channel.id not in listen_channels:
             return
         key = (message.guild.id, message.channel.id)
         self._buffers[key].append(message)
@@ -155,16 +154,12 @@ class ChimeIn(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def _refresh_listen_channels(self) -> None:
-        """Pull the current discourse_channel setting for every guild we're in."""
-        fresh: dict[int, int] = {}
+        """Pull discourse channels for every guild we're in."""
+        fresh: dict[int, set[int]] = {}
         for guild in self.bot.guilds:
-            raw = await self.bot.db.get_setting(guild.id, "discourse_channel")
-            if not raw:
-                continue
-            try:
-                fresh[guild.id] = int(raw)
-            except (TypeError, ValueError):
-                continue
+            channels = await self.bot.db.get_discourse_channels(guild.id)
+            if channels:
+                fresh[guild.id] = set(channels)
         self._listen_channels = fresh
 
     async def _maybe_chime_in_all(self) -> None:
@@ -172,8 +167,8 @@ class ChimeIn(commands.Cog):
         await self._refresh_listen_channels()
         for key in list(self._buffers.keys()):
             guild_id, channel_id = key
-            if self._listen_channels.get(guild_id) != channel_id:
-                # discourse_channel changed (or was cleared); drop the stale buffer.
+            guild_channels = self._listen_channels.get(guild_id)
+            if not guild_channels or channel_id not in guild_channels:
                 self._buffers.pop(key, None)
                 self._new_since_eval.pop(key, None)
                 continue
@@ -244,9 +239,18 @@ class ChimeIn(commands.Cog):
         # ---- Score the buffer --------------------------------------------------
         key = (guild_id, channel_id)
         msgs = list(self._buffers[key])
-        buffer_blob = format_for_prompt(msgs)
+        buffer_blob = format_for_prompt(msgs, include_reactions=True)
+
+        recent_all = await self.bot.db.recent_discourse_all(guild_id, limit=10)
+        recent_posts = "\n".join(
+            f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
+            for cat, topic, ts in recent_all
+        )
+
         try:
-            score, vibe, hook = await self.bot.claude.chimein_score(buffer_blob)
+            score, vibe, hook = await self.bot.claude.chimein_score(
+                buffer_blob, recent_self_posts=recent_posts,
+            )
         except Exception as exc:
             emit_error(
                 source="chimein_score", exc=exc, recoverable=True,
@@ -280,18 +284,16 @@ class ChimeIn(commands.Cog):
             return
 
         image_urls = recent_image_urls(msgs, limit=5)
-        # Pre-fetch enriched social-link content. Chime-in is latency-sensitive
-        # (the tick blocks the next eval), so we cap concurrency at 5 and the
-        # per-URL timeout in link_enrich is 2s, bounding the worst case.
         chime_hot_urls = hot_urls(msgs, limit=5)
         enriched_map = await enrich_batch(
             [u for u, _, _, _ in chime_hot_urls], concurrency=5,
         )
         enriched = [v for v in enriched_map.values() if v is not None]
+
         try:
             line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
-                enriched_links=enriched,
+                enriched_links=enriched, recent_posts=recent_posts,
             )
         except Exception as exc:
             emit_error(
@@ -316,6 +318,7 @@ class ChimeIn(commands.Cog):
         await self.bot.db.record_chimein(
             guild_id, channel_id, score=score, vibe=vibe, hook=hook,
         )
+        await self.bot.db.add_discourse(guild_id, "open", line[:200])
         emit(
             "chimein_posted",
             guild_id=guild_id, channel_id=channel_id,

@@ -17,7 +17,7 @@ The fabricated inputs are chosen to exercise the prompts realistically:
   - /discourse: a feed-like sources_blob
   - chime-in: a buffer where the room is debating something + a vibe Toots
     should engage with
-  - mood_post: no input needed (returns ambient post)
+  - scheduled discourse: no category, reads the room
   - deflect: an example situation
 
 Outputs print as markdown so you can copy/paste straight into Discord.
@@ -160,13 +160,15 @@ async def main() -> None:
     )
     print(f"> {discourse_hh.strip()}\n")
 
-    # mood_post (scheduled discourse, no specific category)
+    # scheduled discourse (no category, reads the room)
     print("---\n")
     print("## scheduled discourse post (mood: chill or yaps)\n")
-    print("No input, just an ambient post on her terms.\n")
+    print("No category, reads the room and picks what's fresh.\n")
     print("**(scheduled tick fires)**")
-    mood = await client.mood_post()
-    print(f"> {mood.strip()}\n")
+    scheduled = await client.discourse(
+        category=None, sources_blob=DISCOURSE_SOURCES, must_post=False,
+    )
+    print(f"> {scheduled.strip() or '_(EMPTY, slot skipped)_'}\n")
 
     # chime-in (score + post)
     print("---\n")
