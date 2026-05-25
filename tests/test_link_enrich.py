@@ -162,6 +162,68 @@ async def test_enrich_twitter_returns_none_when_fetch_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_enrich_twitter_falls_back_to_vxtwitter_when_fxtwitter_fails() -> None:
+    """fxtwitter outage shouldn't lose us the tweet; vxtwitter covers the same data."""
+    vx_sample = {
+        "tweetID": "12345",
+        "text": "fallback worked",
+        "user_screen_name": "champagnepapi",
+        "likes": 100,
+        "retweets": 50,
+        "replies": 25,
+        "mediaURLs": ["https://video.twimg.com/abc.mp4"],
+    }
+
+    async def fake_fetch(url: str) -> Any:
+        if "fxtwitter" in url:
+            return None
+        if "vxtwitter" in url:
+            return vx_sample
+        return None
+
+    with patch("utils.link_enrich._fetch_json", AsyncMock(side_effect=fake_fetch)):
+        link = await _enrich_twitter("https://x.com/foo/status/12345")
+    assert link is not None
+    assert link.author == "@champagnepapi"
+    assert link.text == "fallback worked"
+    assert link.engagement["likes"] == 100
+    assert link.engagement["retweets"] == 50
+    assert link.media_urls == ["https://video.twimg.com/abc.mp4"]
+
+
+@pytest.mark.asyncio
+async def test_enrich_twitter_returns_none_when_both_endpoints_fail() -> None:
+    """If fxtwitter AND vxtwitter both fail, give up cleanly."""
+    with patch("utils.link_enrich._fetch_json", AsyncMock(return_value=None)):
+        link = await _enrich_twitter("https://x.com/foo/status/999")
+    assert link is None
+
+
+@pytest.mark.asyncio
+async def test_enrich_twitter_falls_through_when_fxtwitter_returns_bad_code() -> None:
+    """Non-200 fxtwitter response should fall through to vxtwitter, not return early."""
+    vx_sample = {
+        "text": "via vx",
+        "user_screen_name": "foo",
+    }
+    seen: list[str] = []
+
+    async def fake_fetch(url: str) -> Any:
+        seen.append(url)
+        if "fxtwitter" in url:
+            return {"code": 404, "message": "tweet not found"}
+        if "vxtwitter" in url:
+            return vx_sample
+        return None
+
+    with patch("utils.link_enrich._fetch_json", AsyncMock(side_effect=fake_fetch)):
+        link = await _enrich_twitter("https://x.com/foo/status/999")
+    assert link is not None
+    assert link.author == "@foo"
+    assert any("vxtwitter" in u for u in seen)
+
+
+@pytest.mark.asyncio
 async def test_enrich_tiktok_parses_tikwm_response() -> None:
     sample = _load_fixture("tikwm_sample.json")
     with patch("utils.link_enrich._fetch_json", AsyncMock(return_value=sample)):
