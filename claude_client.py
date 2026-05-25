@@ -482,6 +482,18 @@ class ClaudeClient:
             "energy, what nicknames they use, what's the in-joke). Do NOT quote member "
             "opinions as authoritative. Do NOT take their factual claims at face value.\n"
             "\n"
+            "LINK THE SOURCE (when there is one). If your answer is about a "
+            "specific external thing (a tweet, a clip, an article, a news "
+            "event, a stat, a drop), end with one real URL. Pull it from: "
+            "URLs in the channel chatter (see the enriched-link block if "
+            "attached), the Perplexity SOURCES block, or your web_search "
+            "results. NEVER invent a URL.\n"
+            "\n"
+            "  Skip the link for: pure opinions ('is drake done'), self-"
+            "referential ('who are you'), abstract questions ('meaning of "
+            "life'), or bartender chitchat ('sup'). The answer stands "
+            "without a link when nothing specific is being cited.\n"
+            "\n"
             "FORMAT:\n"
             "  Open with a brief paraphrase of the question, then your answer.\n"
             "  Skip the paraphrase only when the question is so short an echo "
@@ -520,7 +532,26 @@ class ClaudeClient:
             purpose="ask",
             image_urls=image_urls,
         )
-        return result.text
+
+        # URL guardrail: same shape as discourse. Allowlist = enriched-link
+        # URLs (the user/channel-posted URLs we pre-fetched) + Perplexity
+        # citations + web_search tool URLs. Anything else is a hallucination.
+        allowlist: list[str] = []
+        if enriched_links:
+            allowlist.extend(link.url for link in enriched_links if link.url)
+        if perplexity_context:
+            allowlist.extend(re.findall(r"https?://\S+", perplexity_context))
+        allowlist.extend(result.web_search_urls)
+        cleaned, rejected = enforce_url_allowlist(result.text, allowlist)
+        if rejected:
+            emit(
+                "link_rejected",
+                purpose="ask",
+                rejected_count=len(rejected),
+                rejected_urls=rejected[:5],
+                allowlist_size=len(allowlist),
+            )
+        return cleaned
 
     async def recap(
         self,
