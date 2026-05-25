@@ -215,10 +215,15 @@ def build_search_query(
     if surface == "discourse":
         if category and category in _CATEGORY_QUERIES:
             return _CATEGORY_QUERIES[category]
-        if channel_name:
-            inferred = _infer_category_from_channel(channel_name)
-            if inferred:
-                return _CATEGORY_QUERIES[inferred]
+        topic = category or channel_name or ""
+        if topic:
+            return (
+                f"What's trending right now that's relevant to '{topic}'? "
+                "Give me the top 3-5 stories people are talking about in "
+                "the last few hours.\n\n"
+                "For each story include: what happened, who's involved, "
+                "and what the hottest take or debate is.\n\n" + _SOURCES
+            )
         return _DEFAULT_TRENDING
 
     if surface == "recap":
@@ -239,22 +244,6 @@ def build_search_query(
         )
 
     return _DEFAULT_TRENDING
-
-
-def _infer_category_from_channel(name: str) -> str | None:
-    """Best-effort category guess from a channel name."""
-    lower = name.lower().replace("-", " ").replace("_", " ")
-    if any(w in lower for w in ("nba", "basketball", "hoops")):
-        return "nba"
-    if any(w in lower for w in ("sport", "football", "nfl", "soccer", "ufc", "mlb")):
-        return "sports"
-    if any(w in lower for w in ("hip hop", "hiphop", "rap", "music", "rnb")):
-        return "hiphop"
-    if any(w in lower for w in ("movie", "film", "cinema", "tv", "show", "stream")):
-        return "cinema"
-    if any(w in lower for w in ("pop", "culture", "celeb", "gossip", "tea")):
-        return "pop"
-    return None
 
 
 def format_perplexity_for_prompt(result: str) -> str:
