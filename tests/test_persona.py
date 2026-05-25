@@ -67,7 +67,7 @@ def test_user_facing_prompts_share_voice_reminder() -> None:
     from claude_client import _VOICE_REMINDER, ClaudeClient
 
     expected_voice = {
-        "ask", "recap", "discourse", "mood_post",
+        "ask", "recap", "discourse",
         "chimein_post", "deflect",
     }
     expected_no_voice = {
@@ -98,16 +98,16 @@ def test_room_directed_prompts_have_room_framing() -> None:
     """Output-to-room prompts must push the room to talk to each other, either
     via the shared _ROOM_DIRECTED constant or via richer surface-specific wording.
 
-    discourse + mood_post use the shared constant. chimein_post has its own
-    more detailed AIM AT THE ROOM block (with examples) because it's the
-    highest-risk surface for misfiring (unprompted, into an active conversation).
-    ask/deflect are 1:1 replies and skip both.
+    discourse uses the shared constant. chimein_post has its own more detailed
+    AIM AT THE ROOM block (with examples) because it's the highest-risk surface
+    for misfiring (unprompted, into an active conversation). ask/deflect are
+    1:1 replies and skip both.
     """
     import inspect
 
     from claude_client import ClaudeClient
 
-    uses_shared = {"discourse", "mood_post"}
+    uses_shared = {"discourse"}
     has_own_room_block = {"chimein_post"}
     one_to_one = {"ask", "deflect"}
 
@@ -140,13 +140,13 @@ def test_user_facing_prompts_share_length_rules() -> None:
     block should NOT silently leave the others on different rules (the
     bug we hit before this refactor: /ask had a "HARD CAP 280" block
     inline, /recap had a different "HARD CAP 300" block, /discourse +
-    /mood_post had no cap wording at all).
+    had no cap wording at all).
     """
     import inspect
 
     from claude_client import ClaudeClient
 
-    expected = {"ask", "recap", "discourse", "mood_post", "chimein_post", "deflect"}
+    expected = {"ask", "recap", "discourse", "chimein_post", "deflect"}
     for name in expected:
         method = getattr(ClaudeClient, name)
         src = inspect.getsource(method)
@@ -169,7 +169,7 @@ def test_tool_using_prompts_have_tool_discipline() -> None:
 
     from claude_client import ClaudeClient
 
-    has_tools = {"ask", "recap", "discourse", "mood_post", "chimein_post"}
+    has_tools = {"ask", "recap", "discourse", "chimein_post"}
     for name in has_tools:
         method = getattr(ClaudeClient, name)
         src = inspect.getsource(method)
@@ -194,7 +194,6 @@ def test_max_tokens_uses_shared_constants_not_magic_numbers() -> None:
         "ask": "MAX_TOKENS_REPLY",
         "recap": "MAX_TOKENS_REPLY",
         "discourse": "MAX_TOKENS_POST",
-        "mood_post": "MAX_TOKENS_POST",
         "chimein_post": "MAX_TOKENS_REPLY",
         "deflect": "MAX_TOKENS_DEFLECT",
     }

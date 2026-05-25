@@ -109,8 +109,8 @@ DEFAULT_MAX_TOKENS = 400
 # Append at the END of system_extra so the surface-specific guidance reads
 # first and the voice reminders read last (recency bias works in our favor).
 
-# Applies to ANY user-facing output (ask, recap, discourse, mood_post,
-# chimein_post, deflect). Skip for structured/classifier outputs
+# Applies to ANY user-facing output (ask, recap, discourse, chimein_post,
+# deflect). Skip for structured/classifier outputs
 # (chimein_score, preflight_order).
 _VOICE_REMINDER = (
     "\n\n---\n"
@@ -128,8 +128,8 @@ _VOICE_REMINDER = (
     "killed the vibe\" is over the line."
 )
 
-# Additional reminder for output-to-the-room surfaces (discourse, mood_post,
-# chimein_post). NOT used for ask (which IS a 1:1 reply) or deflect (which is
+# Additional reminder for output-to-the-room surfaces (discourse, chimein_post).
+# NOT used for ask (which IS a 1:1 reply) or deflect (which is
 # a 1:1 deflection).
 _ROOM_DIRECTED = (
     "\n\n---\n"
@@ -340,7 +340,7 @@ class ClaudeClient:
         duration_ms = int((time.monotonic() - start) * 1000)
         text_parts: list[str] = []
         # Tool-use diagnostics: track every tool the model invoked so we can
-        # debug "why did mood_post say jimmy butler is on the heat" in the
+        # debug "why did discourse say jimmy butler is on the heat" in the
         # future. If web_search wasn't called for a sports claim, that's the
         # bug. If it WAS called and returned nothing useful, that's a different
         # bug. The structured event gives us the answer without re-running.
@@ -704,50 +704,6 @@ class ClaudeClient:
             max_tokens=MAX_TOKENS_POST,
             purpose="discourse_manual" if must_post else "discourse_scheduled",
             image_urls=image_urls,
-        )
-        return result.text
-
-    async def mood_post(self, recent_with_timestamps: str = "") -> str:
-        """Ambient post for the scheduled mood ticker.
-
-        Returns literal "EMPTY" if recent topics cover the field and nothing has evolved.
-        the scheduler treats that as "skip this slot cleanly."
-        """
-        dedup_clause = (
-            f"\n\nRECENTLY POSTED (last 72h):\n{recent_with_timestamps}\n"
-            "If a topic listed above has materially evolved (score change, news drop, new beef), "
-            "going again is fine. Otherwise pick a DIFFERENT subject. If you genuinely can't think "
-            "of anything fresh that isn't a repeat, return EMPTY (literally the word EMPTY) and "
-            "we'll skip this slot."
-            if recent_with_timestamps
-            else ""
-        )
-        system_extra = (
-            "TASK: Drop one short conversation-starter into the chat. Pop "
-            "culture, sports, music, movies, food. No question stack, one "
-            "prompt.\n"
-            "STATE: Bake the current state of the topic into your line (e.g. "
-            "'lakers vs nuggets r2, series 1-1', not just 'lakers').\n"
-            "\n"
-            "VERIFY BEFORE YOU POST. Your training data is months stale and "
-            "sports/news drift the fastest. If your line makes a SPECIFIC "
-            "real-world claim (a game result, a roster spot, a trade, a "
-            "score, a stat, a news event, a release date), use web_search "
-            "first to verify it. Don't invent. If web_search returns nothing "
-            "current you can verify, pick a different angle or return EMPTY "
-            "(literally the word EMPTY) to skip this slot. A hallucinated "
-            "sports result (e.g. 'jimmy butler on the heat' when he's been "
-            "traded) goes out PUBLIC and damages credibility, way worse than "
-            "skipping a tick."
-            f"{dedup_clause}"
-            + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
-        )
-        user = "Anything good. Surprise me."
-        result = await self._call(
-            model=HAIKU, user_message=user, system_extra=system_extra,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            max_tokens=MAX_TOKENS_POST,
-            purpose="mood_scheduled",
         )
         return result.text
 

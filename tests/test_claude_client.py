@@ -218,16 +218,6 @@ async def test_discourse_purpose_reflects_manual_vs_scheduled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mood_post_uses_haiku() -> None:
-    client = ClaudeClient(api_key="test")
-    fake = AsyncMock(return_value=MagicMock(text="ambient"))
-    with patch.object(client, "_call", fake):
-        await client.mood_post()
-    assert fake.call_args.kwargs["model"] == HAIKU
-    assert fake.call_args.kwargs["purpose"] == "mood_scheduled"
-
-
-@pytest.mark.asyncio
 async def test_deflect_uses_haiku_with_low_max_tokens() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="quip"))
