@@ -286,17 +286,11 @@ class Discourse(commands.Cog):
         posts_today, last_post_at, posts_day = await self.bot.db.get_channel_slot(
             guild.id, channel_id,
         )
+        now_et = datetime.now(ET)
         if last_post_at is not None:
             last_et = last_post_at.astimezone(ET)
-            now_et = datetime.now(ET)
             if last_et.date() == now_et.date() and posts_today >= expected:
                 return
-        elif expected > 1:
-            # Fresh channel (deploy, new channel added via /menu). Don't catch
-            # up on all missed slots. Consume earlier slots as skipped so we
-            # only post once for the most recent slot.
-            for _ in range(expected - 1):
-                await self.bot.db.record_channel_slot(guild.id, channel_id, today)
 
         channel = guild.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
@@ -313,9 +307,11 @@ class Discourse(commands.Cog):
             log.exception("scheduled post compose failed for channel %s", channel_id)
             line = ""
 
-        # Consume the slot regardless of whether we post, otherwise an EMPTY
-        # would keep retrying every minute.
-        await self.bot.db.record_channel_slot(guild.id, channel_id, today)
+        # Consume the slot. If this is a fresh channel (deploy, newly added),
+        # consume all elapsed slots so we don't catch up with rapid-fire posts.
+        slots_to_record = expected - posts_today if last_post_at is None else 1
+        for _ in range(slots_to_record):
+            await self.bot.db.record_channel_slot(guild.id, channel_id, today)
         await self.bot.db.record_schedule_post(guild.id, today)
 
         if not line or line.strip().upper() == "EMPTY":
