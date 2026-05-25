@@ -19,6 +19,7 @@ from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
+import anthropic
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -49,6 +50,11 @@ CATEGORIES = ["pop", "sports", "cinema", "hiphop", "nba"]
 ET = ZoneInfo("America/New_York")
 CHILL_TIMES = [time(12, 0), time(19, 0)]
 YAPS_TIMES = [time(10, 0), time(14, 0), time(18, 0), time(22, 0)]
+
+# Gap between per-channel compose calls inside a single scheduler tick.
+# Each compose burns ~10K input tokens on sonnet-4-6 and the org TPM ceiling
+# is 30K/min, so bursting >3 channels in <60s reliably trips 429.
+_SCHEDULED_CHANNEL_GAP_SECONDS = 15
 
 
 class Discourse(commands.Cog):
@@ -299,7 +305,9 @@ class Discourse(commands.Cog):
         if not channel_ids:
             return
 
-        for channel_id in channel_ids:
+        for i, channel_id in enumerate(channel_ids):
+            if i > 0:
+                await asyncio.sleep(_SCHEDULED_CHANNEL_GAP_SECONDS)
             await self._maybe_post_to_channel(
                 guild, channel_id, expected, today_et,
             )
@@ -338,6 +346,16 @@ class Discourse(commands.Cog):
             line = await self._compose(
                 guild, channel, must_post=False,
             )
+        except anthropic.RateLimitError as exc:
+            log.info(
+                "scheduled compose hit anthropic rate limit for channel %s, skipping slot",
+                channel_id,
+            )
+            emit_error(
+                source="discourse_scheduled", exc=exc, recoverable=True,
+                guild_id=guild.id, channel_id=channel_id,
+            )
+            line = ""
         except Exception:
             log.exception("scheduled post compose failed for channel %s", channel_id)
             line = ""
