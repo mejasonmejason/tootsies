@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class Order(commands.GroupCog, name="order"):
+class Order(commands.GroupCog, name="order"):  # type: ignore[call-arg]
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
         super().__init__()
