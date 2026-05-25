@@ -420,7 +420,7 @@ def test_on_message_buffers_all_configured_channels() -> None:
 async def test_refresh_listen_channels_multi() -> None:
     """_refresh_listen_channels should populate sets from get_discourse_channels."""
     cog = _make_cog()
-    cog.bot.guilds = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+    cog.bot.guilds = [MagicMock(id=1), MagicMock(id=2)]
     cog.bot.db = MagicMock()
     cog.bot.db.get_discourse_channels = AsyncMock(
         side_effect=lambda gid: [100, 200] if gid == 1 else [],
