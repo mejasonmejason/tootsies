@@ -32,7 +32,7 @@ from utils.rate_limits import check_cooldown, check_server_limit, consume_server
 # Sized to bound token cost (~500-2000 tokens of chatter) while still covering
 # a normal "Toots is being weird in here" complaint window.
 ORDER_CONTEXT_LOOKBACK = timedelta(minutes=60)
-ORDER_CONTEXT_MSG_LIMIT = 30
+ORDER_CONTEXT_MSG_LIMIT = 100
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
