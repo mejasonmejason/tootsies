@@ -17,10 +17,10 @@ import os
 import sys
 
 from db import DB
-from models import OrderStatus
+from models import TERMINAL_STATUSES, OrderStatus
 
 
-async def main(issue_number: int, status: OrderStatus) -> None:
+async def main(issue_number: int, status: OrderStatus, *, force: bool = False) -> None:
     dsn = os.environ["DATABASE_URL"]
     db = DB(dsn)
     await db.connect()
@@ -28,6 +28,9 @@ async def main(issue_number: int, status: OrderStatus) -> None:
         order = await db.get_order_by_issue(issue_number)
         if order is None:
             print(f"no order found for issue #{issue_number}, skipping")
+            return
+        if not force and order.status in TERMINAL_STATUSES:
+            print(f"order #{order.id} already {order.status.value}, skipping")
             return
         await db.update_order(order.id, status=status)
         print(f"order #{order.id} (issue #{issue_number}) -> {status.value}")
