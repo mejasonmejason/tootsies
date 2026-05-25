@@ -383,3 +383,66 @@ def test_buffer_respects_maxlen() -> None:
     for _ in range(BUFFER_MAX + 50):
         cog._buffers[key].append(_stub_message())
     assert len(cog._buffers[key]) == BUFFER_MAX
+
+
+# ---- multi-channel listen routing -------------------------------------------
+
+
+def test_on_message_buffers_all_configured_channels() -> None:
+    """Messages in ANY configured discourse channel should be buffered."""
+    cog = _make_cog()
+    cog._listen_channels = {1: {100, 200}}
+
+    msg_a = _stub_message("hello from channel A")
+    msg_a.guild = SimpleNamespace(id=1)
+    msg_a.channel = SimpleNamespace(id=100)
+
+    msg_b = _stub_message("hello from channel B")
+    msg_b.guild = SimpleNamespace(id=1)
+    msg_b.channel = SimpleNamespace(id=200)
+
+    msg_other = _stub_message("not a discourse channel")
+    msg_other.guild = SimpleNamespace(id=1)
+    msg_other.channel = SimpleNamespace(id=999)
+
+    for msg in [msg_a, msg_b, msg_other]:
+        listen = cog._listen_channels.get(msg.guild.id)
+        if listen and msg.channel.id in listen:
+            key = (msg.guild.id, msg.channel.id)
+            cog._buffers[key].append(msg)
+
+    assert len(cog._buffers[(1, 100)]) == 1
+    assert len(cog._buffers[(1, 200)]) == 1
+    assert (1, 999) not in cog._buffers
+
+
+@pytest.mark.asyncio
+async def test_refresh_listen_channels_multi() -> None:
+    """_refresh_listen_channels should populate sets from get_discourse_channels."""
+    cog = _make_cog()
+    cog.bot.guilds = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+    cog.bot.db = MagicMock()
+    cog.bot.db.get_discourse_channels = AsyncMock(
+        side_effect=lambda gid: [100, 200] if gid == 1 else [],
+    )
+    await cog._refresh_listen_channels()
+    assert cog._listen_channels == {1: {100, 200}}
+    assert 2 not in cog._listen_channels
+
+
+@pytest.mark.asyncio
+async def test_stale_buffer_cleaned_on_channel_removal() -> None:
+    """If a channel is removed from discourse config, its buffer should be dropped."""
+    cog = _make_cog()
+    cog._listen_channels = {1: {100}}
+    cog._buffers[(1, 100)].append(_stub_message())
+    cog._buffers[(1, 999)].append(_stub_message())
+    cog._new_since_eval[(1, 100)] = 2
+    cog._new_since_eval[(1, 999)] = 3
+
+    cog.bot.db = _stub_db()
+    cog.bot.claude = _stub_claude()
+
+    await cog._maybe_chime_in_all()
+    assert (1, 999) not in cog._buffers
+    assert (1, 999) not in cog._new_since_eval

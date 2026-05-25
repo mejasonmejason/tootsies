@@ -201,18 +201,19 @@ class Discourse(commands.Cog):
         enriched = [v for v in enriched_map.values() if v is not None]
 
         if category:
-            recent_topics = await self.bot.db.recent_discourse(guild.id, category, limit=10)
+            recent = await self.bot.db.recent_discourse(guild.id, category, limit=10)
+            recent_count = len(recent)
             recent_blob = (
                 "\n".join(
                     f"- [{ts.isoformat(timespec='minutes')}] {topic}"
-                    for topic, ts in recent_topics
+                    for topic, ts in recent
                 )
-                if recent_topics
+                if recent
                 else ""
             )
         else:
             recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
-            recent_topics = recent_all  # type: ignore[assignment]
+            recent_count = len(recent_all)
             recent_blob = "\n".join(
                 f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
                 for cat, topic, ts in recent_all
@@ -231,14 +232,14 @@ class Discourse(commands.Cog):
                 "discourse_fallback",
                 guild_id=guild.id, user_id=user_id, category=category,
                 source_count=len(sources), local_source_chars=len(sources_blob),
-                recent_topic_count=len(recent_topics),
+                recent_topic_count=recent_count,
                 reason="claude_returned_empty" if line else "claude_returned_blank",
             )
             await bot_logs.post(
                 self.bot, self.bot.db, guild.id,
                 f"💬 discourse fell back to a quip in <#{channel.id}>: "
                 f"category=`{category}`, sources={len(sources)}, "
-                f"recent_topics={len(recent_topics)}, reason=`empty_claude_response`.",
+                f"recent_topics={recent_count}, reason=`empty_claude_response`.",
                 level="full", verbosity=self.bot.config.bot_logs_verbosity,
             )
             return voice.pick(voice.DISCOURSE_FALLBACK)

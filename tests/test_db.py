@@ -142,6 +142,72 @@ async def test_run_does_not_swallow_unrelated_exceptions() -> None:
     assert pool.fetchval.call_count == 1
 
 
+# ---- discourse channels CRUD -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_discourse_channels_empty() -> None:
+    pool = MagicMock()
+    pool.fetch = AsyncMock(return_value=[])
+    db = _make_db_with_pool(pool)
+    result = await db.get_discourse_channels(1)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_discourse_channels_returns_ids() -> None:
+    pool = MagicMock()
+    pool.fetch = AsyncMock(return_value=[{"channel_id": 100}, {"channel_id": 200}])
+    db = _make_db_with_pool(pool)
+    result = await db.get_discourse_channels(1)
+    assert result == [100, 200]
+
+
+@pytest.mark.asyncio
+async def test_set_discourse_channels_uses_transaction() -> None:
+    conn = AsyncMock()
+    conn.__aenter__ = AsyncMock(return_value=conn)
+    conn.__aexit__ = AsyncMock(return_value=False)
+    txn = AsyncMock()
+    txn.__aenter__ = AsyncMock(return_value=txn)
+    txn.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=txn)
+
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=conn)
+    db = _make_db_with_pool(pool)
+    await db.set_discourse_channels(1, [100, 200])
+    conn.execute.assert_called_once()
+    conn.executemany.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_channel_slot_default() -> None:
+    pool = MagicMock()
+    pool.fetchrow = AsyncMock(return_value=None)
+    db = _make_db_with_pool(pool)
+    result = await db.get_channel_slot(1, 100)
+    assert result == (0, None, None)
+
+
+@pytest.mark.asyncio
+async def test_get_channel_slot_with_data() -> None:
+    from datetime import date, datetime
+
+    pool = MagicMock()
+    pool.fetchrow = AsyncMock(return_value={
+        "posts_today": 2, "last_post_at": datetime(2026, 5, 25), "posts_day": date(2026, 5, 25),
+    })
+    db = _make_db_with_pool(pool)
+    posts, last_at, day = await db.get_channel_slot(1, 100)
+    assert posts == 2
+    assert last_at is not None
+    assert day == date(2026, 5, 25)
+
+
+# ---- all four wrappers ------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_all_four_wrappers_exist_and_route_to_correct_method() -> None:
     """Spot-check every wrapper routes to the matching pool method name."""

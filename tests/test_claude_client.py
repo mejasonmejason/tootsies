@@ -218,6 +218,28 @@ async def test_discourse_purpose_reflects_manual_vs_scheduled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discourse_accepts_none_category() -> None:
+    """When category is None (read the room), the user message should say 'Read the room.'"""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.discourse(None, "sources blob")
+    user_msg = fake.call_args.kwargs["user_message"]
+    assert "Read the room" in user_msg
+    assert "Category:" not in user_msg
+
+
+@pytest.mark.asyncio
+async def test_discourse_with_category_passes_it() -> None:
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.discourse("sports", "sources blob")
+    user_msg = fake.call_args.kwargs["user_message"]
+    assert "Category: sports" in user_msg
+
+
+@pytest.mark.asyncio
 async def test_deflect_uses_haiku_with_low_max_tokens() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="quip"))
