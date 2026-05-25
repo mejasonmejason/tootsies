@@ -372,9 +372,9 @@ class Discourse(commands.Cog):
                     wait, channel_id,
                 )
                 emit_error(
-                    source="discourse_scheduled_retry", exc=exc2, recoverable=True,
+                    source="discourse_scheduled", exc=exc2, recoverable=True,
                     guild_id=guild.id, channel_id=channel_id,
-                    retry_after_seconds=wait,
+                    retried=True, retry_after_seconds=wait,
                 )
                 return ""
 
