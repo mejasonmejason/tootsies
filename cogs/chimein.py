@@ -240,8 +240,17 @@ class ChimeIn(commands.Cog):
         key = (guild_id, channel_id)
         msgs = list(self._buffers[key])
         buffer_blob = format_for_prompt(msgs, include_reactions=True)
+
+        recent_all = await self.bot.db.recent_discourse_all(guild_id, limit=10)
+        recent_posts = "\n".join(
+            f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
+            for cat, topic, ts in recent_all
+        )
+
         try:
-            score, vibe, hook = await self.bot.claude.chimein_score(buffer_blob)
+            score, vibe, hook = await self.bot.claude.chimein_score(
+                buffer_blob, recent_self_posts=recent_posts,
+            )
         except Exception as exc:
             emit_error(
                 source="chimein_score", exc=exc, recoverable=True,
@@ -280,12 +289,6 @@ class ChimeIn(commands.Cog):
             [u for u, _, _, _ in chime_hot_urls], concurrency=5,
         )
         enriched = [v for v in enriched_map.values() if v is not None]
-
-        recent_all = await self.bot.db.recent_discourse_all(guild_id, limit=10)
-        recent_posts = "\n".join(
-            f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
-            for cat, topic, ts in recent_all
-        )
 
         try:
             line = await self.bot.claude.chimein_post(

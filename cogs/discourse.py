@@ -200,24 +200,12 @@ class Discourse(commands.Cog):
         enriched_map = await enrich_batch([u for u, _, _, _ in feed_hot_urls])
         enriched = [v for v in enriched_map.values() if v is not None]
 
-        if category:
-            recent = await self.bot.db.recent_discourse(guild.id, category, limit=10)
-            recent_count = len(recent)
-            recent_blob = (
-                "\n".join(
-                    f"- [{ts.isoformat(timespec='minutes')}] {topic}"
-                    for topic, ts in recent
-                )
-                if recent
-                else ""
-            )
-        else:
-            recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
-            recent_count = len(recent_all)
-            recent_blob = "\n".join(
-                f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
-                for cat, topic, ts in recent_all
-            )
+        recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
+        recent_count = len(recent_all)
+        recent_blob = "\n".join(
+            f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
+            for cat, topic, ts in recent_all
+        )
 
         sources_blob = "\n\n".join(sources) if sources else "(no local sources, use web search)"
         line = await self.bot.claude.discourse(

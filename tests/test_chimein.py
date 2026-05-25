@@ -159,7 +159,9 @@ def _stub_db(
     db.last_chimein_at = AsyncMock(return_value=last_chimein_at)
     db.chimein_count_today = AsyncMock(return_value=count_today)
     db.record_chimein = AsyncMock()
+    db.add_discourse = AsyncMock()
     db.get_schedule = AsyncMock(return_value=_stub_schedule(mood))
+    db.recent_discourse_all = AsyncMock(return_value=[])
     return db
 
 
