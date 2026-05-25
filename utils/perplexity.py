@@ -135,39 +135,53 @@ class PerplexityClient:
             return None
 
 
+_SOURCES = (
+    "Pull from Twitter/X, Reddit, Instagram/Threads, TikTok, YouTube, "
+    "and news outlets. Include specific names, numbers, and quotes."
+)
+
 _CATEGORY_QUERIES: dict[str, str] = {
     "nba": (
         "What's happening in the NBA right now? Latest scores, trades, "
-        "signings, beef, and what Twitter/X is debating. Include any "
-        "breaking news from the last few hours."
+        "signings, beef, injury updates, and standout performances. "
+        "Check Twitter/X, r/nba, ESPN, The Athletic, and Shaderoom. "
+        "Include what fans are debating and any viral moments. " + _SOURCES
     ),
     "sports": (
         "What are the biggest sports stories right now? Scores, upsets, "
-        "trades, drama, records broken. What's trending on Twitter/X in "
-        "sports today? Include NFL, NBA, soccer, UFC, anything popping."
+        "trades, drama, records broken across NFL, NBA, soccer, UFC, MLB, "
+        "and anything else popping. Check Twitter/X, Reddit sports subs, "
+        "ESPN, Bleacher Report, and SportsCenter. " + _SOURCES
     ),
     "hiphop": (
-        "What's happening in hip hop right now? New drops, beefs, "
-        "surprise releases, viral moments, chart milestones, producer "
-        "drama. What's Twitter/X debating in rap and R&B today?"
+        "What's happening in hip hop and R&B right now? New drops, beefs, "
+        "surprise releases, viral moments, chart milestones, producer drama, "
+        "sample discoveries, tour announcements. Check Twitter/X, "
+        "r/hiphopheads, Complex, Pitchfork, Genius, YouTube new releases, "
+        "and TikTok trending sounds. " + _SOURCES
     ),
     "pop": (
         "What's trending in pop culture right now? Celebrity news, viral "
-        "moments, music drops, TV premieres, social media drama, memes. "
-        "What's everyone on Twitter/X talking about today?"
+        "moments, music drops, TV premieres, social media drama, memes, "
+        "fashion moments, relationship news. Check Twitter/X, Instagram/"
+        "Threads, TikTok trends, TMZ, People, Shaderoom, and Reddit. "
+        + _SOURCES
     ),
     "cinema": (
         "What's happening in movies and TV right now? Box office results, "
         "new trailers, casting announcements, streaming drops, hot takes "
-        "on recent releases. What's Twitter/X debating in film and TV?"
+        "on recent releases, awards buzz, behind-the-scenes drama. Check "
+        "Twitter/X, r/movies, r/television, Letterboxd trending, YouTube "
+        "trailers, Variety, and Deadline. " + _SOURCES
     ),
 }
 
 _DEFAULT_TRENDING = (
-    "What's trending right now on Twitter/X and social media? Cover the "
-    "biggest stories across sports, music, pop culture, and entertainment "
-    "in the last few hours. Include specific names, scores, takes, and "
-    "any viral moments or breaking news."
+    "What's trending right now across culture, sports, music, and "
+    "entertainment? Cover the biggest stories from the last few hours. "
+    "Check Twitter/X, Reddit front page, Instagram/Threads, TikTok "
+    "trending, YouTube trending, TMZ, ESPN, Complex, and Shaderoom. "
+    + _SOURCES
 )
 
 
@@ -186,10 +200,11 @@ def build_search_query(
     """
     if surface == "ask":
         return (
-            f"What's the latest news and what are people saying on "
-            f"Twitter/X about: {user_input}\n"
-            "Include breaking developments, trending takes, relevant "
-            "scores or stats, and any facts from the last 24 hours."
+            f"What's the latest news and discourse about: {user_input}\n"
+            "Check Twitter/X, Reddit, Instagram/Threads, TikTok, YouTube, "
+            "and news outlets. Include breaking developments, trending "
+            "takes, relevant scores or stats, fan reactions, and any "
+            "facts from the last 24 hours."
         )
 
     if surface == "discourse":
@@ -204,16 +219,18 @@ def build_search_query(
     if surface == "recap":
         return (
             f"What's the latest news about: {user_input}\n"
-            "Focus on the last few hours. Include scores, results, "
-            "breaking developments, Twitter/X reactions, and any facts "
+            "Check Twitter/X, Reddit, Instagram/Threads, TikTok, YouTube, "
+            "and news outlets. Focus on the last few hours. Include scores, "
+            "results, breaking developments, fan reactions, and any facts "
             "that would help someone catch up on what happened."
         )
 
     if surface == "chimein":
         return (
             f"What's the latest on: {user_input}\n"
-            "Any breaking news, scores, hot takes, or new developments "
-            "from the last few hours? Be specific with names and facts."
+            "Check Twitter/X, Reddit, TikTok, and news outlets. Any "
+            "breaking news, scores, hot takes, viral moments, or new "
+            "developments from the last few hours? Be specific."
         )
 
     return _DEFAULT_TRENDING
