@@ -177,11 +177,16 @@ _CATEGORY_QUERIES: dict[str, str] = {
 }
 
 _DEFAULT_TRENDING = (
-    "What's trending right now across culture, sports, music, and "
-    "entertainment? Cover the biggest stories from the last few hours. "
-    "Check Twitter/X, Reddit front page, Instagram/Threads, TikTok "
-    "trending, YouTube trending, TMZ, ESPN, Complex, and Shaderoom. "
-    + _SOURCES
+    "What are the biggest stories trending RIGHT NOW across sports, "
+    "hip hop, pop culture, movies/TV, and entertainment? Give me the "
+    "top 3-5 things people are talking about in the last few hours.\n\n"
+    "For each story include: what happened, who's involved, and what "
+    "the hottest take or debate is.\n\n"
+    "Look at: Twitter/X trending, Reddit front page and popular posts "
+    "on r/nba r/hiphopheads r/movies r/popculture, Instagram/Threads "
+    "viral posts, TikTok trending, YouTube trending, and news from "
+    "ESPN, TMZ, Complex, Pitchfork, Shaderoom, Variety, and Bleacher "
+    "Report. " + _SOURCES
 )
 
 
