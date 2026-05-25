@@ -11,16 +11,13 @@ Every change saves immediately to the DB, no confirm button. The view
 re-renders the summary embed after each change so the mod sees the
 current state. If they want to undo, just pick a different value.
 
-Pre-population priority:
-  1. Saved settings from the DB (if /menu was run before)
-  2. Pattern-matched best guesses (channel/role names like Promoters, bot-logs)
-  3. Empty (mod has to pick)
+Pre-population: saved settings from the DB (if /menu was run before),
+otherwise empty (mod has to pick).
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, cast
 
 import discord
@@ -39,51 +36,9 @@ MOOD_OPTIONS = ("chill", "yaps", "off")
 
 log = logging.getLogger(__name__)
 
-# Heuristics for first-time prefill, case-insensitive matches against
-# channel/role names. Skipped entirely if the guild already has saved settings.
-CHANNEL_PATTERNS = {
-    "bot_logs_channel": [r"^bot-?logs$", r"^back-?of-?house$"],
-}
-DISCOURSE_PATTERNS = [r"^chatter$", r"^general$", r"^lounge$", r"^the-?bar$"]
-MOD_ROLE_PATTERNS = [
-    r"^Promoters$", r"^Bouncers$", r"^Janitors$",
-    r"^Moderators?$", r"^Mods?$", r"^Admin$",
-]
-FEED_PATTERNS = [r"feed", r"alerts", r"x-?feed", r"tweets", r"news"]
-
-
-def _match(name: str, patterns: list[str]) -> bool:
-    return any(re.search(p, name, re.IGNORECASE) for p in patterns)
-
-
-def _pattern_prefill(guild: discord.Guild) -> dict[str, object]:
-    """Best-guess defaults derived from the guild's current channels and roles.
-    Only used as fallback when nothing is saved yet."""
-    out: dict[str, object] = {}
-    for key, patterns in CHANNEL_PATTERNS.items():
-        for ch in guild.text_channels:
-            if _match(ch.name, patterns):
-                out[key] = ch.id
-                break
-    out["mod_role_ids"] = [
-        r.id for r in guild.roles if _match(r.name, MOD_ROLE_PATTERNS)
-    ]
-    out["discourse_channel_ids"] = [
-        ch.id for ch in guild.text_channels if _match(ch.name, DISCOURSE_PATTERNS)
-    ]
-    out["feed_channel_ids"] = [
-        ch.id for ch in guild.text_channels if _match(ch.name, FEED_PATTERNS)
-    ]
-    return out
-
 
 async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[str, object]:
-    """Load saved settings (if any) and fill any gaps with pattern-based guesses.
-
-    A re-run of /menu after setup should reflect what's actually configured.
-    that makes /menu_view redundant. Pattern matching only kicks in for
-    settings that haven't been saved yet.
-    """
+    """Load saved settings from the DB. Empty selects if nothing saved yet."""
     saved_settings = await bot.db.all_settings(guild.id)
     saved_mod_roles = await bot.db.get_mod_roles(guild.id)
     saved_discourse_channels = await bot.db.get_discourse_channels(guild.id)
@@ -99,14 +54,7 @@ async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[st
         state["mod_role_ids"] = list(saved_mod_roles)
     if saved_feed_channels:
         state["feed_channel_ids"] = [cid for cid, _cat in saved_feed_channels]
-    # Mood is a real DB-backed value (defaulted to 'chill' by the schema), so it
-    # always exists, no need to fall back to pattern matching.
     state["mood"] = saved_schedule.mood.value
-
-    # Fill any remaining gaps from name-pattern heuristics.
-    guesses = _pattern_prefill(guild)
-    for key, value in guesses.items():
-        state.setdefault(key, value)
     return state
 
 
