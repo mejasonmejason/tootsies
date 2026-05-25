@@ -135,6 +135,42 @@ class PerplexityClient:
             return None
 
 
+_CATEGORY_QUERIES: dict[str, str] = {
+    "nba": (
+        "What's happening in the NBA right now? Latest scores, trades, "
+        "signings, beef, and what Twitter/X is debating. Include any "
+        "breaking news from the last few hours."
+    ),
+    "sports": (
+        "What are the biggest sports stories right now? Scores, upsets, "
+        "trades, drama, records broken. What's trending on Twitter/X in "
+        "sports today? Include NFL, NBA, soccer, UFC, anything popping."
+    ),
+    "hiphop": (
+        "What's happening in hip hop right now? New drops, beefs, "
+        "surprise releases, viral moments, chart milestones, producer "
+        "drama. What's Twitter/X debating in rap and R&B today?"
+    ),
+    "pop": (
+        "What's trending in pop culture right now? Celebrity news, viral "
+        "moments, music drops, TV premieres, social media drama, memes. "
+        "What's everyone on Twitter/X talking about today?"
+    ),
+    "cinema": (
+        "What's happening in movies and TV right now? Box office results, "
+        "new trailers, casting announcements, streaming drops, hot takes "
+        "on recent releases. What's Twitter/X debating in film and TV?"
+    ),
+}
+
+_DEFAULT_TRENDING = (
+    "What's trending right now on Twitter/X and social media? Cover the "
+    "biggest stories across sports, music, pop culture, and entertainment "
+    "in the last few hours. Include specific names, scores, takes, and "
+    "any viral moments or breaking news."
+)
+
+
 def build_search_query(
     user_input: str,
     *,
@@ -144,38 +180,59 @@ def build_search_query(
 ) -> str:
     """Build a Perplexity search query tailored to the surface.
 
-    The goal is to get real-time trending context that the existing web_search
-    tool and link_enrich pipeline would miss: what Twitter/X is saying right
-    now, trending topics, breaking discourse.
+    The goal is to pull real-time trending context that the existing
+    web_search tool and link_enrich pipeline miss: what Twitter/X is
+    saying right now, breaking news, fresh facts, ambient culture signal.
     """
     if surface == "ask":
         return (
-            f"What are people saying on Twitter/X and social media about: {user_input}\n"
-            "Include any trending discourse, hot takes, and recent developments."
+            f"What's the latest news and what are people saying on "
+            f"Twitter/X about: {user_input}\n"
+            "Include breaking developments, trending takes, relevant "
+            "scores or stats, and any facts from the last 24 hours."
         )
 
     if surface == "discourse":
-        topic = category or channel_name or "culture"
-        return (
-            f"What's trending right now on Twitter/X about {topic}? "
-            "What are the hottest takes and debates happening in the last few hours? "
-            "Include specific tweets, takes, and discourse if possible."
-        )
+        if category and category in _CATEGORY_QUERIES:
+            return _CATEGORY_QUERIES[category]
+        if channel_name:
+            inferred = _infer_category_from_channel(channel_name)
+            if inferred:
+                return _CATEGORY_QUERIES[inferred]
+        return _DEFAULT_TRENDING
 
     if surface == "recap":
         return (
-            f"What's the latest news and Twitter/X discourse about: {user_input}\n"
-            "Focus on what happened in the last few hours. "
-            "Include trending takes and reactions."
+            f"What's the latest news about: {user_input}\n"
+            "Focus on the last few hours. Include scores, results, "
+            "breaking developments, Twitter/X reactions, and any facts "
+            "that would help someone catch up on what happened."
         )
 
     if surface == "chimein":
         return (
-            f"What's Twitter/X saying right now about: {user_input}\n"
-            "What are the hottest takes in the last hour?"
+            f"What's the latest on: {user_input}\n"
+            "Any breaking news, scores, hot takes, or new developments "
+            "from the last few hours? Be specific with names and facts."
         )
 
-    return f"Latest trending discussion about: {user_input}"
+    return _DEFAULT_TRENDING
+
+
+def _infer_category_from_channel(name: str) -> str | None:
+    """Best-effort category guess from a channel name."""
+    lower = name.lower().replace("-", " ").replace("_", " ")
+    if any(w in lower for w in ("nba", "basketball", "hoops")):
+        return "nba"
+    if any(w in lower for w in ("sport", "football", "nfl", "soccer", "ufc", "mlb")):
+        return "sports"
+    if any(w in lower for w in ("hip hop", "hiphop", "rap", "music", "rnb")):
+        return "hiphop"
+    if any(w in lower for w in ("movie", "film", "cinema", "tv", "show", "stream")):
+        return "cinema"
+    if any(w in lower for w in ("pop", "culture", "celeb", "gossip", "tea")):
+        return "pop"
+    return None
 
 
 def format_perplexity_for_prompt(result: str) -> str:

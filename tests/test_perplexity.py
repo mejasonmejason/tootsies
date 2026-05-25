@@ -8,6 +8,7 @@ import pytest
 
 from utils.perplexity import (
     PerplexityClient,
+    _infer_category_from_channel,
     build_search_query,
     format_perplexity_for_prompt,
 )
@@ -18,17 +19,33 @@ from utils.perplexity import (
 def test_build_query_ask():
     q = build_search_query("is drake done", surface="ask")
     assert "drake" in q.lower()
-    assert "twitter" in q.lower() or "x" in q.lower()
 
 
 def test_build_query_discourse_with_category():
     q = build_search_query("", surface="discourse", category="nba")
     assert "nba" in q.lower()
+    assert "twitter" in q.lower() or "x" in q.lower()
 
 
-def test_build_query_discourse_with_channel_name():
-    q = build_search_query("", surface="discourse", channel_name="sports-talk")
-    assert "sports-talk" in q.lower()
+def test_build_query_discourse_each_category():
+    for cat in ("nba", "sports", "hiphop", "pop", "cinema"):
+        q = build_search_query("", surface="discourse", category=cat)
+        assert cat in q.lower() or len(q) > 50
+
+
+def test_build_query_discourse_infers_from_channel():
+    q = build_search_query("", surface="discourse", channel_name="nba-talk")
+    assert "nba" in q.lower()
+
+
+def test_build_query_discourse_unknown_channel_gets_trending():
+    q = build_search_query("", surface="discourse", channel_name="general")
+    assert "trending" in q.lower()
+
+
+def test_build_query_discourse_no_context_gets_trending():
+    q = build_search_query("", surface="discourse")
+    assert "trending" in q.lower()
 
 
 def test_build_query_recap():
@@ -43,7 +60,40 @@ def test_build_query_chimein():
 
 def test_build_query_unknown_surface():
     q = build_search_query("something", surface="new_thing")
-    assert "something" in q.lower()
+    assert "trending" in q.lower()
+
+
+# ---- _infer_category_from_channel ----------------------------------------------
+
+
+def test_infer_nba():
+    assert _infer_category_from_channel("nba-talk") == "nba"
+    assert _infer_category_from_channel("basketball-chat") == "nba"
+
+
+def test_infer_sports():
+    assert _infer_category_from_channel("sports-general") == "sports"
+    assert _infer_category_from_channel("nfl-picks") == "sports"
+
+
+def test_infer_hiphop():
+    assert _infer_category_from_channel("hip-hop") == "hiphop"
+    assert _infer_category_from_channel("rap-drops") == "hiphop"
+
+
+def test_infer_cinema():
+    assert _infer_category_from_channel("movie-night") == "cinema"
+    assert _infer_category_from_channel("tv-shows") == "cinema"
+
+
+def test_infer_pop():
+    assert _infer_category_from_channel("pop-culture") == "pop"
+    assert _infer_category_from_channel("celeb-gossip") == "pop"
+
+
+def test_infer_none():
+    assert _infer_category_from_channel("general") is None
+    assert _infer_category_from_channel("lounge") is None
 
 
 # ---- format_perplexity_for_prompt ----------------------------------------------
