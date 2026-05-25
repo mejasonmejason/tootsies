@@ -201,6 +201,25 @@ _TOOL_DISCIPLINE = (
     "with tools, the customer sees the take, never the search."
 )
 
+# Hard gate on any specific event-time claim. Applied to surfaces that can make
+# sports/event schedule assertions (discourse, ask, chimein_post). mood_post has
+# equivalent language inline already.
+_SCHEDULE_VERIFY = (
+    "\n\n---\n"
+    "TIME AND SCHEDULE CLAIMS (hard rule, applies whenever you reference event timing):\n"
+    "  - The [ctx] block tells you the current wall-clock time. It does NOT give you "
+    "game schedules, tip-off times, show times, or event start times — those aren't in "
+    "your training data reliably either, since schedules change and games get postponed.\n"
+    "  - Before writing 'tonight', 'in progress', 'tips off at X', 'starts soon', "
+    "'halftime', or any specific event time or live status, you MUST web_search the "
+    "actual schedule. Cross-reference the ctx timestamp to determine whether the event "
+    "is upcoming, live, or already finished.\n"
+    "  - Guessing wrong ('looks like it's in progress' when the game tipped off 3 hours "
+    "ago or isn't until tomorrow) reads as out-of-touch and damages credibility. If "
+    "web_search returns nothing verifiable, drop the time claim entirely or say "
+    "'check the schedule' rather than guessing."
+)
+
 
 # ---- per-surface output caps -----------------------------------------------
 # Single source of truth for how many tokens each user-facing prompt category
@@ -477,7 +496,7 @@ class ClaudeClient:
             "  Q: 'what is kubernetes'\n"
             "  A: 'k8s = container orchestrator. you describe the state you want, it "
             "keeps things running there. holler if you want the moving parts.'"
-            + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+            + _SCHEDULE_VERIFY + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_web else None
         result = await self._call(
@@ -668,7 +687,7 @@ class ClaudeClient:
             "can tell later if it's the same beat or a new one (e.g. 'lakers "
             "vs nuggets r2, series tied 1-1', not just 'lakers')."
             f"{hot_urls_block}{enriched_block}{dedup_clause}"
-            + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+            + _SCHEDULE_VERIFY + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         user = f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
         result = await self._call(
@@ -836,7 +855,7 @@ class ClaudeClient:
             "STANCE: like a regular at the bar leaning in mid-shift, not "
             "announcing yourself. Call out a name from the buffer if it lands "
             "(\"@gaza you're cooking with that take\")."
-            + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+            + _SCHEDULE_VERIFY + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         enriched_block = ""
         if enriched_links:
