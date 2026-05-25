@@ -315,6 +315,7 @@ class ChimeIn(commands.Cog):
         await self.bot.db.record_chimein(
             guild_id, channel_id, score=score, vibe=vibe, hook=hook,
         )
+        await self.bot.db.add_discourse(guild_id, "chimein", line[:200])
         emit(
             "chimein_posted",
             guild_id=guild_id, channel_id=channel_id,
