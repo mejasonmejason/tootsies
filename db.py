@@ -223,12 +223,6 @@ DO $$ BEGIN
     END IF;
 END $$;
 
--- One-time backfill: mark stale non-terminal orders as served.
--- Before the deploy workflow existed, orders got stuck at prepping/on_the_stove
--- even after their PRs merged and deployed. Safe to re-run (WHERE filters).
-UPDATE orders SET status = 'served', updated_at = NOW()
-WHERE status NOT IN ('served', 'burnt', 'sent_back');
-
 -- Multi-channel discourse support.
 CREATE TABLE IF NOT EXISTS discourse_channels (
     guild_id BIGINT NOT NULL,
