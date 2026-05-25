@@ -226,18 +226,30 @@ def _truncate(text: str, n: int = 500) -> str:
 
 
 async def _enrich_twitter(url: str) -> EnrichedLink | None:
-    """fxtwitter.com JSON API. Free, no auth, mirrors the upstream tweet.
+    """fxtwitter.com primary, vxtwitter.com fallback. Free, no auth.
 
-    Endpoint shape: https://api.fxtwitter.com/<status_id> returns
-    {"code": 200, "tweet": {"text": ..., "author": {...}, "likes": ..., ...}}
+    fxtwitter shape: https://api.fxtwitter.com/<status_id> returns
+        {"code": 200, "tweet": {"text": ..., "author": {...}, "likes": ..., ...}}
+    vxtwitter shape: https://api.vxtwitter.com/Twitter/status/<status_id> returns
+        {"text": ..., "user_screen_name": ..., "likes": ..., "mediaURLs": [...]}
+
+    fxtwitter has been flaky in production (bursts of 1s non-200s); the vx
+    fallback covers the same data via an independent service.
     """
     m = _TWITTER_STATUS_RE.search(url)
     if not m:
         return None
     status_id = m.group(1)
     data = await _fetch_json(f"https://api.fxtwitter.com/{status_id}")
-    if not data or data.get("code") != 200:
-        return None
+    if data and data.get("code") == 200:
+        return _build_twitter_from_fxtwitter(url, data)
+    vx = await _fetch_json(f"https://api.vxtwitter.com/Twitter/status/{status_id}")
+    if vx and isinstance(vx.get("user_screen_name"), str):
+        return _build_twitter_from_vxtwitter(url, vx)
+    return None
+
+
+def _build_twitter_from_fxtwitter(url: str, data: dict[str, Any]) -> EnrichedLink:
     tweet = data.get("tweet") or {}
     author = tweet.get("author") or {}
     media_items = (tweet.get("media") or {}).get("all") or []
@@ -257,6 +269,25 @@ async def _enrich_twitter(url: str) -> EnrichedLink | None:
         author=f"@{handle}" if handle else "",
         text=_truncate(tweet.get("text") or ""),
         media_urls=media_urls[:4],
+        engagement=engagement,
+    )
+
+
+def _build_twitter_from_vxtwitter(url: str, data: dict[str, Any]) -> EnrichedLink:
+    media_urls_raw = data.get("mediaURLs") or []
+    media_urls: list[str] = [u for u in media_urls_raw if isinstance(u, str)][:4]
+    engagement: dict[str, int] = {}
+    for key in ("likes", "retweets", "replies", "views"):
+        val = data.get(key)
+        if isinstance(val, int):
+            engagement[key] = val
+    handle = data.get("user_screen_name") or data.get("user_name") or ""
+    return EnrichedLink(
+        platform="X/Twitter",
+        url=url,
+        author=f"@{handle}" if handle else "",
+        text=_truncate(data.get("text") or ""),
+        media_urls=media_urls,
         engagement=engagement,
     )
 
