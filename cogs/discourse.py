@@ -14,7 +14,7 @@ Each configured discourse channel gets its own independent slot tracking.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
@@ -261,7 +261,7 @@ class Discourse(commands.Cog):
         if not due:
             return
         expected = len(due)
-        today_utc = now_et.astimezone(UTC).date()
+        today_et = now_et.date()
 
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -273,7 +273,7 @@ class Discourse(commands.Cog):
 
         for channel_id in channel_ids:
             await self._maybe_post_to_channel(
-                guild, channel_id, expected, today_utc,
+                guild, channel_id, expected, today_et,
             )
 
     async def _maybe_post_to_channel(
@@ -281,7 +281,7 @@ class Discourse(commands.Cog):
         guild: discord.Guild,
         channel_id: int,
         expected: int,
-        today_utc: date,
+        today: date,
     ) -> None:
         posts_today, last_post_at, posts_day = await self.bot.db.get_channel_slot(
             guild.id, channel_id,
@@ -309,9 +309,8 @@ class Discourse(commands.Cog):
 
         # Consume the slot regardless of whether we post, otherwise an EMPTY
         # would keep retrying every minute.
-        await self.bot.db.record_channel_slot(guild.id, channel_id, today_utc)
-        # Dual-write to guild-level table for rollback safety.
-        await self.bot.db.record_schedule_post(guild.id, today_utc)
+        await self.bot.db.record_channel_slot(guild.id, channel_id, today)
+        await self.bot.db.record_schedule_post(guild.id, today)
 
         if not line or line.strip().upper() == "EMPTY":
             log.info(
