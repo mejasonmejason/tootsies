@@ -1,6 +1,6 @@
 """Rate limit + cooldown helpers.
 
-Per the plan: 20 is the default daily cap. Per-user (ask, recap) and per-server (discourse, order)
+Per the plan: 50 is the default daily cap. Per-user (ask, recap) and per-server (discourse, order)
 are separate counters. /order also has a 15-min per-user cooldown.
 
 Settings can override defaults via /menu; we read those at call time so changes apply live.
@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from db import DB
 from utils.events import emit
 
-DEFAULT_PER_USER_DAILY = 20
+DEFAULT_PER_USER_DAILY = 50
 DEFAULT_PER_SERVER_DAILY = 20
 ORDER_COOLDOWN = timedelta(minutes=15)
 
