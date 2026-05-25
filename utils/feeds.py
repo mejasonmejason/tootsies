@@ -134,11 +134,10 @@ def recent_image_urls(messages: list[discord.Message], limit: int = 3) -> list[s
     return [url for _, _, url in candidates[:limit]]
 
 
-# Cheap URL detector for picking out bare links in message text. Discord auto-
-# unfurls many links into rich embeds (which we capture separately in
-# extract_media), but plenty of sites either block the unfurl or just produce
-# a stripped embed; the bare URL is the only signal we have.
-_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+# URL detection uses the canonical regex from utils.url_guardrail so the
+# whole project parses URLs the same way (stops at brackets/quotes, trims
+# trailing punct). Imported lazily to keep import order clean.
+from utils.url_guardrail import extract_urls as _extract_urls  # noqa: E402
 
 # Map known "embed-fixer" hostnames + variants to a canonical source label.
 # Fixer sites (fxtwitter, tnktok, ddinstagram, etc.) exist because Discord
@@ -187,9 +186,7 @@ def hot_urls(
             continue
         reaction_count = sum(r.count for r in msg.reactions) if msg.reactions else 0
         author_name = getattr(msg.author, "display_name", "?")
-        for url in _URL_RE.findall(msg.content):
-            # Strip trailing punctuation that's almost always not part of the URL.
-            url = url.rstrip(").,;:!?'\"")
+        for url in _extract_urls(msg.content):
             if url in seen:
                 continue
             seen.add(url)

@@ -23,12 +23,7 @@ from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
 from utils.perplexity import build_search_query
 from utils.rate_limits import check_user_limit, consume_user
-
-# Match raw http(s) URLs in the user's question or pulled channel context.
-# Same shape as the regex in utils/feeds.py (kept private there); /ask is the
-# only outside caller, so we just inline it here rather than exporting from
-# feeds.
-_URL_IN_TEXT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+from utils.url_guardrail import extract_urls
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -118,7 +113,7 @@ class Ask(commands.Cog):
         # through web_search on each URL (faster + no "i need to look that
         # up" narration risk). Cap to 10 URLs total per ask to bound latency.
         text_for_urls = f"{question}\n{context}"
-        raw_urls = _URL_IN_TEXT_RE.findall(text_for_urls)[:10]
+        raw_urls = extract_urls(text_for_urls)[:10]
 
         # Run link enrichment and Perplexity search in parallel.
         # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
@@ -149,6 +144,7 @@ class Ask(commands.Cog):
             image_urls=image_urls,
             enriched_links=enriched if enriched else None,
             perplexity_context=pplx_result,
+            recently_seen_urls=raw_urls if raw_urls else None,
         )
 
     @commands.Cog.listener()

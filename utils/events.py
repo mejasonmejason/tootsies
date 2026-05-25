@@ -68,9 +68,14 @@ Known kinds (keep this list in sync with what's emitted):
   - perplexity_search   : Perplexity Sonar API call (utils/perplexity.py)
       purpose (ask|recap|discourse|chimein), ok, duration_ms,
       input_tokens, output_tokens, response_chars, error (on failure)
-  - link_rejected      : guardrail stripped a hallucinated URL from a post
-      purpose (discourse_manual|discourse_scheduled|ask), rejected_count,
-      rejected_urls (capped at 5), allowlist_size
+  - link_rejected      : guardrail stripped a hallucinated URL (not in
+                         any source) from a post
+      purpose (discourse_manual|discourse_scheduled|ask),
+      rejected_count, rejected_urls (capped at 5)
+  - link_deduped       : guardrail stripped a URL the user/room already
+                         saw recently (real URL, just redundant to relink)
+      purpose (discourse_manual|discourse_scheduled|ask),
+      deduped_count, deduped_urls (capped at 5)
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.
