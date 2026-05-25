@@ -182,7 +182,9 @@ class Discourse(commands.Cog):
                     sources.append(f"--- #{ch.name} (feed) ---\n{format_for_prompt(msgs)}")
                     all_feed_msgs.extend(msgs)
 
-        local = await recent_messages(channel, me, limit=200)
+        local = await recent_messages(
+            channel, me, limit=200, within=timedelta(hours=1),
+        )
         if local:
             sources.append(
                 f"--- #{channel.name} (recent) ---\n{format_for_prompt(local)}"
