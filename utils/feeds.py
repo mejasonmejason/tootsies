@@ -235,6 +235,22 @@ async def recent_messages(
     return msgs
 
 
+def _relative_time(dt: datetime) -> str:
+    """Human-friendly relative timestamp, e.g. '5m ago', '3h ago'."""
+    delta = datetime.now(UTC) - dt
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"
+
+
 def format_for_prompt(messages: list[discord.Message], include_reactions: bool = False) -> str:
     """Render a message list for inclusion in a Claude prompt.
 
@@ -247,9 +263,10 @@ def format_for_prompt(messages: list[discord.Message], include_reactions: bool =
         return "(no recent messages)"
     lines: list[str] = []
     for m in messages:
+        age = _relative_time(m.created_at)
         name = m.author.display_name
         body = _truncate(_strip_html(m.content).replace("\n", " "), 200)
-        line = f"{name}: {body}" if body else f"{name}:"
+        line = f"[{age}] {name}: {body}" if body else f"[{age}] {name}:"
         media = extract_media(m)
         if media:
             line += " " + " ".join(f"[{r.kind}: {r.label}]" for r in media)
