@@ -239,7 +239,7 @@ class ChimeIn(commands.Cog):
         # ---- Score the buffer --------------------------------------------------
         key = (guild_id, channel_id)
         msgs = list(self._buffers[key])
-        buffer_blob = format_for_prompt(msgs)
+        buffer_blob = format_for_prompt(msgs, include_reactions=True)
         try:
             score, vibe, hook = await self.bot.claude.chimein_score(buffer_blob)
         except Exception as exc:

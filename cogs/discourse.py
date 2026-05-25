@@ -179,7 +179,10 @@ class Discourse(commands.Cog):
                     ch, me, limit=10, within=timedelta(hours=24), include_bots=True,
                 )
                 if msgs:
-                    sources.append(f"--- #{ch.name} (feed) ---\n{format_for_prompt(msgs)}")
+                    sources.append(
+                        f"--- #{ch.name} (feed) ---\n"
+                        f"{format_for_prompt(msgs, include_reactions=True)}"
+                    )
                     all_feed_msgs.extend(msgs)
 
         local = await recent_messages(
@@ -187,7 +190,8 @@ class Discourse(commands.Cog):
         )
         if local:
             sources.append(
-                f"--- #{channel.name} (recent) ---\n{format_for_prompt(local)}"
+                f"--- #{channel.name} (recent) ---\n"
+                f"{format_for_prompt(local, include_reactions=True)}"
             )
             all_feed_msgs.extend(local)
 
