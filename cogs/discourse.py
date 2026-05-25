@@ -210,7 +210,7 @@ class Discourse(commands.Cog):
         sources_blob = "\n\n".join(sources) if sources else "(no local sources, use web search)"
         line = await self.bot.claude.discourse(
             category, sources_blob, recent_with_timestamps=recent_blob,
-            must_post=must_post,
+            channel_name=channel.name, must_post=must_post,
             image_urls=image_urls, hot_urls=feed_hot_urls,
             enriched_links=enriched,
         )
@@ -286,11 +286,18 @@ class Discourse(commands.Cog):
         posts_today, last_post_at, posts_day = await self.bot.db.get_channel_slot(
             guild.id, channel_id,
         )
-        if last_post_at is not None:
-            last_et = last_post_at.astimezone(ET)
-            now_et = datetime.now(ET)
-            if last_et.date() == now_et.date() and posts_today >= expected:
-                return
+
+        # Fresh channel (deploy, newly added via /menu): consume all elapsed
+        # slots as skipped. Don't post, just wait for the next natural slot.
+        if last_post_at is None:
+            for _ in range(expected):
+                await self.bot.db.record_channel_slot(guild.id, channel_id, today)
+            return
+
+        now_et = datetime.now(ET)
+        last_et = last_post_at.astimezone(ET)
+        if last_et.date() == now_et.date() and posts_today >= expected:
+            return
 
         channel = guild.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
@@ -307,8 +314,6 @@ class Discourse(commands.Cog):
             log.exception("scheduled post compose failed for channel %s", channel_id)
             line = ""
 
-        # Consume the slot regardless of whether we post, otherwise an EMPTY
-        # would keep retrying every minute.
         await self.bot.db.record_channel_slot(guild.id, channel_id, today)
         await self.bot.db.record_schedule_post(guild.id, today)
 
