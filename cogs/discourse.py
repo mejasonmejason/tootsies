@@ -56,6 +56,26 @@ YAPS_TIMES = [time(10, 0), time(14, 0), time(18, 0), time(22, 0)]
 # is 30K/min, so bursting >3 channels in <60s reliably trips 429.
 _SCHEDULED_CHANNEL_GAP_SECONDS = 15
 
+# Upper bound on how long we'll honor a retry-after on a scheduled compose
+# 429. TPM rolling windows max out at 60s; 65 gives a small cushion without
+# letting a misbehaving header pin a tick for minutes.
+_RATE_LIMIT_MAX_RETRY_WAIT_SECONDS = 65.0
+
+
+def _parse_retry_after_seconds(exc: anthropic.RateLimitError) -> float | None:
+    """Pull the retry-after header (seconds) off a RateLimitError, if present."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if headers is None:
+        return None
+    raw = headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
 
 class Discourse(commands.Cog):
     def __init__(self, bot: TootsiesBot) -> None:
@@ -312,6 +332,52 @@ class Discourse(commands.Cog):
                 guild, channel_id, expected, today_et,
             )
 
+    async def _compose_with_retry(
+        self,
+        guild: discord.Guild,
+        channel: discord.TextChannel | discord.Thread,
+        channel_id: int,
+    ) -> str:
+        """Compose, honoring a single retry-after on RateLimitError.
+
+        Scheduled posts have no user waiting, so when Anthropic tells us
+        "wait N seconds", it's strictly better to wait and post late than
+        to skip the slot entirely. One retry only, capped at 65s.
+        """
+        try:
+            return await self._compose(guild, channel, must_post=False)
+        except anthropic.RateLimitError as exc:
+            retry_after = _parse_retry_after_seconds(exc)
+            if retry_after is None:
+                log.info(
+                    "scheduled compose 429 for channel %s, no retry-after; skipping slot",
+                    channel_id,
+                )
+                emit_error(
+                    source="discourse_scheduled", exc=exc, recoverable=True,
+                    guild_id=guild.id, channel_id=channel_id,
+                )
+                return ""
+            wait = min(retry_after, _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS)
+            log.info(
+                "scheduled compose 429 for channel %s, retrying in %.1fs (anthropic retry-after)",
+                channel_id, wait,
+            )
+            await asyncio.sleep(wait)
+            try:
+                return await self._compose(guild, channel, must_post=False)
+            except anthropic.RateLimitError as exc2:
+                log.info(
+                    "scheduled compose still 429 after %.1fs retry for channel %s",
+                    wait, channel_id,
+                )
+                emit_error(
+                    source="discourse_scheduled_retry", exc=exc2, recoverable=True,
+                    guild_id=guild.id, channel_id=channel_id,
+                    retry_after_seconds=wait,
+                )
+                return ""
+
     async def _maybe_post_to_channel(
         self,
         guild: discord.Guild,
@@ -343,19 +409,7 @@ class Discourse(commands.Cog):
             return
 
         try:
-            line = await self._compose(
-                guild, channel, must_post=False,
-            )
-        except anthropic.RateLimitError as exc:
-            log.info(
-                "scheduled compose hit anthropic rate limit for channel %s, skipping slot",
-                channel_id,
-            )
-            emit_error(
-                source="discourse_scheduled", exc=exc, recoverable=True,
-                guild_id=guild.id, channel_id=channel_id,
-            )
-            line = ""
+            line = await self._compose_with_retry(guild, channel, channel_id)
         except Exception:
             log.exception("scheduled post compose failed for channel %s", channel_id)
             line = ""
