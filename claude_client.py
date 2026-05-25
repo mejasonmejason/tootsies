@@ -590,7 +590,7 @@ class ClaudeClient:
 
     async def discourse(
         self,
-        category: str,
+        category: str | None,
         sources_blob: str,
         recent_with_timestamps: str = "",
         *,
@@ -648,13 +648,27 @@ class ClaudeClient:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
 
         system_extra = (
-            "TASK: Pick the freshest, most talk-worthy thread from these "
-            "sources and post one starter in your voice. Hot take welcome. "
-            "Optional 1 link if it's the source.\n"
+            "TASK: Post one conversation-starter in your voice. Hot take "
+            "welcome. Optional 1 link if it's the source.\n"
             "\n"
-            "READ THE SOURCE MATERIAL. The Discord feed channels are populated "
-            "by webhooks/bots that auto-embed tweets, posts, and articles. The "
-            "embed snippet you see is just the first chunk. For anything you're "
+            "TWO MODES depending on what you have:\n"
+            "1. REACT to what's already happening. If the channel or feeds "
+            "have something fresh and talk-worthy, riff on that. Read the "
+            "room. If people are debating something, lean into it.\n"
+            "2. BRING something new. If the channel is quiet or the feeds are "
+            "stale, use web_search to find what's breaking RIGHT NOW that fits "
+            "this channel's vibe. Search for today's news, scores, drops, "
+            "drama, whatever the room would care about. Don't recycle old "
+            "takes; bring the outside world in.\n"
+            "\n"
+            "The channel name and recent conversation tell you what this room "
+            "is about. Stay on-topic for this channel. A sports channel wants "
+            "sports; a movie channel wants cinema. If no category is specified, "
+            "read the room and match the energy.\n"
+            "\n"
+            "READ THE SOURCE MATERIAL. Feed channels are populated by "
+            "webhooks/bots that auto-embed tweets, posts, and articles. The "
+            "embed snippet is just the first chunk. For anything you're "
             "seriously considering posting about, OPEN the URL via web_search "
             "(silently, per tool rules below) to read the full tweet, quoted "
             "tweet if any, top replies, and reactions. Don't form a take based "
@@ -670,7 +684,11 @@ class ClaudeClient:
             f"{hot_urls_block}{enriched_block}{dedup_clause}"
             + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
-        user = f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
+        user = (
+            f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
+            if category
+            else f"Read the room.\n\nAvailable sources:\n{sources_blob}"
+        )
         result = await self._call(
             model=SONNET,
             user_message=user,

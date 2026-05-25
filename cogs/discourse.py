@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-CATEGORIES = ["pop", "sports", "cinema", "hiphop", "nba", "custom"]
+CATEGORIES = ["pop", "sports", "cinema", "hiphop", "nba"]
 
 ET = ZoneInfo("America/New_York")
 CHILL_TIMES = [time(12, 0), time(19, 0)]
@@ -63,7 +63,9 @@ class Discourse(commands.Cog):
         name="discourse",
         description="drop a discussion starter into this channel.",
     )
-    @app_commands.describe(category="what corner of the internet?")
+    @app_commands.describe(
+        category="optional filter. omit to let toots read the room.",
+    )
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
     )
@@ -71,7 +73,7 @@ class Discourse(commands.Cog):
     async def discourse(
         self,
         interaction: discord.Interaction,
-        category: app_commands.Choice[str],
+        category: app_commands.Choice[str] | None = None,
     ) -> None:
         """Post one discourse starter now in the invoked channel.
 
@@ -80,12 +82,14 @@ class Discourse(commands.Cog):
         """
         if not await require_configured(interaction, self.bot.db):
             return
-        await self._handle_manual_post(interaction, category.value)
+        await self._handle_manual_post(
+            interaction, category.value if category else None,
+        )
 
     # ---- manual post handler ----------------------------------------------------
 
     async def _handle_manual_post(
-        self, interaction: discord.Interaction, category: str
+        self, interaction: discord.Interaction, category: str | None
     ) -> None:
         assert interaction.guild_id is not None
         guild_id = interaction.guild_id
@@ -136,7 +140,7 @@ class Discourse(commands.Cog):
 
         try:
             await consume_server(self.bot.db, guild_id, "discourse")
-            await self.bot.db.add_discourse(guild_id, category, line[:200])
+            await self.bot.db.add_discourse(guild_id, category or "open", line[:200])
         except Exception:
             log.exception("post-discourse bookkeeping failed")
 
@@ -149,15 +153,16 @@ class Discourse(commands.Cog):
         guild: discord.Guild,
         channel: discord.TextChannel | discord.Thread,
         *,
-        category: str = "custom",
+        category: str | None = None,
         must_post: bool = True,
         user_id: int | None = None,
     ) -> str:
         """Build a discourse post from feed channels + channel context + web.
 
-        Used by both the manual /discourse command and the scheduler. When
-        category is "custom" or "scheduled", all feed channels are pulled;
-        otherwise only the category-matched feeds.
+        Used by both the manual /discourse command and the scheduler.
+        category=None means "read the room": all feeds are pulled and
+        Claude infers the topic from the channel context. An explicit
+        category filters to matching feed channels only.
         """
         me = guild.me
         assert me is not None
@@ -165,7 +170,7 @@ class Discourse(commands.Cog):
         sources: list[str] = []
         all_feed_msgs: list[discord.Message] = []
 
-        feed_cat = None if category in ("custom", "scheduled") else category
+        feed_cat = category
         feeds = await self.bot.db.get_feed_channels(guild.id, feed_cat)
         for feed_channel_id, _cat in feeds[:5]:
             ch = guild.get_channel(feed_channel_id)
@@ -177,12 +182,16 @@ class Discourse(commands.Cog):
                     sources.append(f"--- #{ch.name} (feed) ---\n{format_for_prompt(msgs)}")
                     all_feed_msgs.extend(msgs)
 
-        local = await recent_messages(
-            channel, me, limit=20, within=timedelta(hours=1)
+        local_timed = await recent_messages(
+            channel, me, limit=200, within=timedelta(hours=1),
         )
+        local_count = await recent_messages(
+            channel, me, limit=60,
+        )
+        local = local_timed if len(local_timed) >= len(local_count) else local_count
         if local:
             sources.append(
-                f"--- #{channel.name} (last hour) ---\n{format_for_prompt(local)}"
+                f"--- #{channel.name} (recent) ---\n{format_for_prompt(local)}"
             )
             all_feed_msgs.extend(local)
 
@@ -191,21 +200,22 @@ class Discourse(commands.Cog):
         enriched_map = await enrich_batch([u for u, _, _, _ in feed_hot_urls])
         enriched = [v for v in enriched_map.values() if v is not None]
 
-        recent = await self.bot.db.recent_discourse(guild.id, category, limit=10)
-        if category == "scheduled":
-            recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
-            recent_blob = "\n".join(
-                f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
-                for cat, topic, ts in recent_all
-            )
-        else:
+        if category:
+            recent_topics = await self.bot.db.recent_discourse(guild.id, category, limit=10)
             recent_blob = (
                 "\n".join(
                     f"- [{ts.isoformat(timespec='minutes')}] {topic}"
-                    for topic, ts in recent
+                    for topic, ts in recent_topics
                 )
-                if recent
+                if recent_topics
                 else ""
+            )
+        else:
+            recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
+            recent_topics = recent_all  # type: ignore[assignment]
+            recent_blob = "\n".join(
+                f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
+                for cat, topic, ts in recent_all
             )
 
         sources_blob = "\n\n".join(sources) if sources else "(no local sources, use web search)"
@@ -221,14 +231,14 @@ class Discourse(commands.Cog):
                 "discourse_fallback",
                 guild_id=guild.id, user_id=user_id, category=category,
                 source_count=len(sources), local_source_chars=len(sources_blob),
-                recent_topic_count=len(recent),
+                recent_topic_count=len(recent_topics),
                 reason="claude_returned_empty" if line else "claude_returned_blank",
             )
             await bot_logs.post(
                 self.bot, self.bot.db, guild.id,
                 f"💬 discourse fell back to a quip in <#{channel.id}>: "
                 f"category=`{category}`, sources={len(sources)}, "
-                f"recent_topics={len(recent)}, reason=`empty_claude_response`.",
+                f"recent_topics={len(recent_topics)}, reason=`empty_claude_response`.",
                 level="full", verbosity=self.bot.config.bot_logs_verbosity,
             )
             return voice.pick(voice.DISCOURSE_FALLBACK)
@@ -300,7 +310,7 @@ class Discourse(commands.Cog):
 
         try:
             line = await self._compose(
-                guild, channel, category="scheduled", must_post=False,
+                guild, channel, must_post=False,
             )
         except Exception:
             log.exception("scheduled post compose failed for channel %s", channel_id)
@@ -321,7 +331,7 @@ class Discourse(commands.Cog):
 
         try:
             await channel.send(line)
-            await self.bot.db.add_discourse(guild.id, "scheduled", line[:200])
+            await self.bot.db.add_discourse(guild.id, "open", line[:200])
         except discord.DiscordException:
             log.exception("scheduled post send failed")
 
