@@ -211,6 +211,40 @@ CREATE TABLE IF NOT EXISTS chimein_history (
 CREATE INDEX IF NOT EXISTS chimein_history_channel_ts_idx
     ON chimein_history (guild_id, channel_id, posted_at DESC);
 CREATE INDEX IF NOT EXISTS command_metrics_guild_cmd_idx ON command_metrics (guild_id, command);
+
+-- Multi-channel discourse support.
+CREATE TABLE IF NOT EXISTS discourse_channels (
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    PRIMARY KEY (guild_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS discourse_channel_slots (
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    posts_today INTEGER NOT NULL DEFAULT 0,
+    last_post_at TIMESTAMPTZ,
+    posts_day DATE,
+    PRIMARY KEY (guild_id, channel_id)
+);
+
+-- Migrate legacy discourse_channel setting (single channel) to discourse_channels.
+-- NOT EXISTS guard: once a guild has ANY row in discourse_channels (from this
+-- migration or from /menu), we never re-seed it, so removing a channel via /menu
+-- won't get undone on the next boot.
+DO $$
+BEGIN
+    INSERT INTO discourse_channels (guild_id, channel_id)
+    SELECT s.guild_id, (s.value #>> '{}')::BIGINT
+    FROM settings s
+    WHERE s.key = 'discourse_channel'
+      AND s.value IS NOT NULL
+      AND jsonb_typeof(s.value) = 'number'
+      AND NOT EXISTS (
+          SELECT 1 FROM discourse_channels dc WHERE dc.guild_id = s.guild_id
+      )
+    ON CONFLICT (guild_id, channel_id) DO NOTHING;
+END $$;
 """
 
 
@@ -642,12 +676,53 @@ class DB:
             "DELETE FROM command_metrics WHERE started_at < NOW() - INTERVAL '30 days'"
         )
 
+    # ---- discourse channels -------------------------------------------------------
+
+    async def get_discourse_channels(self, guild_id: int) -> list[int]:
+        rows = await self._fetch(
+            "SELECT channel_id FROM discourse_channels WHERE guild_id = $1", guild_id
+        )
+        return [r["channel_id"] for r in rows]
+
+    async def set_discourse_channels(self, guild_id: int, channel_ids: list[int]) -> None:
+        async with self._pool().acquire() as conn, conn.transaction():
+            await conn.execute("DELETE FROM discourse_channels WHERE guild_id = $1", guild_id)
+            if channel_ids:
+                await conn.executemany(
+                    "INSERT INTO discourse_channels (guild_id, channel_id) VALUES ($1, $2)",
+                    [(guild_id, cid) for cid in channel_ids],
+                )
+
+    async def record_channel_slot(self, guild_id: int, channel_id: int, today: date) -> None:
+        await self._execute(
+            """
+            INSERT INTO discourse_channel_slots (guild_id, channel_id, posts_today, posts_day, last_post_at)
+            VALUES ($1, $2, 1, $3, NOW())
+            ON CONFLICT (guild_id, channel_id) DO UPDATE SET
+                posts_today = CASE
+                    WHEN discourse_channel_slots.posts_day = EXCLUDED.posts_day
+                        THEN discourse_channel_slots.posts_today + 1
+                    ELSE 1
+                END,
+                posts_day = EXCLUDED.posts_day,
+                last_post_at = NOW()
+            """,
+            guild_id, channel_id, today,
+        )
+
+    async def get_channel_slot(
+        self, guild_id: int, channel_id: int,
+    ) -> tuple[int, datetime | None, date | None]:
+        row = await self._fetchrow(
+            "SELECT posts_today, last_post_at, posts_day FROM discourse_channel_slots "
+            "WHERE guild_id = $1 AND channel_id = $2",
+            guild_id, channel_id,
+        )
+        if not row:
+            return (0, None, None)
+        return (row["posts_today"], row["last_post_at"], row["posts_day"])
+
     # ---- chime-in ---------------------------------------------------------------
-    # Note: chime-in's listen channel is the configured discourse_channel and its
-    # on/off + cadence both come from the mood schedule (mood=off => silent;
-    # chill/yaps pick different threshold/cap/cooldown in cogs/chimein.py).
-    # No separate enable/disable table; we only need history for cooldown +
-    # daily-cap math.
 
     async def record_chimein(
         self,

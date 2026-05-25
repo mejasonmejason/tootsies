@@ -112,9 +112,9 @@ class ChimeIn(commands.Cog):
         # We track this so we only score when there's *new* signal, not just on
         # the time interval.
         self._new_since_eval: defaultdict[tuple[int, int], int] = defaultdict(int)
-        # guild_id -> discourse_channel_id. Refreshed each tick so /menu edits
-        # take effect within a tick instead of needing a restart.
-        self._listen_channels: dict[int, int] = {}
+        # guild_id -> set of discourse channel IDs. Refreshed each tick so /menu
+        # edits take effect within a tick instead of needing a restart.
+        self._listen_channels: dict[int, set[int]] = {}
         self.tick.start()
 
     async def cog_unload(self) -> None:
@@ -133,9 +133,8 @@ class ChimeIn(commands.Cog):
         # Pure-attachment messages get added too (vision picks them up).
         if not message.content.strip() and not message.attachments and not message.embeds:
             return
-        # Only buffer if this is the guild's configured discourse channel.
-        listen_channel = self._listen_channels.get(message.guild.id)
-        if listen_channel is None or listen_channel != message.channel.id:
+        listen_channels = self._listen_channels.get(message.guild.id)
+        if not listen_channels or message.channel.id not in listen_channels:
             return
         key = (message.guild.id, message.channel.id)
         self._buffers[key].append(message)
@@ -155,16 +154,12 @@ class ChimeIn(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def _refresh_listen_channels(self) -> None:
-        """Pull the current discourse_channel setting for every guild we're in."""
-        fresh: dict[int, int] = {}
+        """Pull discourse channels for every guild we're in."""
+        fresh: dict[int, set[int]] = {}
         for guild in self.bot.guilds:
-            raw = await self.bot.db.get_setting(guild.id, "discourse_channel")
-            if not raw:
-                continue
-            try:
-                fresh[guild.id] = int(raw)
-            except (TypeError, ValueError):
-                continue
+            channels = await self.bot.db.get_discourse_channels(guild.id)
+            if channels:
+                fresh[guild.id] = set(channels)
         self._listen_channels = fresh
 
     async def _maybe_chime_in_all(self) -> None:
@@ -172,8 +167,8 @@ class ChimeIn(commands.Cog):
         await self._refresh_listen_channels()
         for key in list(self._buffers.keys()):
             guild_id, channel_id = key
-            if self._listen_channels.get(guild_id) != channel_id:
-                # discourse_channel changed (or was cleared); drop the stale buffer.
+            guild_channels = self._listen_channels.get(guild_id)
+            if not guild_channels or channel_id not in guild_channels:
                 self._buffers.pop(key, None)
                 self._new_since_eval.pop(key, None)
                 continue
