@@ -9,7 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from claude_client import HAIKU, SONNET, ClaudeClient, _time_context  # noqa: F401
+from claude_client import (  # noqa: F401
+    HAIKU,
+    MAX_TOKENS_DEFLECT,
+    SONNET,
+    ClaudeClient,
+    _time_context,
+)
 
 # ---- _time_context ----------------------------------------------------------------
 
@@ -247,7 +253,7 @@ async def test_deflect_uses_haiku_with_low_max_tokens() -> None:
         await client.deflect("rate limit hit")
     kwargs = fake.call_args.kwargs
     assert kwargs["model"] == HAIKU
-    assert kwargs["max_tokens"] == 80
+    assert kwargs["max_tokens"] == MAX_TOKENS_DEFLECT
     assert kwargs["purpose"] == "deflect"
 
 
