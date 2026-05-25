@@ -789,6 +789,7 @@ class ClaudeClient:
         hook: str,
         image_urls: list[str] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
+        recent_posts: str = "",
     ) -> str:
         """Generate the actual chime-in take given the buffer + scored hook.
 
@@ -837,10 +838,16 @@ class ClaudeClient:
             "(\"@gaza you're cooking with that take\")."
             + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
+        dedup_block = ""
+        if recent_posts:
+            dedup_block = (
+                f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat these topics, "
+                f"find a different angle or stay quiet):\n{recent_posts}"
+            )
         enriched_block = ""
         if enriched_links:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
-        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}"
+        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}{dedup_block}"
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],

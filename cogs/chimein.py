@@ -275,18 +275,22 @@ class ChimeIn(commands.Cog):
             return
 
         image_urls = recent_image_urls(msgs, limit=5)
-        # Pre-fetch enriched social-link content. Chime-in is latency-sensitive
-        # (the tick blocks the next eval), so we cap concurrency at 5 and the
-        # per-URL timeout in link_enrich is 2s, bounding the worst case.
         chime_hot_urls = hot_urls(msgs, limit=5)
         enriched_map = await enrich_batch(
             [u for u, _, _, _ in chime_hot_urls], concurrency=5,
         )
         enriched = [v for v in enriched_map.values() if v is not None]
+
+        recent_all = await self.bot.db.recent_discourse_all(guild_id, limit=10)
+        recent_posts = "\n".join(
+            f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
+            for cat, topic, ts in recent_all
+        )
+
         try:
             line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
-                enriched_links=enriched,
+                enriched_links=enriched, recent_posts=recent_posts,
             )
         except Exception as exc:
             emit_error(
