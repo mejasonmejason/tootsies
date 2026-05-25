@@ -246,6 +246,87 @@ async def test_discourse_with_category_passes_it() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discourse_strips_hallucinated_urls() -> None:
+    """Any URL in the output that isn't in feed/Perplexity/web_search sources gets stripped."""
+    from claude_client import ClaudeResult
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="hot take.\nhttps://hallucinated.example/x",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.discourse(
+            "sports", "sources blob",
+            hot_urls=[("https://real.example/a", 5, "alice", "twitter")],
+        )
+    assert "hallucinated" not in out
+    assert out == "hot take."
+
+
+@pytest.mark.asyncio
+async def test_discourse_keeps_url_from_allowlist() -> None:
+    from claude_client import ClaudeResult
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="hot take.\nhttps://real.example/a",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.discourse(
+            "sports", "sources blob",
+            hot_urls=[("https://real.example/a", 5, "alice", "twitter")],
+        )
+    assert "https://real.example/a" in out
+
+
+@pytest.mark.asyncio
+async def test_discourse_perplexity_citation_urls_allowed() -> None:
+    """URLs surfaced in the Perplexity SOURCES block are part of the allowlist."""
+    from claude_client import ClaudeResult
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="take.\nhttps://news.example/article",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    pplx_context = (
+        "REAL-TIME SEARCH CONTEXT ...:\nsome content\n\n"
+        "SOURCES:\n  [1] https://news.example/article\n  [2] https://other.example/b"
+    )
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.discourse(
+            "pop", "sources blob",
+            perplexity_context=pplx_context,
+        )
+    assert "https://news.example/article" in out
+
+
+@pytest.mark.asyncio
+async def test_discourse_web_search_urls_allowed() -> None:
+    """URLs returned by web_search (server-side tool) are part of the allowlist."""
+    from claude_client import ClaudeResult
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="take.\nhttps://espn.example/score",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=["https://espn.example/score"],
+    )
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.discourse("nba", "sources blob")
+    assert "https://espn.example/score" in out
+
+
+@pytest.mark.asyncio
 async def test_deflect_uses_haiku_with_low_max_tokens() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="quip"))

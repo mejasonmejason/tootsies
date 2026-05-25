@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -24,6 +25,7 @@ from persona import system_prompt
 from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.perplexity import format_perplexity_for_prompt
+from utils.url_guardrail import enforce_allowlist as enforce_url_allowlist
 
 log = logging.getLogger(__name__)
 
@@ -214,9 +216,11 @@ _TOOL_DISCIPLINE = (
 # doesn't get cut mid-word.
 MAX_TOKENS_REPLY = 100
 
-# Output-to-room posts: same tweet-length target as replies. 200 chars is
-# ~50 tokens; 70 gives buffer so a clean sentence doesn't get cut mid-word.
-MAX_TOKENS_POST = 70
+# Output-to-room posts: same tweet-length target as replies for the body
+# (200 chars / ~50 tokens), plus headroom for a trailing source URL (~30-60
+# chars but URL slugs tokenize denser, ~15-25 tokens). 100 leaves clean room
+# for take + URL without truncating mid-word.
+MAX_TOKENS_POST = 100
 
 # One-liner deflections: ~200 char ceiling. Below the reply cap because
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
@@ -229,6 +233,11 @@ class ClaudeResult:
     stop_reason: str | None
     input_tokens: int
     output_tokens: int
+    # URLs returned by the server-side web_search tool, collected from
+    # web_search_tool_result blocks. Empty list when no web_search ran or
+    # returned no results. Used by the discourse URL guardrail to allowlist
+    # what Toots may link.
+    web_search_urls: list[str] = field(default_factory=list)
 
 
 class ClaudeClient:
@@ -344,6 +353,7 @@ class ClaudeClient:
         # bug. If it WAS called and returned nothing useful, that's a different
         # bug. The structured event gives us the answer without re-running.
         tool_calls: list[dict[str, Any]] = []
+        web_search_urls: list[str] = []
         for block in resp.content:
             btype = getattr(block, "type", None)
             if btype == "text":
@@ -357,6 +367,19 @@ class ClaudeClient:
                     "name": getattr(block, "name", "unknown"),
                     "query": str(tool_input.get("query", ""))[:120] if isinstance(tool_input, dict) else "",
                 })
+            elif btype == "web_search_tool_result":
+                # Server-side web_search returns a list of {url, title, ...}
+                # entries in `content`. On error, content is a single error
+                # object (not a list), which we skip. URLs feed the discourse
+                # link guardrail's allowlist.
+                result_content = getattr(block, "content", None)
+                if isinstance(result_content, list):
+                    for item in result_content:
+                        item_url = getattr(item, "url", None)
+                        if item_url is None and isinstance(item, dict):
+                            item_url = item.get("url")
+                        if isinstance(item_url, str) and item_url:
+                            web_search_urls.append(item_url)
         text = "".join(text_parts).strip()
 
         # Truncated output preview for the log-monitor / dashboards. The full
@@ -391,6 +414,7 @@ class ClaudeClient:
             stop_reason=resp.stop_reason,
             input_tokens=resp.usage.input_tokens,
             output_tokens=resp.usage.output_tokens,
+            web_search_urls=web_search_urls,
         )
 
     async def ask(
@@ -666,8 +690,34 @@ class ClaudeClient:
             perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
 
         system_extra = (
-            "TASK: Post one conversation-starter in your voice. Hot take "
-            "welcome. Optional 1 link if it's the source.\n"
+            "TASK: Post one conversation-starter in your voice with a "
+            "SOURCE LINK. Hot take welcome.\n"
+            "\n"
+            "LINK THE SOURCE. End the post with one real URL: the tweet, "
+            "post, article, clip, or news item your take is reacting to. "
+            "Pull the URL from one of: the LINKS IN THE FEEDS block below, "
+            "the Perplexity SOURCES block, or a result from your web_search "
+            "call. NEVER invent a URL or guess at one.\n"
+            "\n"
+            "Any of those three (feed links, Perplexity SOURCES, "
+            "web_search results) is equally fine: if a real link is "
+            "already sitting in the prompt, just use it. web_search still "
+            "runs as part of your normal grounding pass (see ALWAYS "
+            "web_search below), so use whatever URL it surfaces too. If "
+            "the topic is the right call but no URL is in front of you, "
+            "DON'T switch topics: keep searching until you find one.\n"
+            "\n"
+            "No-link is acceptable in two cases: (a) the take is a general "
+            "observation with no specific source to point at, or (b) "
+            "you've genuinely searched and the source isn't findable. "
+            "Linkless post is ALWAYS better than skipping the slot. Only "
+            "return EMPTY when the topic itself is stale per the dedup "
+            "rule below, never because the URL is missing.\n"
+            "\n"
+            "BUDGET: the trailing URL is on TOP of your take's character "
+            "target. Keep the take itself in the usual 80-200 window, "
+            "then drop the URL on its own line. Don't compress the take "
+            "to make room for the URL.\n"
             "\n"
             "ONE topic per post. Pick the single most talk-worthy thing "
             "and commit to it. Don't stack two unrelated topics in one "
@@ -748,7 +798,26 @@ class ClaudeClient:
             purpose="discourse_manual" if must_post else "discourse_scheduled",
             image_urls=image_urls,
         )
-        return result.text
+
+        # URL guardrail: every URL in the output must come from a real source
+        # we passed in or that web_search returned. Anything else is a
+        # hallucination and gets stripped before the post goes to Discord.
+        allowlist: list[str] = []
+        if hot_urls:
+            allowlist.extend(u for u, _, _, _ in hot_urls)
+        if perplexity_context:
+            allowlist.extend(re.findall(r"https?://\S+", perplexity_context))
+        allowlist.extend(result.web_search_urls)
+        cleaned, rejected = enforce_url_allowlist(result.text, allowlist)
+        if rejected:
+            emit(
+                "link_rejected",
+                purpose="discourse_manual" if must_post else "discourse_scheduled",
+                rejected_count=len(rejected),
+                rejected_urls=rejected[:5],
+                allowlist_size=len(allowlist),
+            )
+        return cleaned
 
     async def chimein_score(
         self, buffer_blob: str, recent_self_posts: str = "",

@@ -110,6 +110,27 @@ class PerplexityClient:
             if not text:
                 ok = False
 
+            # Sonar returns citations either as a top-level `citations` list of URL
+            # strings (older shape) or a `search_results` list of {title,url,date}
+            # objects (newer shape). Append them as a SOURCES block so prompts can
+            # actually link the underlying article/post instead of paraphrasing.
+            citation_urls: list[str] = []
+            raw_citations = data.get("citations")
+            if isinstance(raw_citations, list):
+                citation_urls = [c for c in raw_citations if isinstance(c, str) and c]
+            if not citation_urls:
+                raw_results = data.get("search_results")
+                if isinstance(raw_results, list):
+                    citation_urls = [
+                        sr["url"] for sr in raw_results
+                        if isinstance(sr, dict) and isinstance(sr.get("url"), str)
+                    ]
+            if citation_urls and text:
+                sources_lines = "\n".join(
+                    f"  [{i + 1}] {url}" for i, url in enumerate(citation_urls[:10])
+                )
+                text = f"{text}\n\nSOURCES:\n{sources_lines}"
+
             emit(
                 "perplexity_search",
                 purpose=purpose,
@@ -254,6 +275,7 @@ def format_perplexity_for_prompt(result: str) -> str:
     return (
         "REAL-TIME SEARCH CONTEXT (from Perplexity, current trending discourse "
         "and social media; use to ground your take in what people are actually "
-        "saying right now, but do NOT quote this block or mention Perplexity):\n"
+        "saying right now. Don't mention Perplexity by name, but URLs in the "
+        "SOURCES block are real and linkable):\n"
         f"{result}"
     )
