@@ -13,9 +13,10 @@ Each configured discourse channel gets its own independent slot tracking.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import discord
@@ -35,6 +36,7 @@ from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
 from utils.permissions import can_send_in
+from utils.perplexity import build_search_query
 from utils.rate_limits import check_server_limit, consume_server
 
 if TYPE_CHECKING:
@@ -197,10 +199,35 @@ class Discourse(commands.Cog):
 
         image_urls = recent_image_urls(all_feed_msgs, limit=8)
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
-        enriched_map = await enrich_batch([u for u, _, _, _ in feed_hot_urls])
-        enriched = [v for v in enriched_map.values() if v is not None]
 
-        recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
+        # Run link enrichment, Perplexity search, and DB history fetch in parallel.
+        # return_exceptions=True so a Perplexity outage can't cancel the others.
+        coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
+        pplx_idx = -1
+        pplx = self.bot.perplexity
+        if pplx:
+            pplx_idx = len(coros)
+            coros.append(pplx.search(
+                build_search_query(
+                    "", surface="discourse",
+                    category=category, channel_name=channel.name,
+                ),
+                purpose="discourse",
+            ))
+        db_idx = len(coros)
+        coros.append(self.bot.db.recent_discourse_all(guild.id, limit=20))
+
+        raw = await asyncio.gather(*coros, return_exceptions=True)
+        enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
+        pplx_result: str | None = (
+            raw[pplx_idx]  # type: ignore[assignment]
+            if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
+        recent_all: list[Any] = (
+            raw[db_idx] if not isinstance(raw[db_idx], BaseException) else []  # type: ignore[assignment]
+        )
+
+        enriched = [v for v in enriched_map.values() if v is not None]
         recent_count = len(recent_all)
         recent_blob = "\n".join(
             f"- [{ts.isoformat(timespec='minutes')}] ({cat}) {topic}"
@@ -213,6 +240,7 @@ class Discourse(commands.Cog):
             channel_name=channel.name, must_post=must_post,
             image_urls=image_urls, hot_urls=feed_hot_urls,
             enriched_links=enriched,
+            perplexity_context=pplx_result,
         )
 
         if not line or line.strip().upper() == "EMPTY":

@@ -31,10 +31,11 @@ Failures in any step go to events + skip cleanly (no crash, no spam).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import discord
@@ -45,6 +46,7 @@ from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
 from utils.link_enrich import enrich_batch
 from utils.permissions import can_send_in
+from utils.perplexity import build_search_query
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -285,15 +287,33 @@ class ChimeIn(commands.Cog):
 
         image_urls = recent_image_urls(msgs, limit=5)
         chime_hot_urls = hot_urls(msgs, limit=5)
-        enriched_map = await enrich_batch(
+
+        # Run link enrichment and Perplexity search in parallel.
+        # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
+        coros: list[Any] = [enrich_batch(
             [u for u, _, _, _ in chime_hot_urls], concurrency=5,
+        )]
+        pplx_idx = -1
+        pplx = self.bot.perplexity
+        if pplx:
+            pplx_idx = len(coros)
+            coros.append(pplx.search(
+                build_search_query(hook, surface="chimein"), purpose="chimein",
+            ))
+        raw = await asyncio.gather(*coros, return_exceptions=True)
+        enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
+        pplx_result: str | None = (
+            raw[pplx_idx]  # type: ignore[assignment]
+            if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
         )
+
         enriched = [v for v in enriched_map.values() if v is not None]
 
         try:
             line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
                 enriched_links=enriched, recent_posts=recent_posts,
+                perplexity_context=pplx_result,
             )
         except Exception as exc:
             emit_error(

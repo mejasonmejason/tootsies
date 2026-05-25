@@ -23,6 +23,7 @@ from anthropic import AsyncAnthropic
 from persona import system_prompt
 from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
+from utils.perplexity import format_perplexity_for_prompt
 
 log = logging.getLogger(__name__)
 
@@ -399,6 +400,7 @@ class ClaudeClient:
         use_web: bool = False,
         image_urls: list[str] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
+        perplexity_context: str | None = None,
     ) -> str:
         """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
 
@@ -422,6 +424,8 @@ class ClaudeClient:
             )
         if enriched_links:
             extra_context += "\n\n" + format_enriched_for_prompt(enriched_links)
+        if perplexity_context:
+            extra_context += "\n\n" + format_perplexity_for_prompt(perplexity_context)
 
         system_extra = (
             "TASK: Answer the user's question in your voice.\n"
@@ -501,6 +505,7 @@ class ClaudeClient:
         image_urls: list[str] | None = None,
         hot_urls: list[tuple[str, int, str, str]] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
+        perplexity_context: str | None = None,
     ) -> str:
         """Summarize a channel's recent activity with spice.
 
@@ -533,6 +538,10 @@ class ClaudeClient:
         enriched_block = ""
         if enriched_links:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
+
+        perplexity_block = ""
+        if perplexity_context:
+            perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
 
         system_extra = (
             "TASK: Recap the recent vibe in this channel. Weight reactions.\n"
@@ -580,7 +589,7 @@ class ClaudeClient:
         )
         user = (
             f"Channel: #{channel_name}\n\nMessages (most recent last):\n"
-            f"{messages_blob}{hot_urls_block}{enriched_block}"
+            f"{messages_blob}{hot_urls_block}{enriched_block}{perplexity_block}"
         )
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra,
@@ -602,6 +611,7 @@ class ClaudeClient:
         image_urls: list[str] | None = None,
         hot_urls: list[tuple[str, int, str, str]] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
+        perplexity_context: str | None = None,
     ) -> str:
         """Generate a discourse-starter post pulling from feeds + web.
 
@@ -650,6 +660,10 @@ class ClaudeClient:
         enriched_block = ""
         if enriched_links:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
+
+        perplexity_block = ""
+        if perplexity_context:
+            perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
 
         system_extra = (
             "TASK: Post one conversation-starter in your voice. Hot take "
@@ -704,7 +718,7 @@ class ClaudeClient:
             "'just dropped'. A finale that aired 5 days ago is not "
             "'tonight'. Wrong times go out public and kill credibility. "
             "When in doubt, include the actual date."
-            f"{hot_urls_block}{enriched_block}{dedup_clause}"
+            f"{hot_urls_block}{enriched_block}{perplexity_block}{dedup_clause}"
             + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
@@ -793,6 +807,7 @@ class ClaudeClient:
         image_urls: list[str] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
         recent_posts: str = "",
+        perplexity_context: str | None = None,
     ) -> str:
         """Generate the actual chime-in take given the buffer + scored hook.
 
@@ -850,7 +865,10 @@ class ClaudeClient:
         enriched_block = ""
         if enriched_links:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
-        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}{dedup_block}"
+        perplexity_block = ""
+        if perplexity_context:
+            perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
+        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}{perplexity_block}{dedup_block}"
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],

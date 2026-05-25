@@ -6,9 +6,10 @@ swapping interfaces.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 from discord import app_commands
@@ -20,6 +21,7 @@ from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
+from utils.perplexity import build_search_query
 from utils.rate_limits import check_user_limit, consume_user
 
 # Match raw http(s) URLs in the user's question or pulled channel context.
@@ -117,13 +119,36 @@ class Ask(commands.Cog):
         # up" narration risk). Cap to 10 URLs total per ask to bound latency.
         text_for_urls = f"{question}\n{context}"
         raw_urls = _URL_IN_TEXT_RE.findall(text_for_urls)[:10]
-        enriched_map = await enrich_batch(raw_urls) if raw_urls else {}
+
+        # Run link enrichment and Perplexity search in parallel.
+        # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
+        coros: list[Any] = []
+        enrich_idx = pplx_idx = -1
+        if raw_urls:
+            enrich_idx = len(coros)
+            coros.append(enrich_batch(raw_urls))
+        pplx = self.bot.perplexity
+        if pplx:
+            pplx_idx = len(coros)
+            coros.append(pplx.search(build_search_query(question, surface="ask"), purpose="ask"))
+
+        raw = await asyncio.gather(*coros, return_exceptions=True) if coros else []
+        enriched_map: dict[str, Any] = (
+            raw[enrich_idx]  # type: ignore[assignment]
+            if enrich_idx >= 0 and not isinstance(raw[enrich_idx], BaseException) else {}
+        )
+        pplx_result: str | None = (
+            raw[pplx_idx]  # type: ignore[assignment]
+            if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
+
         enriched = [e for e in enriched_map.values() if e is not None]
 
         return await self.bot.claude.ask(
             question, channel_context=context, use_web=True,
             image_urls=image_urls,
             enriched_links=enriched if enriched else None,
+            perplexity_context=pplx_result,
         )
 
     @commands.Cog.listener()
