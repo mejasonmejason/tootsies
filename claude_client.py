@@ -598,6 +598,7 @@ class ClaudeClient:
         sources_blob: str,
         recent_with_timestamps: str = "",
         *,
+        channel_name: str = "",
         must_post: bool = True,
         image_urls: list[str] | None = None,
         hot_urls: list[tuple[str, int, str, str]] | None = None,
@@ -655,6 +656,17 @@ class ClaudeClient:
             "TASK: Post one conversation-starter in your voice. Hot take "
             "welcome. Optional 1 link if it's the source.\n"
             "\n"
+            "ONE topic per post. Pick the single most talk-worthy thing "
+            "and commit to it. Don't stack two unrelated topics in one "
+            "message.\n"
+            "\n"
+            "STAY ON-TOPIC FOR THIS CHANNEL. The channel name tells you "
+            "what belongs here. A screening-room wants cinema and TV. A "
+            "sports-bar wants sports. A music-lounge wants music. Don't "
+            "post music takes in a cinema channel or sports in a music "
+            "channel. If nothing on-topic is fresh, return EMPTY rather "
+            "than going off-topic.\n"
+            "\n"
             "ALWAYS web_search. Whether the channel is active or quiet, "
             "search for the latest on whatever you're about to post about. "
             "Your training data is months stale, scores change by the "
@@ -671,11 +683,6 @@ class ClaudeClient:
             "what's breaking RIGHT NOW that fits this channel's vibe. "
             "Search for today's news, scores, drops, drama, whatever the "
             "room would care about. Bring the outside world in.\n"
-            "\n"
-            "The channel name and recent conversation tell you what this room "
-            "is about. Stay on-topic for this channel. A sports channel wants "
-            "sports; a movie channel wants cinema. If no category is specified, "
-            "read the room and match the energy.\n"
             "\n"
             "READ THE SOURCE MATERIAL. Feed channels are populated by "
             "webhooks/bots that auto-embed tweets, posts, and articles. The "
@@ -694,19 +701,18 @@ class ClaudeClient:
             "can tell later if it's the same beat or a new one (e.g. 'lakers "
             "vs nuggets r2, series tied 1-1', not just 'lakers').\n"
             "\n"
-            "TIME CLAIMS: if your post references when something happens "
-            "(tip-off time, release date, event schedule, 'tonight', "
-            "'this weekend'), web_search the actual time and state it. "
-            "Never hedge with 'looks like' or 'about to'. Wrong times go "
-            "out public."
+            "TIME CLAIMS: if your post says 'just dropped', 'tonight', "
+            "'this weekend', or any time reference, web_search to verify "
+            "it actually happened TODAY. Something from last week is not "
+            "'just dropped'. A finale that aired 5 days ago is not "
+            "'tonight'. Wrong times go out public and kill credibility. "
+            "When in doubt, include the actual date."
             f"{hot_urls_block}{enriched_block}{dedup_clause}"
             + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
-        user = (
-            f"Category: {category}\n\nAvailable sources:\n{sources_blob}"
-            if category
-            else f"Read the room.\n\nAvailable sources:\n{sources_blob}"
-        )
+        channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
+        category_line = f"Category: {category}\n" if category else ""
+        user = f"{channel_line}{category_line}Read the room.\n\nAvailable sources:\n{sources_blob}"
         result = await self._call(
             model=SONNET,
             user_message=user,
