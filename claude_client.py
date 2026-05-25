@@ -214,10 +214,9 @@ _TOOL_DISCIPLINE = (
 # doesn't get cut mid-word.
 MAX_TOKENS_REPLY = 130
 
-# Output-to-room posts: longer cap because these post into a public channel
-# and benefit from a sentence of context-setting before the take. ~800 char
-# ceiling.
-MAX_TOKENS_POST = 200
+# Output-to-room posts: same tweet-length target as replies. 280 chars is
+# ~70 tokens; 100 gives buffer so a clean sentence doesn't get cut mid-word.
+MAX_TOKENS_POST = 100
 
 # One-liner deflections: ~320 char ceiling. Below the reply cap because
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
