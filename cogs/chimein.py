@@ -35,7 +35,7 @@ import asyncio
 import logging
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import discord
@@ -289,22 +289,23 @@ class ChimeIn(commands.Cog):
         chime_hot_urls = hot_urls(msgs, limit=5)
 
         # Run link enrichment and Perplexity search in parallel.
-        enrich_coro = enrich_batch(
+        # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
+        coros: list[Any] = [enrich_batch(
             [u for u, _, _, _ in chime_hot_urls], concurrency=5,
-        )
+        )]
+        pplx_idx = -1
         pplx = self.bot.perplexity
-        pplx_coro = (
-            pplx.search(
+        if pplx:
+            pplx_idx = len(coros)
+            coros.append(pplx.search(
                 build_search_query(hook, surface="chimein"), purpose="chimein",
-            )
-            if pplx
-            else None
+            ))
+        raw = await asyncio.gather(*coros, return_exceptions=True)
+        enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
+        pplx_result: str | None = (
+            raw[pplx_idx]  # type: ignore[assignment]
+            if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
         )
-        if pplx_coro:
-            enriched_map, pplx_result = await asyncio.gather(enrich_coro, pplx_coro)
-        else:
-            enriched_map = await enrich_coro
-            pplx_result = None
 
         enriched = [v for v in enriched_map.values() if v is not None]
 

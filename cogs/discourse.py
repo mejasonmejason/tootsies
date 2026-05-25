@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import discord
@@ -201,28 +201,31 @@ class Discourse(commands.Cog):
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
         # Run link enrichment, Perplexity search, and DB history fetch in parallel.
-        enrich_coro = enrich_batch([u for u, _, _, _ in feed_hot_urls])
+        # return_exceptions=True so a Perplexity outage can't cancel the others.
+        coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
+        pplx_idx = -1
         pplx = self.bot.perplexity
-        pplx_coro = (
-            pplx.search(
+        if pplx:
+            pplx_idx = len(coros)
+            coros.append(pplx.search(
                 build_search_query(
                     "", surface="discourse",
                     category=category, channel_name=channel.name,
                 ),
                 purpose="discourse",
-            )
-            if pplx
-            else None
-        )
-        db_coro = self.bot.db.recent_discourse_all(guild.id, limit=20)
+            ))
+        db_idx = len(coros)
+        coros.append(self.bot.db.recent_discourse_all(guild.id, limit=20))
 
-        if pplx_coro:
-            enriched_map, pplx_result, recent_all = await asyncio.gather(
-                enrich_coro, pplx_coro, db_coro,
-            )
-        else:
-            enriched_map, recent_all = await asyncio.gather(enrich_coro, db_coro)
-            pplx_result = None
+        raw = await asyncio.gather(*coros, return_exceptions=True)
+        enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
+        pplx_result: str | None = (
+            raw[pplx_idx]  # type: ignore[assignment]
+            if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
+        recent_all: list[Any] = (
+            raw[db_idx] if not isinstance(raw[db_idx], BaseException) else []  # type: ignore[assignment]
+        )
 
         enriched = [v for v in enriched_map.values() if v is not None]
         recent_count = len(recent_all)

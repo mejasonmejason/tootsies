@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, time, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 from discord import app_commands
@@ -121,24 +121,22 @@ class Recap(commands.Cog):
                 # comments directly instead of bouncing off login walls via
                 # web_search. Failures fall through silently per URL.
                 # Run link enrichment and Perplexity search in parallel.
-                enrich_coro = enrich_batch([u for u, _, _, _ in url_list])
+                # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
+                coros: list[Any] = [enrich_batch([u for u, _, _, _ in url_list])]
                 pplx = self.bot.perplexity
-                summary_hint = blob[:300]
-                pplx_coro = (
-                    pplx.search(
-                        build_search_query(summary_hint, surface="recap"),
+                pplx_idx = -1
+                if pplx:
+                    pplx_idx = len(coros)
+                    coros.append(pplx.search(
+                        build_search_query(blob[:300], surface="recap"),
                         purpose="recap",
-                    )
-                    if pplx
-                    else None
+                    ))
+                raw = await asyncio.gather(*coros, return_exceptions=True)
+                enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
+                pplx_result: str | None = (
+                    raw[pplx_idx]  # type: ignore[assignment]
+                    if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
                 )
-                if pplx_coro:
-                    enriched_map, pplx_result = await asyncio.gather(
-                        enrich_coro, pplx_coro,
-                    )
-                else:
-                    enriched_map = await enrich_coro
-                    pplx_result = None
 
                 enriched = [v for v in enriched_map.values() if v is not None]
                 line = await self.bot.claude.recap(

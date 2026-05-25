@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 from discord import app_commands
@@ -121,25 +121,26 @@ class Ask(commands.Cog):
         raw_urls = _URL_IN_TEXT_RE.findall(text_for_urls)[:10]
 
         # Run link enrichment and Perplexity search in parallel.
-        enrich_coro = enrich_batch(raw_urls) if raw_urls else None
+        # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
+        coros: list[Any] = []
+        enrich_idx = pplx_idx = -1
+        if raw_urls:
+            enrich_idx = len(coros)
+            coros.append(enrich_batch(raw_urls))
         pplx = self.bot.perplexity
-        pplx_coro = (
-            pplx.search(build_search_query(question, surface="ask"), purpose="ask")
-            if pplx
-            else None
-        )
+        if pplx:
+            pplx_idx = len(coros)
+            coros.append(pplx.search(build_search_query(question, surface="ask"), purpose="ask"))
 
-        if enrich_coro and pplx_coro:
-            enriched_map, pplx_result = await asyncio.gather(enrich_coro, pplx_coro)
-        elif enrich_coro:
-            enriched_map = await enrich_coro
-            pplx_result = None
-        elif pplx_coro:
-            enriched_map = {}
-            pplx_result = await pplx_coro
-        else:
-            enriched_map = {}
-            pplx_result = None
+        raw = await asyncio.gather(*coros, return_exceptions=True) if coros else []
+        enriched_map: dict[str, Any] = (
+            raw[enrich_idx]  # type: ignore[assignment]
+            if enrich_idx >= 0 and not isinstance(raw[enrich_idx], BaseException) else {}
+        )
+        pplx_result: str | None = (
+            raw[pplx_idx]  # type: ignore[assignment]
+            if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
 
         enriched = [e for e in enriched_map.values() if e is not None]
 
