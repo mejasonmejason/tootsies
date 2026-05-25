@@ -42,8 +42,8 @@ TERMINAL_STATUSES = {OrderStatus.SERVED, OrderStatus.BURNT, OrderStatus.SENT_BAC
 
 
 class MoodMode(StrEnum):
-    CHILL = "chill"   # 2 posts/day
-    YAPS = "yaps"     # 4 posts/day
+    CHILL = "chill"   # 120min quiet threshold, 3 posts/day cap
+    YAPS = "yaps"     # 60min quiet threshold, 5 posts/day cap
     OFF = "off"
 
 

@@ -1,4 +1,4 @@
-"""/discourse, the manual discussion-starter command, plus the scheduled poster.
+"""/discourse, the manual discussion-starter command, plus the quiet-detection poster.
 
   /discourse category:<pop|sports|cinema|hiphop|nba|custom>
       Manual post. Toots drops a discourse starter into the channel where
@@ -6,15 +6,18 @@
       channel's last hour + web. Counts against the per-server daily limit.
 
 Schedule control (chill / yaps / off) lives in /menu, not here. The scheduler
-tick runs every minute, checks each configured guild's mood, and posts (or
-skips cleanly) according to the configured cadence in US Eastern time (Miami).
-Each configured discourse channel gets its own independent slot tracking.
+tick runs every minute and has two triggers:
+  1. Lunchtime post (noon ET): one guaranteed daily conversation starter.
+  2. Quiet-detection: when the conversation has gone stale (last human
+     message >15min ago AND fewer than 3 humans in the threshold window),
+     Toots drops a new topic. Threshold is mood-tuned (60min yaps / 120min
+     chill). Active hours only (9am-2am ET).
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
@@ -45,13 +48,71 @@ log = logging.getLogger(__name__)
 CATEGORIES = ["pop", "sports", "cinema", "hiphop", "nba"]
 
 ET = ZoneInfo("America/New_York")
-CHILL_TIMES = [time(12, 0), time(19, 0)]
-YAPS_TIMES = [time(10, 0), time(14, 0), time(18, 0), time(22, 0)]
+
+# Lunchtime post: one guaranteed daily conversation starter.
+LUNCH_HOUR = time(12, 0)
+
+# Quiet-detection: post when the conversation has gone stale.
+# "Stale" = last human message >15min ago AND fewer than 3 human messages
+# in the threshold window. This avoids interrupting slow-but-alive threads.
+QUIET_THRESHOLD = {
+    MoodMode.CHILL: timedelta(minutes=120),
+    MoodMode.YAPS: timedelta(minutes=60),
+}
+STALE_FLOOR = timedelta(minutes=15)
+QUIET_MSG_CAP = 3
+
+# Daily caps per mood (lunch + quiet-detection combined).
+DAILY_CAP = {
+    MoodMode.CHILL: 3,
+    MoodMode.YAPS: 5,
+}
+
+# Active hours (ET): 9am through 2am next day. Outside this window, no posts.
+ACTIVE_START = time(9, 0)
+ACTIVE_END = time(2, 0)
+
+# Minimum cooldown between post attempts in the same channel (prevents
+# hammering Claude every minute while a channel stays quiet).
+ATTEMPT_COOLDOWN = timedelta(minutes=45)
+
+
+def _in_active_hours(t: time) -> bool:
+    """True if `t` is between 9am and 2am ET (wraps midnight)."""
+    return t >= ACTIVE_START or t <= ACTIVE_END
+
+
+async def _channel_is_stale(
+    channel: discord.TextChannel, threshold: timedelta,
+) -> bool:
+    """True if the conversation has gone stale.
+
+    Stale means BOTH:
+      1. The most recent human message is older than STALE_FLOOR (15min).
+      2. Fewer than QUIET_MSG_CAP (3) human messages in the threshold window.
+
+    This avoids posting into a slow-but-alive conversation (two people
+    chatting every 20 minutes) while still catching genuinely dead channels.
+    """
+    now = discord.utils.utcnow()
+    cutoff = now - threshold
+    human_count = 0
+    newest_human: datetime | None = None
+    async for msg in channel.history(limit=30, after=cutoff):
+        if msg.author.bot:
+            continue
+        human_count += 1
+        if newest_human is None or msg.created_at > newest_human:
+            newest_human = msg.created_at
+        if human_count >= QUIET_MSG_CAP:
+            return False
+    return newest_human is None or (now - newest_human) >= STALE_FLOOR
 
 
 class Discourse(commands.Cog):
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
+        self._last_attempt: dict[tuple[int, int], datetime] = {}
         self.scheduler_tick.start()
 
     async def cog_unload(self) -> None:
@@ -235,7 +296,7 @@ class Discourse(commands.Cog):
             return ""
         return line
 
-    # ---- scheduler --------------------------------------------------------------
+    # ---- scheduler (quiet-detection) ----------------------------------------------
 
     @tasks.loop(minutes=1)
     async def scheduler_tick(self) -> None:
@@ -254,14 +315,8 @@ class Discourse(commands.Cog):
         state = await self.bot.db.get_schedule(guild_id)
         if state.mood == MoodMode.OFF:
             return
-        schedule = CHILL_TIMES if state.mood == MoodMode.CHILL else YAPS_TIMES
-
-        current = now_et.time().replace(second=0, microsecond=0)
-        due = [t for t in schedule if t <= current]
-        if not due:
+        if not _in_active_hours(now_et.time()):
             return
-        expected = len(due)
-        today_et = now_et.date()
 
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -273,30 +328,30 @@ class Discourse(commands.Cog):
 
         for channel_id in channel_ids:
             await self._maybe_post_to_channel(
-                guild, channel_id, expected, today_et,
+                guild, channel_id, state.mood, now_et,
             )
 
     async def _maybe_post_to_channel(
         self,
         guild: discord.Guild,
         channel_id: int,
-        expected: int,
-        today: date,
+        mood: MoodMode,
+        now_et: datetime,
     ) -> None:
+        today = now_et.date()
         posts_today, last_post_at, posts_day = await self.bot.db.get_channel_slot(
             guild.id, channel_id,
         )
+        if posts_day != today:
+            posts_today = 0
 
-        # Fresh channel (deploy, newly added via /menu): consume all elapsed
-        # slots as skipped. Don't post, just wait for the next natural slot.
-        if last_post_at is None:
-            for _ in range(expected):
-                await self.bot.db.record_channel_slot(guild.id, channel_id, today)
+        if posts_today >= DAILY_CAP[mood]:
             return
 
-        now_et = datetime.now(ET)
-        last_et = last_post_at.astimezone(ET)
-        if last_et.date() == now_et.date() and posts_today >= expected:
+        # In-memory cooldown: don't re-attempt within ATTEMPT_COOLDOWN.
+        key = (guild.id, channel_id)
+        last_attempt = self._last_attempt.get(key)
+        if last_attempt is not None and (now_et - last_attempt) < ATTEMPT_COOLDOWN:
             return
 
         channel = guild.get_channel(channel_id)
@@ -306,23 +361,32 @@ class Discourse(commands.Cog):
         if me is None or not can_send_in(channel, me):
             return
 
+        # Two triggers: lunchtime post OR quiet-detection.
+        lunch = posts_today == 0 and now_et.time() >= LUNCH_HOUR
+        stale = await _channel_is_stale(channel, QUIET_THRESHOLD[mood])
+
+        if not lunch and not stale:
+            return
+
+        self._last_attempt[key] = now_et
+
         try:
             line = await self._compose(
-                guild, channel, must_post=False,
+                guild, channel, must_post=lunch,
             )
         except Exception:
             log.exception("scheduled post compose failed for channel %s", channel_id)
             line = ""
 
-        await self.bot.db.record_channel_slot(guild.id, channel_id, today)
-        await self.bot.db.record_schedule_post(guild.id, today)
-
         if not line or line.strip().upper() == "EMPTY":
             log.info(
-                "scheduled slot skipped for guild %d channel %d, nothing fresh",
+                "quiet-detection skipped for guild %d channel %d, nothing fresh",
                 guild.id, channel_id,
             )
             return
+
+        await self.bot.db.record_channel_slot(guild.id, channel_id, today)
+        await self.bot.db.record_schedule_post(guild.id, today)
 
         try:
             await channel.send(line)
