@@ -67,6 +67,7 @@ class Order:
     created_at: datetime
     updated_at: datetime
     error_log: str | None
+    announced_at: datetime | None
 
 
 @dataclass

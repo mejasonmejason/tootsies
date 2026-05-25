@@ -10,10 +10,10 @@ import random
 
 RATE_LIMIT_HIT = [
     "Off the clock for you tonight. Try me tomorrow.",
-    "You've been talking my ear off. Take five.",
-    "Asked and answered. Go ask someone else.",
-    "Tab's closed. Tomorrow.",
-    "You're cut off. Drink some water.",
+    "You've been talking my ear off all day. Come back tomorrow.",
+    "You're cut off. Drink some water, come back tomorrow.",
+    "Tab's closed for today. Tomorrow.",
+    "Asked and answered. Go ask someone else, or try me tomorrow.",
 ]
 
 PERMISSION_DENIED = [

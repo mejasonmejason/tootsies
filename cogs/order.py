@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class Order(commands.GroupCog, name="order"):
+class Order(commands.GroupCog, name="order"):  # type: ignore[call-arg]
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
         super().__init__()
@@ -98,7 +98,7 @@ class Order(commands.GroupCog, name="order"):
             try:
                 msgs = await recent_messages(
                     ch, me, limit=ORDER_CONTEXT_MSG_LIMIT,
-                    include_bots=True,  # Toots's own posts are often the evidence
+                    include_bots=True,
                 )
                 if msgs:
                     channel_context = format_for_prompt(msgs, include_reactions=True)

@@ -242,7 +242,9 @@ class Discourse(commands.Cog):
                 f"recent_topics={recent_count}, reason=`empty_claude_response`.",
                 level="full", verbosity=self.bot.config.bot_logs_verbosity,
             )
-            return voice.pick(voice.DISCOURSE_FALLBACK)
+            if must_post:
+                return voice.pick(voice.DISCOURSE_FALLBACK)
+            return ""
         return line
 
     # ---- scheduler --------------------------------------------------------------
@@ -315,7 +317,7 @@ class Discourse(commands.Cog):
             )
         except Exception:
             log.exception("scheduled post compose failed for channel %s", channel_id)
-            line = voice.pick(voice.DISCOURSE_FALLBACK)
+            line = ""
 
         # Consume the slot regardless of whether we post, otherwise an EMPTY
         # would keep retrying every minute.

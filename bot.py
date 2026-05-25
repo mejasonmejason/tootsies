@@ -17,6 +17,7 @@ from discord.ext import commands, tasks
 from claude_client import ClaudeClient
 from config import Config
 from db import DB
+from models import ORDER_STATUS_EMOJI, ORDER_STATUS_LABEL
 from utils import bot_logs, voice
 from utils.events import emit, emit_error
 from utils.github import GitHubClient
@@ -77,6 +78,7 @@ class TootsiesBot(commands.Bot):
         if not self._ready_once:
             self._ready_once = True
             self._pruner.start()
+            await self._announce_completed_orders()
         log.info("ready as %s · %d guild(s)", self.user, len(self.guilds))
         emit("deploy_event", kind="boot", guilds=len(self.guilds))
 
@@ -141,6 +143,29 @@ class TootsiesBot(commands.Bot):
 
     def is_healthy(self) -> bool:
         return self.is_ready() and self.db.pool is not None
+
+    async def _announce_completed_orders(self) -> None:
+        """Post to #bot-logs for any orders that reached a terminal state
+        since the last boot. Idempotent: each order is only announced once
+        (tracked via the announced_at column)."""
+        try:
+            orders = await self.db.unannounced_terminal_orders()
+        except Exception:
+            log.exception("failed to fetch unannounced orders")
+            return
+        for order in orders:
+            emoji = ORDER_STATUS_EMOJI[order.status]
+            label = ORDER_STATUS_LABEL[order.status]
+            ref = f"issue #{order.issue_number}" if order.issue_number else f"order {order.id}"
+            msg = f"{emoji} **{label}**: {ref} · {order.summary[:80]}"
+            try:
+                await bot_logs.post(
+                    self, self.db, order.guild_id, msg,
+                    level="milestones", verbosity=self.config.bot_logs_verbosity,
+                )
+                await self.db.mark_announced(order.id)
+            except Exception:
+                log.exception("failed to announce order %d", order.id)
 
     @tasks.loop(hours=24)
     async def _pruner(self) -> None:
