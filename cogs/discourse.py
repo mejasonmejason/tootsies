@@ -291,6 +291,12 @@ class Discourse(commands.Cog):
             now_et = datetime.now(ET)
             if last_et.date() == now_et.date() and posts_today >= expected:
                 return
+        elif expected > 1:
+            # Fresh channel (deploy, new channel added via /menu). Don't catch
+            # up on all missed slots. Consume earlier slots as skipped so we
+            # only post once for the most recent slot.
+            for _ in range(expected - 1):
+                await self.bot.db.record_channel_slot(guild.id, channel_id, today)
 
         channel = guild.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
