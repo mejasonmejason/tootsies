@@ -178,7 +178,7 @@ class Discourse(commands.Cog):
             ch = guild.get_channel(feed_channel_id)
             if isinstance(ch, discord.TextChannel):
                 msgs = await recent_messages(
-                    ch, me, limit=10, within=timedelta(hours=24), include_bots=True,
+                    ch, me, limit=50, within=timedelta(hours=24), include_bots=True,
                 )
                 if msgs:
                     sources.append(
