@@ -147,16 +147,15 @@ _ROOM_DIRECTED = (
 _LENGTH_RULES = (
     "\n\n---\n"
     "LENGTH (shared rules, the bot enforces a token cap on top):\n"
-    "  - TARGET: tweet length. 40-150 chars for replies (ask, deflect), "
-    "150-280 for posts (recap, discourse, chime-in). Most outputs land at "
-    "the SHORTER end of the range. If you find yourself writing a third "
-    "sentence, you're spilling.\n"
-    "  - CEILING: 280 chars total. Past 280 the bot truncates mid-word, "
+    "  - TARGET: tweet length. 40-120 chars for replies (ask, deflect), "
+    "80-200 for posts (recap, discourse, chime-in). Most outputs land at "
+    "the SHORTER end of the range. Two sentences MAX for any output. "
+    "If you wrote a third sentence, delete it.\n"
+    "  - CEILING: 200 chars total. Past 200 the bot truncates mid-word, "
     "so write tight on the first try.\n"
-    "  - If a question genuinely needs more depth (code, multi-step "
-    "explanations), give the 1-line SHAPE and offer to go deeper "
-    "(\"holler if you want it spelled out\", \"ping the engineers' "
-    "channel for the full thing\"). You're a bartender, not stackoverflow.\n"
+    "  - If a question genuinely needs more depth, give the 1-line SHAPE "
+    "and offer to go deeper (\"holler if you want it spelled out\"). "
+    "You're a bartender, not stackoverflow.\n"
     "  - One link MAX if a link is useful, never two."
 )
 
@@ -209,18 +208,18 @@ _TOOL_DISCIPLINE = (
 # /recap was at default 400). New surfaces pick one of these categories;
 # don't pass a bespoke max_tokens.
 
-# Replies and recaps: tweet-length target, ~520 char ceiling (130 tokens).
-# Some buffer above the 280 char prompt target so a clean medium answer
+# Replies and recaps: tweet-length target, ~400 char ceiling (100 tokens).
+# Some buffer above the 200 char prompt target so a clean medium answer
 # doesn't get cut mid-word.
-MAX_TOKENS_REPLY = 130
+MAX_TOKENS_REPLY = 100
 
-# Output-to-room posts: same tweet-length target as replies. 280 chars is
-# ~70 tokens; 100 gives buffer so a clean sentence doesn't get cut mid-word.
-MAX_TOKENS_POST = 100
+# Output-to-room posts: same tweet-length target as replies. 200 chars is
+# ~50 tokens; 70 gives buffer so a clean sentence doesn't get cut mid-word.
+MAX_TOKENS_POST = 70
 
-# One-liner deflections: ~320 char ceiling. Below the reply cap because
+# One-liner deflections: ~200 char ceiling. Below the reply cap because
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
-MAX_TOKENS_DEFLECT = 80
+MAX_TOKENS_DEFLECT = 60
 
 
 @dataclass
@@ -462,12 +461,12 @@ class ClaudeClient:
             "\n"
             "LENGTH ANCHOR (target shape, see _LENGTH_RULES below for cap):\n"
             "  Q: 'is drake done'\n"
-            "  A: 'nah. been done four times this decade, keeps eating.' (52 chars)\n"
+            "  A: 'nah. keeps eating.' (18 chars)\n"
             "  Q: 'best pizza in miami'\n"
-            "  A: 'lucali brickell. cash only, two-hour wait. worth it.' (52 chars)\n"
+            "  A: 'lucali brickell. cash only, worth the wait.' (44 chars)\n"
             "  Q: 'who are you'\n"
             "  A: 'bartender at tootsies. pour you something?' (44 chars)\n"
-            "  Most of your answers should look like these.\n"
+            "  Most of your answers should look like these. Under 100 chars.\n"
             "\n"
             "LONG-ANSWER QUESTIONS (catches: 'write me [code]', 'explain X', 'how "
             "does Y work', 'what is Z', 'tell me about W', 'walk me through V'):\n"
