@@ -4,16 +4,16 @@ same `/ask`, same `@Toots`. she just checks the board before she answers now. sp
 
 ## try it
 
-`/ask what's the spread on the lakers game`
-> real book lines + her read. links the source.
+`/ask what's the spread on the thunder game`
+> real book lines + her read on the NBA finals. links the source.
 
-`@Toots any good NBA parlays tonight`
-> tonight's slate, interesting lines, sharp takes.
+`@Toots yankees red sox over/under tonight`
+> MLB lines, which side she likes, cites the number.
 
 `/ask will drake drop an album by july`
 > polymarket + kalshi odds, what the crowd thinks, her take on top.
 
-`/ask fed cuts rates before december?`
+`/ask bitcoin hit 150k by end of year`
 > both platforms, where the money is, what it means if they disagree.
 
 `/ask 2028 republican primary, who's got the lead`

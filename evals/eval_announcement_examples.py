@@ -53,21 +53,26 @@ class Example:
 
 
 EXAMPLES: list[Example] = [
-    # Sports examples from the announcement
+    # Sports examples from the announcement (May 2026, NBA finals window)
     Example(
-        "what's the spread on the lakers game",
+        "what's the spread on the thunder game",
         "sports", "NBA",
-        "basic spread ask, should route to SGO",
+        "NBA finals window, OKC likely contending",
     ),
     Example(
-        "any good NBA parlays tonight",
+        "any good NBA finals parlays tonight",
         "sports", "NBA",
-        "parlay ask, broad NBA",
+        "parlay ask, NBA finals",
     ),
     Example(
-        "chiefs game over/under, smart side?",
-        "sports", "NFL",
-        "NFL over/under",
+        "yankees red sox over/under tonight",
+        "sports", "MLB",
+        "MLB regular season, late May",
+    ),
+    Example(
+        "who's favored in the stanley cup finals",
+        "sports", "NHL",
+        "NHL playoffs, late May",
     ),
     # Prediction market examples from the announcement
     Example(
@@ -76,9 +81,14 @@ EXAMPLES: list[Example] = [
         "binary PM question, should hit Poly + Kalshi",
     ),
     Example(
-        "fed cuts rates before december?",
+        "fed cuts rates at the june meeting?",
         "prediction_market", None,
-        "Fed rates, should find markets on both platforms",
+        "Fed rates, next FOMC meeting",
+    ),
+    Example(
+        "bitcoin hit 150k by end of year",
+        "prediction_market", None,
+        "crypto price target, active on both platforms",
     ),
     Example(
         "2028 republican primary, who's got the lead right now",
