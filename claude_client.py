@@ -123,6 +123,40 @@ def _parse_chimein_score(text: str) -> tuple[float, str, str]:
     return score_f, vibe, hook
 
 
+def _parse_discourse_score(text: str) -> tuple[float, str]:
+    """Parse Haiku's discourse quality score into (score, reason).
+
+    Returns (0.0, "") on parse failure, guaranteeing we skip on bad output.
+    """
+    import json
+
+    if not text:
+        return 0.0, ""
+
+    cleaned = re.sub(r"^```\w*\s*|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    match = re.search(r"\{[^{}]*\}", cleaned)
+    if not match:
+        return 0.0, ""
+
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return 0.0, ""
+
+    score = data.get("score")
+    reason = data.get("reason", "")
+
+    try:
+        score_f = float(score)
+    except (TypeError, ValueError):
+        return 0.0, ""
+    score_f = max(0.0, min(1.0, score_f))
+
+    if not isinstance(reason, str):
+        reason = ""
+    return score_f, reason
+
+
 def _time_context() -> str:
     """One-line current-time prefix injected into every user message.
 
@@ -946,6 +980,53 @@ class ClaudeClient:
                 count=len(deduped), urls=deduped[:5],
             )
         return cleaned
+
+    async def discourse_score(self, post: str, channel_name: str = "") -> tuple[float, str]:
+        """Score a generated discourse post on engagement potential.
+
+        Cheap Haiku call. Returns (score 0..1, reason):
+          - score: how likely this post is to make someone in the room respond.
+          - reason: one-line explanation of the score.
+
+        Returns (0.0, "") if unparseable, which guarantees skip.
+        """
+        channel_ctx = f" in #{channel_name}" if channel_name else ""
+        system_extra = (
+            "TASK: You are scoring a generated Discord post BEFORE it gets sent to a channel. "
+            "Rate how engaging this post is, how likely it is to make someone respond.\n"
+            "\n"
+            "Score on a 0.0 to 1.0 scale:\n"
+            "  - 0.9+: genuinely provocative take that people will argue about. has a clear "
+            "opinion, names names, picks a side.\n"
+            "  - 0.7-0.8: solid conversation starter, has a point of view, room will likely "
+            "react.\n"
+            "  - 0.5-0.6: fine but forgettable. reports a fact or states something obvious. "
+            "people will read it and scroll past.\n"
+            "  - 0.3-0.4: bland, generic, or reads like a news ticker. no personality.\n"
+            "  - 0.0-0.2: broken, off-topic, or embarrassing.\n"
+            "\n"
+            "WHAT MAKES A POST ENGAGING:\n"
+            "  - Has an actual TAKE, not just 'X happened'\n"
+            "  - Picks a side or makes a claim someone could disagree with\n"
+            "  - References something specific (a name, a stat, a moment)\n"
+            "  - Feels like a bartender dropping a bomb, not a news anchor reading copy\n"
+            "\n"
+            "WHAT MAKES A POST BLAND:\n"
+            "  - Just reporting a fact without opinion ('X signed with Y')\n"
+            "  - Curator voice ('this is worth watching', 'this just dropped')\n"
+            "  - Hedging ('could be interesting', 'we'll see')\n"
+            "  - Generic framing anyone could write ('big game tonight')\n"
+            "\n"
+            "Respond on ONE line, exactly this format:\n"
+            '  {"score": 0.72, "reason": "has a take but could be spicier"}\n'
+            "If the response can't be parsed we treat it as 0-score skip."
+        )
+        user = f"Post to be sent{channel_ctx}:\n{post}"
+        result = await self._call(
+            model=HAIKU, user_message=user, system_extra=system_extra, max_tokens=120,
+            purpose="discourse_score",
+        )
+        return _parse_discourse_score(result.text)
 
     async def chimein_score(
         self, buffer_blob: str, recent_self_posts: str = "",
