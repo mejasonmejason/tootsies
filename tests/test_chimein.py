@@ -32,6 +32,7 @@ from cogs.chimein import (
     MOOD_TUNING,
     SKIP_VIBES,
     ChimeIn,
+    _is_parrot,
 )
 from models import MoodMode, ScheduleState
 
@@ -448,3 +449,39 @@ async def test_stale_buffer_cleaned_on_channel_removal() -> None:
     await cog._maybe_chime_in_all()
     assert (1, 999) not in cog._buffers
     assert (1, 999) not in cog._new_since_eval
+
+
+# ---- parrot gate ---------------------------------------------------------------
+
+
+def test_parrot_exact_copy() -> None:
+    msg = _stub_message("Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series")
+    assert _is_parrot(
+        "Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series", [msg],
+    )
+
+
+def test_parrot_near_copy() -> None:
+    msg = _stub_message("spider-noir drops tomorrow on prime, nic cage is wild")
+    assert _is_parrot("spider-noir drops tomorrow on prime. nic cage is wild.", [msg])
+
+
+def test_parrot_allows_original_take() -> None:
+    msg = _stub_message("Spider-Noir drops tomorrow on Prime.")
+    assert not _is_parrot(
+        "nic cage career arc is the best anime redemption since vegeta", [msg],
+    )
+
+
+def test_parrot_ignores_urls_and_mentions() -> None:
+    msg = _stub_message("check this out https://fxtwitter.com/foo <@123456>")
+    assert not _is_parrot("completely different take about something else", [msg])
+
+
+def test_parrot_empty_line() -> None:
+    msg = _stub_message("some content")
+    assert not _is_parrot("", [msg])
+
+
+def test_parrot_empty_buffer() -> None:
+    assert not _is_parrot("some generated text", [])
