@@ -65,9 +65,12 @@ Known kinds (keep this list in sync with what's emitted):
   - link_enrich        : per-URL social-link enrichment attempt (utils/link_enrich.py)
       platform (twitter|tiktok|youtube|reddit|bluesky), url_host, ok,
       duration_ms, cache_hit
-  - perplexity_search   : Perplexity Sonar API call (utils/perplexity.py)
-      purpose (ask|recap|discourse|chimein), ok, duration_ms,
-      input_tokens, output_tokens, response_chars, error (on failure)
+  - pplx_ask            : Perplexity Sonar call for /ask (utils/perplexity.py)
+  - pplx_discourse      : Perplexity Sonar call for /discourse (utils/perplexity.py)
+  - pplx_recap          : Perplexity Sonar call for /recap (utils/perplexity.py)
+  - pplx_chimein        : Perplexity Sonar call for chime-in (utils/perplexity.py)
+      All four: ok, duration_ms, input_tokens, output_tokens,
+      response_chars, error (on failure)
   - link_stripped      : guardrail removed a URL from the model's output.
                          Fires once per reason: a single response can emit
                          both a hallucinated event and a redundant event if

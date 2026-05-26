@@ -62,7 +62,7 @@ class PerplexityClient:
         """Run a search query through Perplexity Sonar.
 
         Returns the text response (with citations baked in) or None on any
-        failure. Emits a `perplexity_search` event for dashboard tracking.
+        failure. Emits a `pplx_<purpose>` event for dashboard tracking.
         """
         start = time.monotonic()
         ok = True
@@ -80,8 +80,7 @@ class PerplexityClient:
                 if resp.status != 200:
                     ok = False
                     emit(
-                        "perplexity_search",
-                        purpose=purpose,
+                        f"pplx_{purpose}",
                         ok=False,
                         duration_ms=int((time.monotonic() - start) * 1000),
                         error=f"HTTP {resp.status}",
@@ -97,8 +96,7 @@ class PerplexityClient:
             if not choices:
                 ok = False
                 emit(
-                    "perplexity_search",
-                    purpose=purpose,
+                    f"pplx_{purpose}",
                     ok=False,
                     duration_ms=int((time.monotonic() - start) * 1000),
                     error="no_choices",
@@ -132,8 +130,7 @@ class PerplexityClient:
                 text = f"{text}\n\nSOURCES:\n{sources_lines}"
 
             emit(
-                "perplexity_search",
-                purpose=purpose,
+                f"pplx_{purpose}",
                 ok=ok,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 input_tokens=input_tokens,
@@ -144,14 +141,12 @@ class PerplexityClient:
 
         except (aiohttp.ClientError, TimeoutError, ValueError, KeyError) as exc:
             emit_error(
-                source="perplexity_search",
+                source=f"pplx_{purpose}",
                 exc=exc,
                 recoverable=True,
-                context={"purpose": purpose},
             )
             emit(
-                "perplexity_search",
-                purpose=purpose,
+                f"pplx_{purpose}",
                 ok=False,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=type(exc).__name__,

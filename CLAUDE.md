@@ -95,7 +95,10 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `recap_deflected` | cogs/recap.py | guild_id, user_id, period, channel_id, channel_name, reason (`no_permission`/`no_messages`), can_read_history, total_messages |
 | `discourse_fallback` | cogs/discourse.py | guild_id, user_id, category, source_count, recent_topic_count, reason |
 | `link_enrich` | utils/link_enrich.py | platform, url_host, ok, duration_ms, cache_hit |
-| `perplexity_search` | utils/perplexity.py | purpose, ok, duration_ms, input_tokens, output_tokens, response_chars, error |
+| `pplx_ask` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
+| `pplx_discourse` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
+| `pplx_recap` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
+| `pplx_chimein` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `link_stripped` | claude_client.py (`discourse`, `ask`) | purpose, reason (`hallucinated` \| `redundant`), count, urls |
 | `market_fetch` | utils/markets.py | source (sgo/polymarket/kalshi), query, ok, duration_ms, cache_hit, result_count, error |
 
