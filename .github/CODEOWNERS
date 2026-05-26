@@ -1,0 +1,11 @@
+# Auto-request GitHub Copilot Code Review on every PR.
+#
+# `*` covers every file; @copilot-pull-request-reviewer is the GitHub
+# Copilot reviewer bot. The pattern ensures every PR gets a review
+# request when opened, without needing to click "Reviewers → Copilot"
+# manually.
+#
+# This is advisory, not a required reviewer: PRs can still merge if
+# Copilot hasn't replied, since the review isn't a CI gate.
+
+*  @copilot-pull-request-reviewer
