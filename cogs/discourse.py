@@ -39,6 +39,7 @@ from utils.metrics import track_command
 from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
 from utils.rate_limits import check_server_limit, consume_server
+from utils.url_guardrail import extract_urls
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -261,12 +262,21 @@ class Discourse(commands.Cog):
         )
 
         sources_blob = "\n\n".join(sources) if sources else "(no local sources, use web search)"
+
+        # URLs already visible in the destination channel's last hour. These
+        # get deduped from Toots's output: if the room just saw the link, a
+        # re-paste is redundant (Discord shows two embeds of the same thing).
+        recently_seen_urls = [
+            u for msg in local for u in extract_urls(msg.content)
+        ] if local else None
+
         line = await self.bot.claude.discourse(
             category, sources_blob, recent_with_timestamps=recent_blob,
             channel_name=channel.name, must_post=must_post,
             image_urls=image_urls, hot_urls=feed_hot_urls,
             enriched_links=enriched,
             perplexity_context=pplx_result,
+            recently_seen_urls=recently_seen_urls,
         )
 
         if not line or line.strip().upper() == "EMPTY":

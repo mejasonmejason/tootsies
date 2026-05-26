@@ -191,6 +191,44 @@ async def test_ask_passes_image_urls_through() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ask_strips_hallucinated_urls() -> None:
+    """Same guardrail shape as /discourse: invented URLs get stripped."""
+    from claude_client import ClaudeResult
+    from utils.link_enrich import EnrichedLink
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="nah, dude's been done four times.\nhttps://hallucinated.example/x",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    real_link = EnrichedLink(platform="twitter", url="https://real.example/a")
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.ask("is drake done", enriched_links=[real_link])
+    assert "hallucinated" not in out
+    assert out == "nah, dude's been done four times."
+
+
+@pytest.mark.asyncio
+async def test_ask_keeps_url_from_enriched_links() -> None:
+    from claude_client import ClaudeResult
+    from utils.link_enrich import EnrichedLink
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="that's the one.\nhttps://real.example/a",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    real_link = EnrichedLink(platform="twitter", url="https://real.example/a")
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.ask("what's this", enriched_links=[real_link])
+    assert "https://real.example/a" in out
+
+
+@pytest.mark.asyncio
 async def test_recap_uses_haiku_with_web_search() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="recap"))
@@ -324,6 +362,52 @@ async def test_discourse_web_search_urls_allowed() -> None:
     with patch.object(client, "_call", fake):
         out = await client.discourse("nba", "sources blob")
     assert "https://espn.example/score" in out
+
+
+@pytest.mark.asyncio
+async def test_discourse_dedups_url_already_in_destination_channel() -> None:
+    """URL already visible in the destination channel buffer gets stripped."""
+    from claude_client import ClaudeResult
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="huge moment.\nhttps://twitter.example/already",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.discourse(
+            "nba", "sources blob",
+            hot_urls=[("https://twitter.example/already", 5, "alice", "twitter")],
+            recently_seen_urls=["https://twitter.example/already"],
+        )
+    assert "twitter.example" not in out
+    assert out == "huge moment."
+
+
+@pytest.mark.asyncio
+async def test_ask_dedups_url_from_question() -> None:
+    """If the user's question contains the URL, Toots's answer doesn't repaste it."""
+    from claude_client import ClaudeResult
+    from utils.link_enrich import EnrichedLink
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="lakers up 3-1, lebron with 35/12/9.\nhttps://twitter.example/score",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    enriched = EnrichedLink(platform="twitter", url="https://twitter.example/score")
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.ask(
+            "whats this https://twitter.example/score",
+            enriched_links=[enriched],
+            recently_seen_urls=["https://twitter.example/score"],
+        )
+    assert "twitter.example" not in out
+    assert "lakers up 3-1" in out
 
 
 @pytest.mark.asyncio

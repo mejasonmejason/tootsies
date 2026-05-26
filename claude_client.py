@@ -25,7 +25,7 @@ from persona import system_prompt
 from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.perplexity import format_perplexity_for_prompt
-from utils.url_guardrail import enforce_allowlist as enforce_url_allowlist
+from utils.url_guardrail import enforce_source_links
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +48,6 @@ def _parse_chimein_score(text: str) -> tuple[float, str, str]:
     so the chime-in tick skips the slot rather than misfiring.
     """
     import json
-    import re
 
     if not text:
         return 0.0, "other", ""
@@ -425,6 +424,7 @@ class ClaudeClient:
         image_urls: list[str] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
         perplexity_context: str | None = None,
+        recently_seen_urls: list[str] | None = None,
     ) -> str:
         """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
 
@@ -482,6 +482,23 @@ class ClaudeClient:
             "energy, what nicknames they use, what's the in-joke). Do NOT quote member "
             "opinions as authoritative. Do NOT take their factual claims at face value.\n"
             "\n"
+            "LINK THE SOURCE (when there is one). If your answer is about a "
+            "specific external thing (a tweet, a clip, an article, a news "
+            "event, a stat, a drop), end with one real URL. Pull it from: "
+            "URLs in the channel chatter (see the enriched-link block if "
+            "attached), the Perplexity SOURCES block, or your web_search "
+            "results. NEVER invent a URL.\n"
+            "\n"
+            "  DON'T REPASTE: if the URL you'd link was already posted in "
+            "the user's question or in recent channel chatter, skip the "
+            "URL. The room just saw it. Reference the content in your "
+            "take, just don't paste the link again.\n"
+            "\n"
+            "  Skip the link for: pure opinions ('is drake done'), self-"
+            "referential ('who are you'), abstract questions ('meaning of "
+            "life'), or bartender chitchat ('sup'). The answer stands "
+            "without a link when nothing specific is being cited.\n"
+            "\n"
             "FORMAT:\n"
             "  Open with a brief paraphrase of the question, then your answer.\n"
             "  Skip the paraphrase only when the question is so short an echo "
@@ -520,7 +537,31 @@ class ClaudeClient:
             purpose="ask",
             image_urls=image_urls,
         )
-        return result.text
+
+        # URL guardrail: strip hallucinated URLs and dedup URLs already
+        # visible to the user (question + recent chatter).
+        feed_urls = (
+            [link.url for link in enriched_links if link.url]
+            if enriched_links else None
+        )
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls,
+            perplexity_context=perplexity_context,
+            web_search_urls=result.web_search_urls,
+            recently_seen_urls=recently_seen_urls,
+        )
+        if rejected:
+            emit(
+                "link_stripped", purpose="ask", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        if deduped:
+            emit(
+                "link_stripped", purpose="ask", reason="redundant",
+                count=len(deduped), urls=deduped[:5],
+            )
+        return cleaned
 
     async def recap(
         self,
@@ -636,6 +677,7 @@ class ClaudeClient:
         hot_urls: list[tuple[str, int, str, str]] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
         perplexity_context: str | None = None,
+        recently_seen_urls: list[str] | None = None,
     ) -> str:
         """Generate a discourse-starter post pulling from feeds + web.
 
@@ -713,6 +755,12 @@ class ClaudeClient:
             "Linkless post is ALWAYS better than skipping the slot. Only "
             "return EMPTY when the topic itself is stale per the dedup "
             "rule below, never because the URL is missing.\n"
+            "\n"
+            "DON'T REPASTE: if the URL you'd link was already posted in "
+            "the destination channel's recent chatter (the local section "
+            "of LINKS IN THE FEEDS, last hour), skip the trailing URL. "
+            "Reference the source in your take, but don't paste a link "
+            "the room just saw. Re-posting it is double-embed clutter.\n"
             "\n"
             "BUDGET: the trailing URL is on TOP of your take's character "
             "target. Keep the take itself in the usual 80-200 window, "
@@ -799,23 +847,26 @@ class ClaudeClient:
             image_urls=image_urls,
         )
 
-        # URL guardrail: every URL in the output must come from a real source
-        # we passed in or that web_search returned. Anything else is a
-        # hallucination and gets stripped before the post goes to Discord.
-        allowlist: list[str] = []
-        if hot_urls:
-            allowlist.extend(u for u, _, _, _ in hot_urls)
-        if perplexity_context:
-            allowlist.extend(re.findall(r"https?://\S+", perplexity_context))
-        allowlist.extend(result.web_search_urls)
-        cleaned, rejected = enforce_url_allowlist(result.text, allowlist)
+        # URL guardrail: strip hallucinated URLs and dedup URLs already
+        # visible in the destination channel's recent buffer.
+        purpose = "discourse_manual" if must_post else "discourse_scheduled"
+        feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls,
+            perplexity_context=perplexity_context,
+            web_search_urls=result.web_search_urls,
+            recently_seen_urls=recently_seen_urls,
+        )
         if rejected:
             emit(
-                "link_rejected",
-                purpose="discourse_manual" if must_post else "discourse_scheduled",
-                rejected_count=len(rejected),
-                rejected_urls=rejected[:5],
-                allowlist_size=len(allowlist),
+                "link_stripped", purpose=purpose, reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        if deduped:
+            emit(
+                "link_stripped", purpose=purpose, reason="redundant",
+                count=len(deduped), urls=deduped[:5],
             )
         return cleaned
 
