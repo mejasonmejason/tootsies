@@ -44,8 +44,11 @@ class Help(commands.Cog):
             name="🗣️  everyone",
             value=(
                 "**`/ask <question>`**: ask me anything. takes, recs, scores, "
-                "whatever. i read the room and check the web.\n"
+                "whatever. i read the room, check the web, and pull live "
+                "market data (sports lines, polymarket, kalshi) when it fits.\n"
                 "  *ex:* `/ask who are you` → *bartender at tootsies. pour you something?*\n"
+                "  *ex:* `/ask what's the spread on the lakers` → *live odds + my read*\n"
+                "  *ex:* `/ask fed cuts rates before december?` → *polymarket + kalshi %s*\n"
                 "**`@Toots <question>`**: same thing, no slash. "
                 "*ayo @Toots what's the move tonight* works.\n"
                 "  *ex:* `@Toots wyd` → *gaza, posted up. pour you something?*\n"
