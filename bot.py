@@ -66,6 +66,7 @@ class TootsiesBot(commands.Bot):
             config.sports_game_odds_api_key,
             intent_classifier=self.claude.classify_market_intent,
             kalshi_series_picker=self.claude.pick_kalshi_series,
+            kalshi_market_picker=self.claude.pick_kalshi_market,
         )
         self._ready_once = False
 

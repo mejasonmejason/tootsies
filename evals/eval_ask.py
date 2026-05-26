@@ -35,18 +35,18 @@ from pathlib import Path
 # Add repo root to path so we can import as if running from the project.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Auto-load .env: try this worktree first, then walk up to find one
-# (parent worktrees / repo root often hold the canonical .env). override=True
-# so an empty shell var (e.g. ANTHROPIC_API_KEY="" inherited from a parent
-# process) doesn't silently shadow the real value in .env.
+# Auto-load .env: parent first (canonical secrets), then worktree (overrides).
+# override=True so an empty shell var (e.g. ANTHROPIC_API_KEY="" inherited
+# from a parent process) doesn't silently shadow the real value in .env.
+# Don't break on first match: previous "break early" behavior dropped keys
+# held only in the parent once we put a worktree .env in place.
 try:
     from dotenv import load_dotenv
 
     _repo_root = Path(__file__).resolve().parents[1]
-    for _candidate in (_repo_root / ".env", _repo_root.parent / ".env"):
+    for _candidate in (_repo_root.parent / ".env", _repo_root / ".env"):
         if _candidate.exists():
             load_dotenv(_candidate, override=True)
-            break
 except ImportError:
     pass
 
