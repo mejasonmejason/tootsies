@@ -2,8 +2,8 @@
 
 Model routing (rule: Haiku for pure classifiers + one-line fallback quips;
 Sonnet for everything else user-facing or judgment-heavy):
-- HAIKU: chimein_score, classify_market_intent, pick_kalshi_series
-  (mechanical classifiers);
+- HAIKU: chimein_score, classify_market_intent, pick_kalshi_series,
+  pick_kalshi_market (mechanical classifiers);
   deflect (one-liner canned-ish quip, 60-token cap, no judgment)
 - SONNET: ask, recap, discourse, chimein_post, preflight_order
   (every method that generates non-trivial user-facing content)
@@ -1216,6 +1216,68 @@ class ClaudeClient:
         # in input order could pick the shorter / less specific one. Sorting
         # longest-first guarantees we resolve to the most specific candidate
         # that actually appears in the reply.
+        valid = sorted(
+            [c.get("ticker") or "" for c in candidates if c.get("ticker")],
+            key=len, reverse=True,
+        )
+        for ticker in valid:
+            if ticker.upper() in reply:
+                return ticker
+        return None
+
+    async def pick_kalshi_market(
+        self, query: str, candidates: list[dict[str, str]],
+    ) -> str | None:
+        """Stage 2 of the two-stage Kalshi flow: pick a specific market.
+
+        After `pick_kalshi_series` chooses a series and MarketsManager
+        live-fetches that series's open events with nested markets, this
+        call narrows to a specific market within those events (e.g. for
+        "drake hot 100" inside KXBILLBOARD's daily chart, pick the Drake
+        market specifically rather than returning all 100 chart positions).
+
+        Kept as a separate Haiku call rather than included in the stage-1
+        prompt because the stage-1 prompt already holds ~1000 candidate
+        series; folding in 5 markets per series would push the prompt
+        to ~150K tokens, over Anthropic's per-minute rate-limit budget
+        on tier 1. Two small calls (~10K + ~2K tokens) fit comfortably.
+
+        `candidates` is `[{"ticker": "KXB-XXX-DRAKE", "title": "Drake #1"},
+        ...]` from the live events fetch. Returns the chosen market ticker
+        or None (caller falls back to showing all markets in the series).
+        """
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0].get("ticker") or None
+        formatted = "\n".join(
+            f"  {c.get('ticker','')}: {c.get('title','')}"
+            for c in candidates if c.get("ticker")
+        )
+        system_extra = (
+            "TASK: Pick the single Kalshi market ticker that best matches "
+            "the user's query. These markets are all within ONE series; "
+            "you're narrowing to a specific candidate / outcome / "
+            "date. Reply with EXACTLY the ticker string, nothing else. "
+            "Reply NONE if the query is broad and no specific market "
+            "matches (caller will show the whole series instead).\n"
+            "\n"
+            f"CANDIDATES:\n{formatted}"
+        )
+        try:
+            result = await self._call(
+                model=HAIKU, user_message=query, system_extra=system_extra,
+                max_tokens=40,
+                purpose="kalshi_market_pick",
+            )
+        except Exception:
+            log.exception("pick_kalshi_market _call failed")
+            return None
+        reply = result.text.strip().upper()
+        if not reply or reply.startswith("NONE"):
+            return None
+        # Prefer longest match in case one ticker is a prefix of another
+        # (Kalshi market tickers under the same event share prefixes).
         valid = sorted(
             [c.get("ticker") or "" for c in candidates if c.get("ticker")],
             key=len, reverse=True,

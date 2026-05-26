@@ -1,25 +1,24 @@
-"""End-to-end eval of the new Kalshi discovery flow.
+"""End-to-end eval of the Kalshi two-stage discovery flow.
 
-Background: Kalshi's API has no free-text search. Previous attempts at
-aggregator-based search (PolyRouter, Prediction Hunt) returned either 502s
-or constant wrong results. The shipped approach instead does:
+Background: Kalshi's API has no free-text search. The shipped approach:
 
-  1. Boot: KalshiClient pulls all ~10K series via `/series?include_volume=true`,
-     sorts by volume_fp desc, keeps top-N as a {ticker, title} index.
-  2. Per query: ClaudeClient.pick_kalshi_series asks Haiku to pick the best
-     match from the cached index.
-  3. Fetch: KalshiClient.get_events_for_series hits
-     `/events?series_ticker=X&with_nested_markets=true` for real markets.
+  1. Boot: KalshiClient.refresh_series_index pulls /series?include_volume=true,
+     filters by open-events, keeps top-N as {ticker, title} index.
+  2. Stage 1 (per query): ClaudeClient.pick_kalshi_series asks Haiku to pick
+     the best matching series from the cached index.
+  3. Live fetch: KalshiClient.get_events_for_series hits /events with the
+     picked series_ticker, returns nested markets as MarketSnapshots.
+  4. Stage 2 (per query): ClaudeClient.pick_kalshi_market asks Haiku to
+     narrow within the series's markets to a specific one (or NONE for
+     broad queries that should show the whole series).
 
-This script exercises that exact chain against live APIs with the same 10
-queries we used for the aggregator evals so the outputs are directly
-comparable. Pass = topically relevant Kalshi markets for each query; the
-previous broken state returned KXMVE exotic combo markets regardless.
+This script exercises the full two-stage chain against live APIs.
 
 Required env: ANTHROPIC_API_KEY (Haiku). Kalshi reads are public, no key.
 Usage: python evals/eval_kalshi_discovery.py
 
-Cost: ~10 Haiku calls + 11 Kalshi reads. Sub-cent total.
+Cost: 10-20 Haiku calls (depending on stage-2 invocations) + 11 Kalshi reads.
+Sub-cent total.
 """
 
 from __future__ import annotations
@@ -97,18 +96,40 @@ async def main() -> None:
 
     print()
     print("=" * 78)
-    print("STEP 2: per-query Haiku pick + Kalshi events fetch")
+    print("STEP 2: per-query two-stage Haiku pick + Kalshi events fetch")
     print("=" * 78)
     for q in QUERIES:
-        chosen = await claude.pick_kalshi_series(q, kalshi.series_index)
-        print(f"\n[{q}]  -> Haiku picked: {chosen or 'NONE'}")
-        if not chosen:
+        # Stage 1: pick the series from the cached index.
+        chosen_series = await claude.pick_kalshi_series(q, kalshi.series_index)
+        print(f"\n[{q}]")
+        print(f"  stage 1 series  -> {chosen_series or 'NONE'}")
+        if not chosen_series:
             continue
-        snaps = await kalshi.get_events_for_series(chosen, limit=3)
-        if not snaps:
-            print("  (no open events found under this series)")
+        # Live fetch of the picked series's open events with markets.
+        series_snaps = await kalshi.get_events_for_series(
+            chosen_series, limit=4,
+        )
+        if not series_snaps:
+            print("  (no open markets under this series)")
             continue
-        for snap in snaps[:3]:
+        # Stage 2: narrow within the series's markets.
+        market_candidates = [
+            {"ticker": str(s.meta.get("ticker", "")), "title": s.title}
+            for s in series_snaps if s.meta.get("ticker")
+        ]
+        chosen_market = None
+        if len(market_candidates) > 1:
+            chosen_market = await claude.pick_kalshi_market(q, market_candidates)
+        print(
+            f"  stage 2 market  -> "
+            f"{chosen_market or ('NONE (show whole series)' if len(market_candidates) > 1 else 'skipped (1 market)')}"
+        )
+        # Show the narrowed result.
+        if chosen_market:
+            final = [s for s in series_snaps if s.meta.get("ticker") == chosen_market]
+        else:
+            final = series_snaps[:3]
+        for snap in final:
             prob = f"{snap.probability:.0%}" if snap.probability is not None else "?"
             print(f"  - {snap.title[:70]} | yes={prob}")
             if snap.url:

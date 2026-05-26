@@ -791,6 +791,147 @@ async def test_manager_kalshi_picker_says_none_skips_fetch():
     fetch.assert_not_called()
 
 
+# ---- MarketsManager two-stage Kalshi (series picker + market picker) ----
+
+
+async def test_manager_stage2_narrows_to_single_market():
+    """When the market_picker returns a specific market_ticker, the
+    snapshot list narrows to just that one snapshot."""
+    classifier = AsyncMock(return_value={
+        "intent": "prediction_market", "search_terms": "drake hot 100",
+    })
+    m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi._series_index = [
+        {"ticker": "KXBILLBOARD", "title": "Billboard Hot 100"},
+    ]
+    m._kalshi_picker = AsyncMock(return_value="KXBILLBOARD")
+    drake = MarketSnapshot(
+        source="kalshi", title="Drake #1 on Dec 8",
+        url="https://kalshi.com/markets/kxbillboard", probability=0.18,
+        meta={"ticker": "KXBILLBOARD-DEC-DRAKE"},
+    )
+    weeknd = MarketSnapshot(
+        source="kalshi", title="Weeknd #1 on Dec 8",
+        url="https://kalshi.com/markets/kxbillboard", probability=0.12,
+        meta={"ticker": "KXBILLBOARD-DEC-WEEKND"},
+    )
+    m.kalshi.get_events_for_series = AsyncMock(return_value=[drake, weeknd])  # type: ignore[method-assign]
+    market_picker = AsyncMock(return_value="KXBILLBOARD-DEC-DRAKE")
+    m._kalshi_market_picker = market_picker
+    result = await m.get_context("drake hot 100")
+    assert result == [drake]
+    # Stage 2 picker saw both markets as candidates.
+    market_picker.assert_awaited_once()
+    candidates = market_picker.call_args.args[1]
+    assert {c["ticker"] for c in candidates} == {
+        "KXBILLBOARD-DEC-DRAKE", "KXBILLBOARD-DEC-WEEKND",
+    }
+
+
+async def test_manager_stage2_none_returns_full_series():
+    """Stage 2 NONE means 'no specific market matches the query'; we fall
+    back to showing the whole series's markets."""
+    classifier = AsyncMock(return_value={
+        "intent": "prediction_market", "search_terms": "billboard chart",
+    })
+    m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi._series_index = [
+        {"ticker": "KXBILLBOARD", "title": "Billboard Hot 100"},
+    ]
+    m._kalshi_picker = AsyncMock(return_value="KXBILLBOARD")
+    snaps = [
+        MarketSnapshot(source="kalshi", title="Drake", url="u", meta={"ticker": "A"}),
+        MarketSnapshot(source="kalshi", title="Weeknd", url="u", meta={"ticker": "B"}),
+    ]
+    m.kalshi.get_events_for_series = AsyncMock(return_value=snaps)  # type: ignore[method-assign]
+    m._kalshi_market_picker = AsyncMock(return_value=None)
+    result = await m.get_context("billboard chart")
+    assert result == snaps
+
+
+async def test_manager_stage2_skipped_when_single_market():
+    """Single-market series short-circuits stage 2, no second Haiku call."""
+    classifier = AsyncMock(return_value={
+        "intent": "prediction_market", "search_terms": "fed rate cut",
+    })
+    m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi._series_index = [{"ticker": "KXRATECUT", "title": "Rate cut"}]
+    m._kalshi_picker = AsyncMock(return_value="KXRATECUT")
+    only_snap = MarketSnapshot(
+        source="kalshi", title="Will Fed cut?", url="u",
+        meta={"ticker": "KXRATECUT-ONLY"},
+    )
+    m.kalshi.get_events_for_series = AsyncMock(return_value=[only_snap])  # type: ignore[method-assign]
+    market_picker = AsyncMock()
+    m._kalshi_market_picker = market_picker
+    result = await m.get_context("fed rate cut")
+    assert result == [only_snap]
+    market_picker.assert_not_called()
+
+
+async def test_manager_stage2_skipped_when_no_market_picker():
+    """When the market_picker isn't wired, stage 2 is skipped and we
+    return the full series (Option B graceful degradation)."""
+    classifier = AsyncMock(return_value={
+        "intent": "prediction_market", "search_terms": "billboard",
+    })
+    m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi._series_index = [{"ticker": "KXBILLBOARD", "title": "Hot 100"}]
+    m._kalshi_picker = AsyncMock(return_value="KXBILLBOARD")
+    snaps = [
+        MarketSnapshot(source="kalshi", title="A", url="u", meta={"ticker": "A"}),
+        MarketSnapshot(source="kalshi", title="B", url="u", meta={"ticker": "B"}),
+    ]
+    m.kalshi.get_events_for_series = AsyncMock(return_value=snaps)  # type: ignore[method-assign]
+    # _kalshi_market_picker stays None (default).
+    result = await m.get_context("billboard")
+    assert result == snaps
+
+
+async def test_manager_stage2_failure_falls_back_to_full_series():
+    """If stage 2 raises, we keep the series snapshots rather than blanking
+    Kalshi context entirely."""
+    classifier = AsyncMock(return_value={
+        "intent": "prediction_market", "search_terms": "billboard",
+    })
+    m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi._series_index = [{"ticker": "KXBILLBOARD", "title": "Hot 100"}]
+    m._kalshi_picker = AsyncMock(return_value="KXBILLBOARD")
+    snaps = [
+        MarketSnapshot(source="kalshi", title="A", url="u", meta={"ticker": "A"}),
+        MarketSnapshot(source="kalshi", title="B", url="u", meta={"ticker": "B"}),
+    ]
+    m.kalshi.get_events_for_series = AsyncMock(return_value=snaps)  # type: ignore[method-assign]
+    m._kalshi_market_picker = AsyncMock(side_effect=RuntimeError("haiku down"))
+    result = await m.get_context("billboard")
+    assert result == snaps
+
+
+async def test_manager_stage2_unknown_ticker_falls_back_to_full_series():
+    """Stage 2 returns a ticker that doesn't match any snapshot
+    (shouldn't happen but defend against it) -> fall back to all snapshots."""
+    classifier = AsyncMock(return_value={
+        "intent": "prediction_market", "search_terms": "billboard",
+    })
+    m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi._series_index = [{"ticker": "KXBILLBOARD", "title": "Hot 100"}]
+    m._kalshi_picker = AsyncMock(return_value="KXBILLBOARD")
+    snaps = [
+        MarketSnapshot(source="kalshi", title="A", url="u", meta={"ticker": "A"}),
+        MarketSnapshot(source="kalshi", title="B", url="u", meta={"ticker": "B"}),
+    ]
+    m.kalshi.get_events_for_series = AsyncMock(return_value=snaps)  # type: ignore[method-assign]
+    m._kalshi_market_picker = AsyncMock(return_value="KXSTALE")
+    result = await m.get_context("billboard")
+    assert result == snaps
+
+
 # ---- MarketsManager with Haiku classifier injected -----------------------
 
 

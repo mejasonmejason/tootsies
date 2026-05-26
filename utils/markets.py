@@ -1202,10 +1202,16 @@ def detect_league(query: str) -> str | None:
 
 
 IntentClassifier = Callable[[str], Awaitable[dict[str, Any] | None]]
-# Callable signature for ClaudeClient.pick_kalshi_series. Takes a query and
-# a list of {ticker, title} candidates from the cached series index; returns
-# the chosen ticker (or None if Haiku says no candidate fits).
+# Stage 1 of the Kalshi two-stage flow: pick a series_ticker from the cached
+# top-N series list. (ClaudeClient.pick_kalshi_series in production.)
 KalshiSeriesPicker = Callable[
+    [str, list[dict[str, str]]], Awaitable[str | None],
+]
+# Stage 2 of the Kalshi two-stage flow: pick a specific market_ticker from
+# the markets returned by stage 1's series's live events fetch.
+# (ClaudeClient.pick_kalshi_market in production.) Optional, skipped when
+# the series has <=1 market or when the picker isn't wired.
+KalshiMarketPicker = Callable[
     [str, list[dict[str, str]]], Awaitable[str | None],
 ]
 
@@ -1227,6 +1233,11 @@ class MarketsManager:
     in production) that selects a series_ticker from the cached top-N series
     list. When None (or when the Kalshi series-index cache is still empty)
     we skip Kalshi entirely and fall through to Polymarket-only.
+
+    `kalshi_market_picker`: optional async callable
+    (ClaudeClient.pick_kalshi_market in production) that, after the series
+    is fetched, narrows to a specific market_ticker. When None or when the
+    series has <=1 market, we return all snapshots from the series fetch.
     """
 
     def __init__(
@@ -1234,12 +1245,14 @@ class MarketsManager:
         sgo_api_key: str | None,
         intent_classifier: IntentClassifier | None = None,
         kalshi_series_picker: KalshiSeriesPicker | None = None,
+        kalshi_market_picker: KalshiMarketPicker | None = None,
     ) -> None:
         self.sgo = SportsGameOddsClient(sgo_api_key)
         self.polymarket = PolymarketClient()
         self.kalshi = KalshiClient()
         self._classifier = intent_classifier
         self._kalshi_picker = kalshi_series_picker
+        self._kalshi_market_picker = kalshi_market_picker
 
     async def get_context(self, query: str) -> list[MarketSnapshot] | None:
         """Fetch live market snapshots for a query if intent matches.
@@ -1327,23 +1340,35 @@ class MarketsManager:
         return combined or None
 
     async def _kalshi_snapshots(self, search_terms: str) -> list[MarketSnapshot]:
-        """Kalshi discovery flow: cached series → Haiku pick → fetch events.
+        """Two-stage Kalshi discovery: pick series, fetch live, optionally
+        narrow to one market.
+
+        Stage 1: cached series → ClaudeClient.pick_kalshi_series → series_ticker
+        Stage 2: live /events?series_ticker=X → ClaudeClient.pick_kalshi_market
+                 → narrow to one snapshot if Haiku picks specifically; else
+                 return the whole series's markets.
+
+        Two stages instead of one because folding 5 markets per cached series
+        into stage 1's prompt would blow past Anthropic's per-minute input
+        token rate limit (1000 series x 5 markets ~= 150K tokens > 50K/min
+        tier-1 budget). Splitting keeps each call small (~10K + ~1-3K tokens).
 
         Returns [] (never None or raises) on any miss so the gather in
         _pm_snapshots treats Kalshi as "no results" rather than "error",
         and Polymarket alone still fills the response.
 
-        Misses include: no picker wired (tests / classifier disabled), empty
-        series-index cache (refresh hasn't fired yet), Haiku says NONE,
-        events fetch fails or returns nothing.
+        Misses include: no series picker wired (tests / classifier disabled),
+        empty series-index cache (refresh hasn't fired yet), Haiku says NONE
+        at either stage, events fetch fails or returns nothing.
         """
         if self._kalshi_picker is None:
             return []
         candidates = self.kalshi.series_index
         if not candidates:
             return []
+        # Stage 1: which series fits the query?
         try:
-            chosen = await self._kalshi_picker(search_terms, candidates)
+            chosen_series = await self._kalshi_picker(search_terms, candidates)
         except Exception as exc:
             emit_error(
                 source="kalshi_picker",
@@ -1352,7 +1377,44 @@ class MarketsManager:
                 context={"query_chars": len(search_terms)},
             )
             return []
-        if not chosen:
+        if not chosen_series:
             return []
-        snaps = await self.kalshi.get_events_for_series(chosen, limit=4)
-        return snaps or []
+        # Live fetch of the picked series's open events with their markets.
+        series_snaps = await self.kalshi.get_events_for_series(
+            chosen_series, limit=4,
+        )
+        if not series_snaps:
+            return []
+        # Stage 2: narrow to a specific market within the series. Skip when
+        # there's only one market (nothing to narrow) or no market picker is
+        # wired (graceful fallback to all snapshots).
+        if len(series_snaps) <= 1 or self._kalshi_market_picker is None:
+            return series_snaps
+        market_candidates = [
+            {"ticker": str(s.meta.get("ticker", "")), "title": s.title}
+            for s in series_snaps if s.meta.get("ticker")
+        ]
+        if not market_candidates:
+            return series_snaps
+        try:
+            chosen_market = await self._kalshi_market_picker(
+                search_terms, market_candidates,
+            )
+        except Exception as exc:
+            emit_error(
+                source="kalshi_market_picker",
+                exc=exc,
+                recoverable=True,
+                context={"query_chars": len(search_terms)},
+            )
+            # Stage 2 failure falls back to the full series rather than
+            # blanking Kalshi context.
+            return series_snaps
+        if not chosen_market:
+            # Haiku said no specific market matches; show the whole series.
+            return series_snaps
+        for snap in series_snaps:
+            if snap.meta.get("ticker") == chosen_market:
+                return [snap]
+        # Chosen ticker doesn't match any snapshot; fall back to full series.
+        return series_snaps

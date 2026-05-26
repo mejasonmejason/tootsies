@@ -623,3 +623,101 @@ async def test_pick_kalshi_series_api_failure_returns_none():
     with patch.object(client, "_call", fake):
         result = await client.pick_kalshi_series("anything", candidates)
     assert result is None
+
+
+# ---- pick_kalshi_market (stage 2) ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_market_uses_haiku():
+    """Stage 2 picks a specific market from the series's live events fetch."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="KXBILLBOARD-DEC-DRAKE"))
+    candidates = [
+        {"ticker": "KXBILLBOARD-DEC-DRAKE", "title": "Drake #1 on Dec 8"},
+        {"ticker": "KXBILLBOARD-DEC-WEEKND", "title": "Weeknd #1 on Dec 8"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_market("drake hot 100", candidates)
+    assert result == "KXBILLBOARD-DEC-DRAKE"
+    assert fake.call_args.kwargs["model"] == HAIKU
+    assert fake.call_args.kwargs["purpose"] == "kalshi_market_pick"
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_market_single_candidate_short_circuits():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock()
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_market(
+            "anything",
+            [{"ticker": "KXONLY", "title": "Only market"}],
+        )
+    assert result == "KXONLY"
+    fake.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_market_empty_candidates_returns_none():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock()
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_market("anything", [])
+    assert result is None
+    fake.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_market_none_means_show_whole_series():
+    """When Haiku says no specific market matches, caller falls back to
+    showing all markets in the series; we just return None here."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="NONE"))
+    candidates = [
+        {"ticker": "KX-A", "title": "A"},
+        {"ticker": "KX-B", "title": "B"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_market("broad query", candidates)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_market_prefers_longest_match():
+    """Two market tickers under the same event share prefixes; pick the
+    longest substring match in the reply."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="KX-A-LONG-VARIANT"))
+    candidates = [
+        {"ticker": "KX-A", "title": "Short A"},
+        {"ticker": "KX-A-LONG-VARIANT", "title": "Long variant of A"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_market("variant query", candidates)
+    assert result == "KX-A-LONG-VARIANT"
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_market_unknown_reply_returns_none():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="KX-NOT-IN-LIST"))
+    candidates = [
+        {"ticker": "KX-A", "title": "A"},
+        {"ticker": "KX-B", "title": "B"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_market("anything", candidates)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_market_api_failure_returns_none():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(side_effect=RuntimeError("haiku down"))
+    candidates = [
+        {"ticker": "KX-A", "title": "A"},
+        {"ticker": "KX-B", "title": "B"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_market("anything", candidates)
+    assert result is None
