@@ -308,31 +308,84 @@ class SportsGameOddsClient:
 def _sgo_event_to_snapshot(event: dict[str, Any], league: str) -> MarketSnapshot | None:
     """Best-effort flatten of an SGO event into one MarketSnapshot.
 
-    SGO nests odds per-book per-market; we surface the consensus or first
-    available spread / moneyline / total. Defensive against shape drift.
+    SGO API shape (verified against live response May 2026):
+    - `teams.{home,away}.names.{long,medium,short,location}` for team names
+    - `odds` is a flat dict keyed by `{statID}-{entity}-{period}-{betType}-{side}`
+      (e.g. "points-home-game-ml-home" for the home moneyline), with each
+      value carrying `bookOdds` (american odds string like "+160", "-110")
+    - `links.bookmakers.{book}` for direct sportsbook deeplinks (preferred
+      over the SGO event page since users can actually go bet there)
+
+    Defensive against shape drift: every lookup falls back gracefully.
     """
     if not isinstance(event, dict):
         return None
     event_id = event.get("eventID") or event.get("id") or ""
-    teams = event.get("teams") or {}
-    home = (teams.get("home") or {}).get("name") if isinstance(teams, dict) else None
-    away = (teams.get("away") or {}).get("name") if isinstance(teams, dict) else None
-    title = f"{away} @ {home}" if home and away else (event.get("info") or {}).get("title") or "match"
 
-    odds_payload = event.get("odds") or {}
+    # Team names — try medium, long, short, location in that order.
+    teams_raw = event.get("teams")
+    teams: dict[str, Any] = teams_raw if isinstance(teams_raw, dict) else {}
+    home = _sgo_team_name(teams.get("home"))
+    away = _sgo_team_name(teams.get("away"))
+    title = f"{away} @ {home}" if home and away else "match"
+
+    # Main lines: pick out the canonical moneyline / spread / total entries.
+    # Player props live in this same dict but are handled by the props fetcher.
     flat_odds: dict[str, float] = {}
+    odds_payload = event.get("odds")
     if isinstance(odds_payload, dict):
-        for key in ("spread", "moneyline_home", "moneyline_away", "total"):
-            val = odds_payload.get(key)
-            if isinstance(val, int | float):
-                flat_odds[key] = float(val)
+        for odd_key, dest_key in (
+            ("points-home-game-ml-home", "moneyline_home"),
+            ("points-away-game-ml-away", "moneyline_away"),
+            ("points-home-game-sp-home", "spread_home"),
+            ("points-away-game-sp-away", "spread_away"),
+            ("points-all-game-ou-over", "total_over"),
+            ("points-all-game-ou-under", "total_under"),
+        ):
+            entry = odds_payload.get(odd_key)
+            if not isinstance(entry, dict):
+                continue
+            raw = entry.get("bookOdds") or entry.get("fairOdds")
+            if not isinstance(raw, str):
+                continue
+            try:
+                flat_odds[dest_key] = float(raw.replace("+", ""))
+            except ValueError:
+                continue
+
+    # URL: prefer a direct sportsbook link over the SGO event page so users
+    # can actually go place the bet. Fall back to SGO if no book link present.
+    url = f"https://sportsgameodds.com/event/{event_id}" if event_id else ""
+    bookmaker_links = ((event.get("links") or {}).get("bookmakers") or {})
+    if isinstance(bookmaker_links, dict):
+        for preferred in ("draftkings", "fanduel", "betmgm", "caesars", "pointsbet"):
+            link = bookmaker_links.get(preferred)
+            if isinstance(link, str) and link.startswith("http"):
+                url = link
+                break
 
     return MarketSnapshot(
         source="sgo",
-        title=str(title),
-        url=f"https://sportsgameodds.com/event/{event_id}" if event_id else "",
+        title=title,
+        url=url,
         odds=flat_odds,
         meta={"league": league, "event_id": event_id},
+    )
+
+
+def _sgo_team_name(team: Any) -> str:
+    """Extract a display name from an SGO team object."""
+    if not isinstance(team, dict):
+        return ""
+    names = team.get("names")
+    if not isinstance(names, dict):
+        return ""
+    return (
+        names.get("medium")
+        or names.get("long")
+        or names.get("short")
+        or names.get("location")
+        or ""
     )
 
 

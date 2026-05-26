@@ -248,10 +248,13 @@ _TOOL_DISCIPLINE = (
 # /recap was at default 400). New surfaces pick one of these categories;
 # don't pass a bespoke max_tokens.
 
-# Replies and recaps: tweet-length target, ~400 char ceiling (100 tokens).
-# Some buffer above the 200 char prompt target so a clean medium answer
-# doesn't get cut mid-word.
-MAX_TOKENS_REPLY = 100
+# Replies and recaps: tweet-length target, ~600 char ceiling (150 tokens).
+# Bumped from 100 -> 150 after live Discord showed responses with markets
+# context (paraphrase + take + cited URL) hitting max_tokens and truncating
+# mid-sentence. Persona still says "aim tweet length" so most replies stay
+# under 200 chars; the extra 50 tokens is headroom for the URL on the rare
+# response that needs one.
+MAX_TOKENS_REPLY = 150
 
 # Output-to-room posts: same tweet-length target as replies for the body
 # (200 chars / ~50 tokens), plus headroom for a trailing source URL (~30-60
@@ -525,10 +528,22 @@ class ClaudeClient:
             "\n"
             "LINK THE SOURCE (when there is one). If your answer is about a "
             "specific external thing (a tweet, a clip, an article, a news "
-            "event, a stat, a drop), end with one real URL. Pull it from: "
-            "URLs in the channel chatter (see the enriched-link block if "
-            "attached), the Perplexity SOURCES block, or your web_search "
-            "results. NEVER invent a URL.\n"
+            "event, a stat, a drop, a market), end with one real URL. Pull "
+            "it from: URLs in the channel chatter (see the enriched-link "
+            "block if attached), the Perplexity SOURCES block, your "
+            "web_search results, OR the MARKET CONTEXT block.\n"
+            "\n"
+            "  MARKET CITATIONS (hard rule, not soft): if you name a specific "
+            "market or quote a specific price / spread / probability from "
+            "MARKET CONTEXT, you MUST end your answer with that market's "
+            "URL (verbatim from MARKET CONTEXT, no edits). Naming 'Billboard "
+            "Hot 100 #1 Week of June 6' without ending with the matching URL "
+            "from MARKET CONTEXT is a fabrication (the user can't verify it). "
+            "Pick ONE specific market that exists in the block and link it. "
+            "If multiple markets are in the block, pick the one your take is "
+            "actually about.\n"
+            "\n"
+            "NEVER invent a URL.\n"
             "\n"
             "  DON'T REPASTE: if the URL you'd link was already posted in "
             "the user's question or in recent channel chatter, skip the "
@@ -787,15 +802,17 @@ class ClaudeClient:
             "SOURCE LINK. Hot take welcome.\n"
             "\n"
             "LINK THE SOURCE. End the post with one real URL: the tweet, "
-            "post, article, clip, or news item your take is reacting to. "
-            "Pull the URL from one of: the LINKS IN THE FEEDS block below, "
-            "the Perplexity SOURCES block, or a result from your web_search "
-            "call. NEVER invent a URL or guess at one.\n"
+            "post, article, clip, news item, OR market your take is reacting "
+            "to. Pull the URL from one of: the LINKS IN THE FEEDS block "
+            "below, the Perplexity SOURCES block, a result from your "
+            "web_search call, or the MARKET CONTEXT block (every market "
+            "snapshot has a URL, use it when citing odds / prices / "
+            "spreads / probabilities). NEVER invent a URL or guess at one.\n"
             "\n"
-            "Any of those three (feed links, Perplexity SOURCES, "
-            "web_search results) is equally fine: if a real link is "
-            "already sitting in the prompt, just use it. web_search still "
-            "runs as part of your normal grounding pass (see ALWAYS "
+            "Any of those four (feed links, Perplexity SOURCES, "
+            "web_search results, market URLs) is equally fine: if a real "
+            "link is already sitting in the prompt, just use it. web_search "
+            "still runs as part of your normal grounding pass (see ALWAYS "
             "web_search below), so use whatever URL it surfaces too. If "
             "the topic is the right call but no URL is in front of you, "
             "DON'T switch topics: keep searching until you find one.\n"
