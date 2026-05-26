@@ -9,7 +9,6 @@ import pytest
 
 from utils.markets import (
     KalshiClient,
-    MarketComment,
     MarketsManager,
     MarketSnapshot,
     PolymarketClient,
@@ -17,7 +16,6 @@ from utils.markets import (
     SportsGameOddsClient,
     classify_intent,
     detect_league,
-    format_comments_for_prompt,
     format_markets_for_prompt,
     format_price_history_for_prompt,
 )
@@ -685,58 +683,6 @@ async def test_polymarket_competitive_events_hits_correct_endpoint():
     assert call_args.kwargs["params"]["order"] == "competitive"
 
 
-# ---- Polymarket comments --------------------------------------------------
-
-
-async def test_polymarket_get_market_comments_parses_response():
-    client = PolymarketClient()
-    payload = [
-        {
-            "body": "this is a free money lock",
-            "profile": {"name": "degenchad"},
-            "reactionCount": 42,
-            "createdAt": "2026-05-25T12:00:00Z",
-        },
-        {
-            "body": "sharps disagree, take the other side",
-            "profile": {"name": "sharpsguy"},
-            "reactionCount": 8,
-        },
-    ]
-    with patch(
-        "utils.markets._get_session",
-        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
-    ):
-        result = await client.get_market_comments("event-123")
-    assert result is not None
-    assert len(result) == 2
-    assert isinstance(result[0], MarketComment)
-    assert result[0].author == "degenchad"
-    assert "free money" in result[0].text
-    assert result[0].upvotes == 42
-
-
-async def test_polymarket_comments_skips_empty_body():
-    client = PolymarketClient()
-    payload = [
-        {"body": "", "profile": {"name": "empty"}},
-        {"body": "real comment", "profile": {"name": "real"}},
-    ]
-    with patch(
-        "utils.markets._get_session",
-        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
-    ):
-        result = await client.get_market_comments("event-123")
-    assert result is not None
-    assert len(result) == 1
-    assert result[0].text == "real comment"
-
-
-async def test_polymarket_comments_requires_market_id():
-    client = PolymarketClient()
-    assert await client.get_market_comments("") is None
-
-
 # ---- Polymarket price history ---------------------------------------------
 
 
@@ -803,28 +749,6 @@ def test_format_markets_renders_multi_outcome():
     assert "Trump 42%" in out
     assert "Vance 31%" in out
     assert "Harris 18%" in out
-
-
-def test_format_comments_empty():
-    assert format_comments_for_prompt([]) == ""
-
-
-def test_format_comments_renders_author_and_upvotes():
-    out = format_comments_for_prompt([
-        MarketComment(market_id="m1", author="degen", text="lock", upvotes=10),
-        MarketComment(market_id="m1", author="", text="fading"),
-    ])
-    assert "@degen (+10): lock" in out
-    assert "@anon: fading" in out
-
-
-def test_format_comments_truncates_long_text():
-    long_text = "x" * 500
-    out = format_comments_for_prompt([
-        MarketComment(market_id="m1", author="a", text=long_text),
-    ])
-    assert "..." in out
-    assert len(out.splitlines()[-1]) < 280
 
 
 def test_format_price_history_summary():
