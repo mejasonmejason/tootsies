@@ -71,35 +71,35 @@ EXAMPLES: list[Example] = [
     ),
     # Prediction markets (hits both Poly + Kalshi)
     Example(
-        "will the fed cut rates at the next meeting",
+        "will beyonce drop a new album this year",
         "prediction_market", None,
-        "Fed rates, should hit both Poly and Kalshi",
+        "culture + prediction market, should hit Poly + Kalshi",
+    ),
+    Example(
+        "who wins best picture at the oscars",
+        "prediction_market", None,
+        "multi-outcome, Poly full field + Kalshi per-film contracts",
+    ),
+    Example(
+        "will GTA 6 come out this year",
+        "prediction_market", None,
+        "gaming + prediction market, should hit Poly + Kalshi",
+    ),
+    Example(
+        "will kendrick drop another album this year",
+        "prediction_market", None,
+        "music + prediction market, should hit Poly + Kalshi",
     ),
     Example(
         "who wins the nba championship this year",
         "sports", "NBA",
-        "championship futures, SGO + Kalshi + Poly",
-    ),
-    Example(
-        "sp500 above 6000 by friday",
-        "prediction_market", None,
-        "S&P 500 price target, Kalshi strong here",
-    ),
-    Example(
-        "bitcoin above 120k end of this week",
-        "prediction_market", None,
-        "crypto price, both platforms active",
-    ),
-    Example(
-        "will drake drop ICEMAN before july",
-        "prediction_market", None,
-        "culture + prediction market crossover",
+        "championship futures, SGO lines",
     ),
     # Control (should NOT trigger markets)
     Example(
-        "is drake done",
+        "is beyonce the greatest performer alive",
         "none", None,
-        "pure culture, no market intent",
+        "opinion question, no market intent",
     ),
     Example(
         "best taco spot in oakland",

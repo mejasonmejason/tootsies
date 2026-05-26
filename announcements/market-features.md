@@ -10,19 +10,22 @@ same `/ask`, same `@Toots`. she just checks the board before she answers now. sp
 `/ask avalanche golden knights over/under`
 > NHL playoff lines, which side she likes, cites the number.
 
-`/ask will the fed cut rates at the next meeting`
-> polymarket AND kalshi odds side by side. where the money's sitting.
+`/ask will beyonce drop a new album this year`
+> polymarket + kalshi both have odds on it. she pulls both.
 
-`/ask sp500 above 6000 by friday`
-> kalshi's regulated contracts on the S&P. real money, real %.
+`/ask who wins best picture at the oscars`
+> polymarket has the full field. kalshi has contracts on individual films. she shows you the race.
 
-`/ask will drake drop ICEMAN before july`
-> polymarket crowd odds on the album drop + her take on top.
+`/ask will GTA 6 come out this year`
+> kalshi has a contract on exactly that. polymarket too. real money says...
+
+`/ask will kendrick drop another album this year`
+> polymarket + kalshi both tracking it. she'll tell you what the crowd thinks.
 
 `/ask who wins the nba championship this year`
 > futures from the books + prediction market %s from both platforms.
 
-`/ask is drake done`
+`/ask is beyonce the greatest performer alive`
 > no odds for that one. just toots being toots.
 
 ## she won't
