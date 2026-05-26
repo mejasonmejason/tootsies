@@ -19,7 +19,7 @@ The discourse `mood` setting (set in `/menu`) is the single dial that controls e
 | Surface | `off` | `chill` | `yaps` |
 |---|---|---|---|
 | [`/discourse` scheduled posts](../cogs/discourse.py) | silent | 2/day at **12pm + 7pm ET** | 4/day at **10am, 2pm, 6pm, 10pm ET** |
-| [Chime-in](../cogs/chimein.py) | silent | up to **3/day**, **60 min** cooldown, score **>= 0.8** | up to **10/day**, **20 min** cooldown, score **>= 0.6** |
+| [Chime-in](../cogs/chimein.py) | silent | up to **5/day**, **60 min** cooldown, score **>= 0.8** | up to **10/day**, **20 min** cooldown, score **>= 0.6** |
 | Hours window (both) | n/a | 9am to 2am ET | 9am to 2am ET |
 | Tick frequency | n/a | scheduler: 1/min, chime-in: 1/min | scheduler: 1/min, chime-in: 1/min |
 
@@ -203,7 +203,7 @@ The cog then branches on the verdict for the user-facing message (different defl
 
 Toots leans into the conversation when she has something real to say. No commands of its own, it rides on two settings already in `/menu`:
 - **Listen channel:** the configured `discourse_channel`. Whatever room is your "chatter" / "general" channel is the one Toots will listen in on.
-- **On/off + cadence:** the discourse mood. `mood=off` silences chime-in; `chill` makes her reserved (3/day, 60 min cooldown, 0.8 threshold); `yaps` makes her chatty (10/day, 20 min cooldown, 0.6 threshold).
+- **On/off + cadence:** the discourse mood. `mood=off` silences chime-in; `chill` makes her reserved (5/day, 60 min cooldown, 0.8 threshold); `yaps` makes her chatty (10/day, 20 min cooldown, 0.6 threshold).
 
 ### Design intent
 
@@ -218,7 +218,7 @@ In [`cogs/chimein.py`](../cogs/chimein.py):
    - **mood_off_gate**: if the discourse mood is `off`, skip
    - **hours_gate**: only 9am-2am ET, else skip
    - **cooldown_gate**: no chime-in within the mood-tuned cooldown (60 min chill / 20 min yaps)
-   - **daily_cap_gate**: bounded by the mood-tuned daily cap (3 chill / 6 yaps) per channel per 24h
+   - **daily_cap_gate**: bounded by the mood-tuned daily cap (5 chill / 10 yaps) per channel per 24h
    - Calls **Haiku 4.5** [`chimein_score()`](../claude_client.py) on the buffer, returns `(score, vibe, hook)`
    - **vibe_gate**: drop if vibe in `{vulnerable, catchup, other}` (Toots doesn't interrupt private moments)
    - **threshold_gate**: drop if score < mood-tuned threshold (0.8 chill / 0.6 yaps)
