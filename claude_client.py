@@ -553,13 +553,13 @@ class ClaudeClient:
         )
         if rejected:
             emit(
-                "link_rejected", purpose="ask",
-                rejected_count=len(rejected), rejected_urls=rejected[:5],
+                "link_stripped", purpose="ask", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
             )
         if deduped:
             emit(
-                "link_deduped", purpose="ask",
-                deduped_count=len(deduped), deduped_urls=deduped[:5],
+                "link_stripped", purpose="ask", reason="redundant",
+                count=len(deduped), urls=deduped[:5],
             )
         return cleaned
 
@@ -860,13 +860,13 @@ class ClaudeClient:
         )
         if rejected:
             emit(
-                "link_rejected", purpose=purpose,
-                rejected_count=len(rejected), rejected_urls=rejected[:5],
+                "link_stripped", purpose=purpose, reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
             )
         if deduped:
             emit(
-                "link_deduped", purpose=purpose,
-                deduped_count=len(deduped), deduped_urls=deduped[:5],
+                "link_stripped", purpose=purpose, reason="redundant",
+                count=len(deduped), urls=deduped[:5],
             )
         return cleaned
 

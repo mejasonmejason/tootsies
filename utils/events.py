@@ -68,14 +68,17 @@ Known kinds (keep this list in sync with what's emitted):
   - perplexity_search   : Perplexity Sonar API call (utils/perplexity.py)
       purpose (ask|recap|discourse|chimein), ok, duration_ms,
       input_tokens, output_tokens, response_chars, error (on failure)
-  - link_rejected      : guardrail stripped a hallucinated URL (not in
-                         any source) from a post
+  - link_stripped      : guardrail removed a URL from the model's output.
+                         Fires once per reason: a single response can emit
+                         both a hallucinated event and a redundant event if
+                         the model wrote both kinds of bad URL.
       purpose (discourse_manual|discourse_scheduled|ask),
-      rejected_count, rejected_urls (capped at 5)
-  - link_deduped       : guardrail stripped a URL the user/room already
-                         saw recently (real URL, just redundant to relink)
-      purpose (discourse_manual|discourse_scheduled|ask),
-      deduped_count, deduped_urls (capped at 5)
+      reason (hallucinated|redundant),
+      count, urls (capped at 5)
+        hallucinated : URL not in any source (feed/Perplexity/web_search).
+        redundant    : URL is real but the user/room just saw it
+                       (recently_seen_urls match) so re-posting would be
+                       double-embed clutter.
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.
