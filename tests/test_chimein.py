@@ -34,6 +34,7 @@ from cogs.chimein import (
     ChimeIn,
     _is_parrot,
 )
+from cogs.discourse import _is_duplicate_of_recent
 from models import MoodMode, ScheduleState
 
 # ---- _parse_chimein_score ----------------------------------------------------
@@ -485,3 +486,31 @@ def test_parrot_empty_line() -> None:
 
 def test_parrot_empty_buffer() -> None:
     assert not _is_parrot("some generated text", [])
+
+
+# ---- discourse dedup gate -------------------------------------------------------
+
+
+def test_discourse_dedup_catches_exact_repeat() -> None:
+    recent = ["Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series"]
+    assert _is_duplicate_of_recent(
+        "Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series", recent,
+    )
+
+
+def test_discourse_dedup_catches_near_repeat() -> None:
+    recent = ["spider-noir drops tomorrow on prime, nic cage is wild"]
+    assert _is_duplicate_of_recent(
+        "spider-noir drops tomorrow on prime. nic cage is wild.", recent,
+    )
+
+
+def test_discourse_dedup_allows_different_topic() -> None:
+    recent = ["Spider-Noir drops tomorrow on Prime"]
+    assert not _is_duplicate_of_recent(
+        "knicks finals tickets going for 8k courtside, that's a mortgage payment", recent,
+    )
+
+
+def test_discourse_dedup_empty_recent() -> None:
+    assert not _is_duplicate_of_recent("any post", [])

@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import date, datetime, time, timedelta
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -66,6 +68,31 @@ _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS = 65.0
 # Post-generation quality gate: Haiku scores the generated post before it ships.
 # Below this threshold, scheduled slots are skipped and manual posts retry once.
 DISCOURSE_SCORE_THRESHOLD = 0.6
+
+DISCOURSE_DEDUP_SIMILARITY = 0.6
+
+_MENTION_RE = re.compile(r"<@!?\d+>")
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _normalize(text: str) -> str:
+    text = _MENTION_RE.sub("", text)
+    text = _URL_RE.sub("", text)
+    return " ".join(text.lower().split())
+
+
+def _is_duplicate_of_recent(line: str, recent_topics: list[str]) -> bool:
+    """Return True if `line` is too similar to any recently posted topic summary."""
+    norm_line = _normalize(line)
+    if not norm_line:
+        return False
+    for topic in recent_topics:
+        norm_topic = _normalize(topic)
+        if not norm_topic:
+            continue
+        if SequenceMatcher(None, norm_line, norm_topic).ratio() >= DISCOURSE_DEDUP_SIMILARITY:
+            return True
+    return False
 
 
 def _parse_retry_after_seconds(exc: anthropic.RateLimitError) -> float | None:
@@ -503,6 +530,21 @@ class Discourse(commands.Cog):
         if not line or line.strip().upper() == "EMPTY":
             log.info(
                 "scheduled slot skipped for guild %d channel %d, nothing fresh",
+                guild.id, channel_id,
+            )
+            return
+
+        recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
+        recent_summaries = [topic for _, topic, _ in recent_all]
+        if _is_duplicate_of_recent(line, recent_summaries):
+            emit(
+                "discourse_dedup",
+                guild_id=guild.id, channel_id=channel_id,
+                decision="similarity_gate",
+                post_preview=line[:120],
+            )
+            log.info(
+                "scheduled post deduped for guild %d channel %d, too similar to recent post",
                 guild.id, channel_id,
             )
             return
