@@ -34,6 +34,7 @@ from cogs.chimein import (
     ChimeIn,
 )
 from models import MoodMode, ScheduleState
+from utils.dedup import is_duplicate_of_recent
 
 # ---- _parse_chimein_score ----------------------------------------------------
 
@@ -448,3 +449,40 @@ async def test_stale_buffer_cleaned_on_channel_removal() -> None:
     await cog._maybe_chime_in_all()
     assert (1, 999) not in cog._buffers
     assert (1, 999) not in cog._new_since_eval
+
+
+# ---- dedup gate (shared by discourse + chimein) --------------------------------
+
+
+def test_dedup_catches_exact_repeat() -> None:
+    recent = ["Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series"]
+    assert is_duplicate_of_recent(
+        "Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series", recent,
+    )
+
+
+def test_dedup_catches_near_repeat() -> None:
+    recent = ["spider-noir drops tomorrow on prime, nic cage is wild"]
+    assert is_duplicate_of_recent(
+        "spider-noir drops tomorrow on prime. nic cage is wild.", recent,
+    )
+
+
+def test_dedup_allows_different_topic() -> None:
+    recent = ["Spider-Noir drops tomorrow on Prime"]
+    assert not is_duplicate_of_recent(
+        "knicks finals tickets going for 8k courtside, that's a mortgage payment", recent,
+    )
+
+
+def test_dedup_ignores_urls_and_mentions() -> None:
+    recent = ["check this out https://fxtwitter.com/foo <@123456>"]
+    assert not is_duplicate_of_recent("completely different take", recent)
+
+
+def test_dedup_empty_line() -> None:
+    assert not is_duplicate_of_recent("", ["some recent post"])
+
+
+def test_dedup_empty_recent() -> None:
+    assert not is_duplicate_of_recent("any post", [])

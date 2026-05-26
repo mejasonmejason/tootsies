@@ -26,6 +26,7 @@ from discord.ext import commands, tasks
 
 from models import MoodMode
 from utils import bot_logs, voice
+from utils.dedup import is_duplicate_of_recent
 from utils.events import emit, emit_error
 from utils.feeds import (
     format_for_prompt,
@@ -503,6 +504,21 @@ class Discourse(commands.Cog):
         if not line or line.strip().upper() == "EMPTY":
             log.info(
                 "scheduled slot skipped for guild %d channel %d, nothing fresh",
+                guild.id, channel_id,
+            )
+            return
+
+        recent_all = await self.bot.db.recent_discourse_all(guild.id, limit=20)
+        recent_summaries = [topic for _, topic, _ in recent_all]
+        if is_duplicate_of_recent(line, recent_summaries):
+            emit(
+                "discourse_dedup",
+                guild_id=guild.id, channel_id=channel_id,
+                decision="similarity_gate",
+                post_preview=line[:120],
+            )
+            log.info(
+                "scheduled post deduped for guild %d channel %d, too similar to recent post",
                 guild.id, channel_id,
             )
             return

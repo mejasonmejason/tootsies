@@ -42,6 +42,7 @@ import discord
 from discord.ext import commands, tasks
 
 from models import MoodMode
+from utils.dedup import is_duplicate_of_recent
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
 from utils.link_enrich import enrich_batch
@@ -336,6 +337,14 @@ class ChimeIn(commands.Cog):
             emit(
                 "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="empty_generation", vibe=vibe, score=score,
+            )
+            return
+
+        recent_summaries = [topic for _, topic, _ in recent_all]
+        if is_duplicate_of_recent(line, recent_summaries):
+            emit(
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                decision="dedup_gate", vibe=vibe, score=score,
             )
             return
 
