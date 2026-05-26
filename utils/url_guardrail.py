@@ -126,6 +126,7 @@ def enforce_source_links(
     perplexity_context: str | None = None,
     web_search_urls: list[str] | None = None,
     recently_seen_urls: list[str] | None = None,
+    market_urls: list[str] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """One-call guardrail: assemble the allowlist from the standard source
     channels and enforce it on `text`, with optional dedup.
@@ -141,11 +142,15 @@ def enforce_source_links(
       buffer (discourse) or the user's question + recent chatter (ask).
       Added to the allowlist (so they're not flagged as hallucinations)
       AND tracked for dedup (so they're stripped even though allowed).
+    - market_urls: URLs from MarketSnapshot.url fields (polymarket.com,
+      kalshi.com, sportsgameodds.com). Without this the constitution's
+      "cite the market source" rule is decorative: the model would write
+      the URL and the guardrail would strip it as a hallucination.
 
     Returns (cleaned_text, rejected, deduped). Empty input lists are fine.
     """
     allowlist: list[str] = []
-    for src in (feed_urls, web_search_urls, recently_seen_urls):
+    for src in (feed_urls, web_search_urls, recently_seen_urls, market_urls):
         if src:
             allowlist.extend(src)
     if perplexity_context:

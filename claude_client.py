@@ -585,12 +585,17 @@ class ClaudeClient:
             [link.url for link in enriched_links if link.url]
             if enriched_links else None
         )
+        market_urls = (
+            [snap.url for snap in markets_context if snap.url]
+            if markets_context else None
+        )
         cleaned, rejected, deduped = enforce_source_links(
             result.text,
             feed_urls=feed_urls,
             perplexity_context=perplexity_context,
             web_search_urls=result.web_search_urls,
             recently_seen_urls=recently_seen_urls,
+            market_urls=market_urls,
         )
         if rejected:
             emit(
@@ -897,12 +902,17 @@ class ClaudeClient:
         # visible in the destination channel's recent buffer.
         purpose = "discourse_manual" if must_post else "discourse_scheduled"
         feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
+        market_urls = (
+            [snap.url for snap in markets_context if snap.url]
+            if markets_context else None
+        )
         cleaned, rejected, deduped = enforce_source_links(
             result.text,
             feed_urls=feed_urls,
             perplexity_context=perplexity_context,
             web_search_urls=result.web_search_urls,
             recently_seen_urls=recently_seen_urls,
+            market_urls=market_urls,
         )
         if rejected:
             emit(

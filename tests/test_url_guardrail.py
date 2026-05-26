@@ -259,3 +259,53 @@ def test_source_links_no_sources_strips_all():
     cleaned, rejected, _ = enforce_source_links(text)
     assert "example.com" not in cleaned
     assert rejected == ["https://example.com/foo"]
+
+
+def test_source_links_market_urls_in_allowlist():
+    """Market URLs from MarketSnapshot.url are real and must pass the guardrail."""
+    text = (
+        "polymarket has it at 38%. https://polymarket.com/event/drake-july"
+    )
+    cleaned, rejected, _ = enforce_source_links(
+        text,
+        market_urls=["https://polymarket.com/event/drake-july"],
+    )
+    assert "polymarket.com/event/drake-july" in cleaned
+    assert rejected == []
+
+
+def test_source_links_market_urls_combined_with_other_sources():
+    """Market URLs add to the allowlist alongside feed/pplx/web_search/recently_seen."""
+    text = (
+        "stack of takes.\n"
+        "https://feed.example/a\n"
+        "https://polymarket.com/event/x\n"
+        "https://kalshi.com/markets/PRES2028\n"
+        "https://hallucinated.example/x"
+    )
+    cleaned, rejected, _ = enforce_source_links(
+        text,
+        feed_urls=["https://feed.example/a"],
+        market_urls=[
+            "https://polymarket.com/event/x",
+            "https://kalshi.com/markets/PRES2028",
+        ],
+    )
+    assert "feed.example" in cleaned
+    assert "polymarket.com/event/x" in cleaned
+    assert "kalshi.com/markets/PRES2028" in cleaned
+    assert "hallucinated" not in cleaned
+    assert rejected == ["https://hallucinated.example/x"]
+
+
+def test_source_links_market_urls_none_or_empty_no_change():
+    """Passing None/empty for market_urls behaves like the old call shape."""
+    text = "take.\nhttps://hallucinated.example/x"
+    cleaned_none, rejected_none, _ = enforce_source_links(
+        text, market_urls=None,
+    )
+    cleaned_empty, rejected_empty, _ = enforce_source_links(
+        text, market_urls=[],
+    )
+    assert cleaned_none == cleaned_empty
+    assert rejected_none == rejected_empty == ["https://hallucinated.example/x"]
