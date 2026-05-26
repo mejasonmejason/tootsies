@@ -2,22 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from utils.url_guardrail import (
     enforce_allowlist,
     enforce_source_links,
-    ensure_market_citation,
     extract_urls,
     normalize,
 )
-
-
-@dataclass
-class _Snap:
-    """Minimal snapshot stub for ensure_market_citation tests."""
-    title: str
-    url: str
 
 # ---- normalize ----------------------------------------------------------------
 
@@ -321,71 +311,3 @@ def test_source_links_market_urls_none_or_empty_no_change():
     assert rejected_none == rejected_empty == ["https://hallucinated.example/x"]
 
 
-# ---- ensure_market_citation -------------------------------------------------
-
-
-def test_market_citation_appends_when_title_appears_in_response():
-    """Append a market URL when the response actually mentions the snapshot title."""
-    snaps = [_Snap("Lakers @ Spurs", "https://polymarket.com/event/lakers-spurs")]
-    out = ensure_market_citation("the lakers @ spurs game is a trap.", snaps)
-    assert "https://polymarket.com/event/lakers-spurs" in out
-
-
-def test_market_citation_falls_back_to_first_snapshot_when_no_title_match():
-    """When no snapshot title matches the response, fall back to first snapshot.
-    Relies on the source-side filters (e.g. MVE filter on Kalshi) to keep the
-    snapshot pool relevant; we don't second-guess them here."""
-    snaps = [_Snap("Some Market", "https://polymarket.com/event/some")]
-    out = ensure_market_citation("Drake albums tonight.", snaps)
-    assert "https://polymarket.com/event/some" in out
-
-
-def test_market_citation_noop_when_response_already_has_market_url():
-    """If the response already cites one of the snapshot URLs, no-op."""
-    snaps = [_Snap("Lakers", "https://polymarket.com/event/lakers")]
-    text = "take em. https://polymarket.com/event/lakers"
-    assert ensure_market_citation(text, snaps) == text
-
-
-def test_market_citation_respects_recently_seen_urls():
-    """Don't repost a URL the user just saw, even via the mechanical append."""
-    snaps = [_Snap("Lakers", "https://polymarket.com/event/lakers")]
-    out = ensure_market_citation(
-        "Lakers tonight, take em.",
-        snaps,
-        recently_seen_urls=["https://polymarket.com/event/lakers"],
-    )
-    # URL was in recently_seen, no append.
-    assert "polymarket.com" not in out
-
-
-def test_market_citation_picks_unseen_snapshot_when_one_seen():
-    """If snapshot A was seen but snapshot B wasn't, append B."""
-    snaps = [
-        _Snap("Lakers", "https://polymarket.com/event/lakers"),
-        _Snap("Warriors", "https://polymarket.com/event/warriors"),
-    ]
-    out = ensure_market_citation(
-        "Warriors tonight",
-        snaps,
-        recently_seen_urls=["https://polymarket.com/event/lakers"],
-    )
-    assert "https://polymarket.com/event/warriors" in out
-    assert "polymarket.com/event/lakers" not in out
-
-
-def test_market_citation_noop_when_no_snapshots():
-    assert ensure_market_citation("take it", None) == "take it"
-    assert ensure_market_citation("take it", []) == "take it"
-
-
-def test_market_citation_title_match_picks_relevant_snapshot():
-    """If response mentions a snapshot's title, that snapshot's URL is used."""
-    snaps = [
-        _Snap("Lakers", "https://polymarket.com/event/lakers"),
-        _Snap("Warriors", "https://polymarket.com/event/warriors"),
-    ]
-    out = ensure_market_citation("warriors covering tonight", snaps)
-    assert "https://polymarket.com/event/warriors" in out
-    # Lakers URL not appended even though it's the first snapshot.
-    assert "polymarket.com/event/lakers" not in out
