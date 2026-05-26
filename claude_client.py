@@ -618,7 +618,9 @@ class ClaudeClient:
         # Mechanical safety net: force-append a market URL if she cited market
         # data without one. The prompt rule asks her to, but Haiku routinely
         # forgets under prompt pressure (long system_extra + DATA INTEGRITY).
-        cleaned = ensure_market_citation(cleaned, markets_context)
+        cleaned = ensure_market_citation(
+            cleaned, markets_context, recently_seen_urls=recently_seen_urls,
+        )
         if rejected:
             emit(
                 "link_stripped", purpose="ask", reason="hallucinated",
@@ -940,7 +942,9 @@ class ClaudeClient:
         )
         # Same mechanical safety net as /ask: force-append a market URL if
         # she cited market data without one.
-        cleaned = ensure_market_citation(cleaned, markets_context)
+        cleaned = ensure_market_citation(
+            cleaned, markets_context, recently_seen_urls=recently_seen_urls,
+        )
         if rejected:
             emit(
                 "link_stripped", purpose=purpose, reason="hallucinated",
