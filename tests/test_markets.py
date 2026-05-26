@@ -510,38 +510,49 @@ async def test_manager_sports_query_skips_when_no_sgo_key():
     assert result is None
 
 
-async def test_manager_pm_query_calls_polymarket():
+async def test_manager_pm_query_hits_both_sources_in_parallel():
+    """Polymarket and Kalshi are peer sources, not fallback. Both fire."""
     m = MarketsManager(sgo_api_key=None)
-    expected = [
-        MarketSnapshot(source="polymarket", title="Drake", url="u", probability=0.3),
-    ]
-    m.polymarket.search_markets = AsyncMock(return_value=expected)  # type: ignore[method-assign]
-    m.kalshi.get_open_markets = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    poly = [MarketSnapshot(source="polymarket", title="P", url="u", probability=0.3)]
+    kalshi = [MarketSnapshot(source="kalshi", title="K", url="u2", probability=0.4)]
+    m.polymarket.search_markets = AsyncMock(return_value=poly)  # type: ignore[method-assign]
+    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi)  # type: ignore[method-assign]
     result = await m.get_context("will drake drop an album by july")
-    assert result == expected
-    m.polymarket.search_markets.assert_awaited_once()
-
-
-async def test_manager_pm_query_falls_back_to_kalshi():
-    m = MarketsManager(sgo_api_key=None)
-    kalshi_snaps = [
-        MarketSnapshot(source="kalshi", title="K1", url="u1", probability=0.5),
-        MarketSnapshot(source="kalshi", title="K2", url="u2", probability=0.6),
-        MarketSnapshot(source="kalshi", title="K3", url="u3", probability=0.7),
-        MarketSnapshot(source="kalshi", title="K4", url="u4", probability=0.8),
-    ]
-    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
-    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi_snaps)  # type: ignore[method-assign]
-    result = await m.get_context("polymarket chances of the election")
     assert result is not None
-    # Kalshi fallback returns top 3 only.
-    assert len(result) == 3
-    assert all(s.source == "kalshi" for s in result)
+    # Default order: Polymarket first, Kalshi after.
+    assert [s.source for s in result] == ["polymarket", "kalshi"]
+    m.polymarket.search_markets.assert_awaited_once()
+    m.kalshi.get_open_markets.assert_awaited_once()
+
+
+async def test_manager_pm_kalshi_first_when_user_mentions_kalshi():
+    """When the query says 'kalshi', Kalshi results lead the list."""
+    m = MarketsManager(sgo_api_key=None)
+    poly = [MarketSnapshot(source="polymarket", title="P", url="u", probability=0.3)]
+    kalshi = [MarketSnapshot(source="kalshi", title="K", url="u2", probability=0.4)]
+    m.polymarket.search_markets = AsyncMock(return_value=poly)  # type: ignore[method-assign]
+    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi)  # type: ignore[method-assign]
+    result = await m.get_context("any spicy kalshi markets right now")
+    assert result is not None
+    assert [s.source for s in result] == ["kalshi", "polymarket"]
+
+
+async def test_manager_pm_one_source_outage_keeps_other():
+    """If one source errors, the other source's results still come through."""
+    m = MarketsManager(sgo_api_key=None)
+    kalshi_snaps = [MarketSnapshot(source="kalshi", title="K", url="u", probability=0.5)]
+    m.polymarket.search_markets = AsyncMock(side_effect=RuntimeError("polymarket down"))  # type: ignore[method-assign]
+    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi_snaps)  # type: ignore[method-assign]
+    # Prompt mentions polymarket/kalshi so regex classifier routes to PM intent.
+    result = await m.get_context("polymarket trump 2028 election")
+    assert result == kalshi_snaps
 
 
 async def test_manager_fails_open_on_exception():
+    """Both PM sources fail -> manager returns None."""
     m = MarketsManager(sgo_api_key=None)
     m.polymarket.search_markets = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+    m.kalshi.get_open_markets = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
     result = await m.get_context("will drake drop by july")
     assert result is None
 
@@ -586,7 +597,8 @@ async def test_manager_classifier_uses_search_terms_for_pm():
     m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
     m.kalshi.get_open_markets = AsyncMock(return_value=[])  # type: ignore[method-assign]
     await m.get_context("anything about drake")
-    m.polymarket.search_markets.assert_awaited_once_with("drake album july", limit=5)
+    m.polymarket.search_markets.assert_awaited_once_with("drake album july", limit=4)
+    m.kalshi.get_open_markets.assert_awaited_once_with(limit=4)
 
 
 async def test_manager_classifier_failure_falls_back_to_regex():

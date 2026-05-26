@@ -24,6 +24,7 @@ cache_hit, result_count, error) for the dashboard.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -1052,9 +1053,30 @@ class MarketsManager:
         return snaps[:5] if snaps else None
 
     async def _pm_snapshots(self, search_terms: str) -> list[MarketSnapshot] | None:
-        # Polymarket search first (broader topic coverage), Kalshi fallback.
-        snaps = await self.polymarket.search_markets(search_terms, limit=5)
-        if snaps:
-            return snaps
-        kalshi_snaps = await self.kalshi.get_open_markets(limit=5)
-        return kalshi_snaps[:3] if kalshi_snaps else None
+        """Fetch prediction-market snapshots from Polymarket + Kalshi.
+
+        Both are peer sources, not Polymarket-first-Kalshi-fallback. We hit
+        them in parallel and combine. If the user mentions one platform
+        explicitly ("kalshi", "polymarket"), we still query both but their
+        preferred platform's results appear first in the list.
+
+        return_exceptions=True so a single-source outage doesn't blank the
+        other source's results.
+        """
+        lower = search_terms.lower()
+        kalshi_first = "kalshi" in lower and "polymarket" not in lower
+
+        poly_task = self.polymarket.search_markets(search_terms, limit=4)
+        kalshi_task = self.kalshi.get_open_markets(limit=4)
+        results = await asyncio.gather(
+            poly_task, kalshi_task, return_exceptions=True,
+        )
+        poly_snaps = results[0] if isinstance(results[0], list) else []
+        kalshi_snaps = results[1] if isinstance(results[1], list) else []
+
+        combined = (
+            kalshi_snaps + poly_snaps
+            if kalshi_first
+            else poly_snaps + kalshi_snaps
+        )
+        return combined or None
