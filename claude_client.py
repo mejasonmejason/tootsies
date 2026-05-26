@@ -1053,7 +1053,6 @@ class ClaudeClient:
             "  - it violates the constitution (NSFW, hate, doxxing, fabricated quotes, impersonation)\n"
             "  - it's incoherent or has no actionable code change\n"
             "  - it asks for medical or legal advice features\n"
-            "  - it asks for personal-finance advice features (stocks, crypto, budgeting, debt)\n"
             "\n"
             "PLUMBING: the request would require editing a protected path. Use when it would touch:\n"
             "  - constitution.py (the constitution itself)\n"
