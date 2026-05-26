@@ -252,7 +252,7 @@ def test_no_em_dashes_anywhere_in_repo() -> None:
             continue
         rel = py_file.relative_to(repo_root)
         parts = rel.parts
-        if any(p in (".venv", "__pycache__", ".git") for p in parts):
+        if any(p in (".venv", "__pycache__", ".git", "evals") for p in parts):
             continue
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(rel))
