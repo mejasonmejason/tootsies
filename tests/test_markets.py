@@ -274,7 +274,8 @@ async def test_kalshi_parses_markets():
     payload = {
         "markets": [
             {
-                "ticker": "PRES2028-DJT",
+                "ticker": "KXPRES2028-DJT-T1",
+                "event_ticker": "KXPRES2028-DJT",
                 "title": "Trump wins 2028 election",
                 "yes_bid_dollars": 0.30,
                 "yes_ask_dollars": 0.34,
@@ -293,10 +294,34 @@ async def test_kalshi_parses_markets():
     assert len(result) == 1
     snap = result[0]
     assert snap.source == "kalshi"
-    # Midpoint of bid/ask
+    # Midpoint of bid/ask.
     assert snap.probability == pytest.approx(0.32)
-    assert "PRES2028-DJT" in snap.url
-    assert snap.meta["ticker"] == "PRES2028-DJT"
+    # URL prefers event_ticker (cleaner web URL) over the full market ticker
+    # which is hash-like and doesn't appear in Kalshi's frontend routing.
+    assert snap.url == "https://kalshi.com/markets/KXPRES2028-DJT"
+    assert snap.meta["ticker"] == "KXPRES2028-DJT-T1"
+    assert snap.meta["event_ticker"] == "KXPRES2028-DJT"
+
+
+async def test_kalshi_falls_back_to_ticker_when_no_event_ticker():
+    """If event_ticker is missing, fall back to the market ticker for the URL."""
+    client = KalshiClient()
+    payload = {
+        "markets": [
+            {
+                "ticker": "T",
+                "title": "Standalone market",
+                "yes_bid_dollars": 0.5,
+            },
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_open_markets()
+    assert result is not None
+    assert result[0].url == "https://kalshi.com/markets/T"
 
 
 async def test_kalshi_handles_only_bid():

@@ -793,6 +793,7 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
     if not isinstance(market, dict):
         return None
     ticker = market.get("ticker") or ""
+    event_ticker = market.get("event_ticker") or ""
     title = market.get("title") or ""
     if not title:
         return None
@@ -807,13 +808,20 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
         probability = float(yes_bid)
     elif isinstance(yes_ask, int | float):
         probability = float(yes_ask)
+    # URL: prefer event_ticker over the full market ticker. Market tickers
+    # are hash-like (e.g. "KXMVENBASINGLEGAME-S20265B7F41E94F0-619C418D98A")
+    # and don't appear in Kalshi's web URLs; event tickers are the canonical
+    # parent (e.g. "KXMVENBASINGLEGAME-S20265B7F41E94F0") and land on the
+    # event page where all related markets are listed.
+    url_slug = event_ticker or ticker
     return MarketSnapshot(
         source="kalshi",
         title=str(title),
-        url=f"https://kalshi.com/markets/{ticker}" if ticker else "",
+        url=f"https://kalshi.com/markets/{url_slug}" if url_slug else "",
         probability=probability,
         meta={
             "ticker": ticker,
+            "event_ticker": event_ticker,
             "volume": market.get("volume_fp"),
             "liquidity": market.get("liquidity_dollars"),
             "expiration": market.get("expiration_time"),
