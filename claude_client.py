@@ -41,6 +41,43 @@ _CHIMEIN_VIBES = {
 }
 
 
+def _parse_market_intent(text: str) -> dict[str, Any] | None:
+    """Parse Claude's classify_market_intent response into a routing dict.
+
+    Expected shape from the prompt:
+      {"intent": "sports"|"prediction_market"|"none",
+       "league": "NBA"|"NFL"|...|null,
+       "search_terms": "..."}
+
+    Returns None for intent="none" or on any parse failure (fail-open: callers
+    fall through to "no markets context" which is the safe default).
+    """
+    import json
+    import re
+
+    if not text:
+        return None
+    cleaned = re.sub(r"^```\w*\s*|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    match = re.search(r"\{[^{}]*\}", cleaned)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    intent = data.get("intent")
+    if intent not in ("sports", "prediction_market"):
+        return None
+    out: dict[str, Any] = {"intent": intent}
+    league = data.get("league")
+    if isinstance(league, str) and league:
+        out["league"] = league.upper()
+    search_terms = data.get("search_terms")
+    if isinstance(search_terms, str) and search_terms.strip():
+        out["search_terms"] = search_terms.strip()
+    return out
+
+
 def _parse_chimein_score(text: str) -> tuple[float, str, str]:
     """Parse Claude's chimein_score response into (score, vibe, hook).
 
@@ -682,6 +719,7 @@ class ClaudeClient:
         enriched_links: list[EnrichedLink] | None = None,
         perplexity_context: str | None = None,
         recently_seen_urls: list[str] | None = None,
+        markets_context: list[MarketSnapshot] | None = None,
     ) -> str:
         """Generate a discourse-starter post pulling from feeds + web.
 
@@ -734,6 +772,10 @@ class ClaudeClient:
         perplexity_block = ""
         if perplexity_context:
             perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
+
+        markets_block = ""
+        if markets_context:
+            markets_block = "\n\n" + format_markets_for_prompt(markets_context)
 
         system_extra = (
             "TASK: Post one conversation-starter in your voice with a "
@@ -835,7 +877,7 @@ class ClaudeClient:
             "'just dropped'. A finale that aired 5 days ago is not "
             "'tonight'. Wrong times go out public and kill credibility. "
             "When in doubt, include the actual date."
-            f"{hot_urls_block}{enriched_block}{perplexity_block}{dedup_clause}"
+            f"{hot_urls_block}{enriched_block}{perplexity_block}{markets_block}{dedup_clause}"
             + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
@@ -947,6 +989,7 @@ class ClaudeClient:
         enriched_links: list[EnrichedLink] | None = None,
         recent_posts: str = "",
         perplexity_context: str | None = None,
+        markets_context: list[MarketSnapshot] | None = None,
     ) -> str:
         """Generate the actual chime-in take given the buffer + scored hook.
 
@@ -1007,7 +1050,13 @@ class ClaudeClient:
         perplexity_block = ""
         if perplexity_context:
             perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
-        user = f"Buffer (oldest first):\n{buffer_blob}{enriched_block}{perplexity_block}{dedup_block}"
+        markets_block = ""
+        if markets_context:
+            markets_block = "\n\n" + format_markets_for_prompt(markets_context)
+        user = (
+            f"Buffer (oldest first):\n{buffer_blob}"
+            f"{enriched_block}{perplexity_block}{markets_block}{dedup_block}"
+        )
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
@@ -1029,6 +1078,64 @@ class ClaudeClient:
             purpose="deflect",
         )
         return result.text
+
+    async def classify_market_intent(self, query: str) -> dict[str, Any] | None:
+        """Route a user query to the right market source via a Haiku call.
+
+        Returns:
+          None if the query has no market intent (or on parse / API failure).
+          {"intent": "sports", "league": "NBA", "search_terms": "..."} for
+            sports questions; "league" defaults to NBA if extraction failed.
+          {"intent": "prediction_market", "search_terms": "..."} for
+            future-event questions Polymarket / Kalshi might cover.
+
+        Replaces the regex classify_intent + detect_league in utils.markets:
+        Haiku understands team-name -> league mapping ("OKC" -> NBA), catches
+        prediction-market questions phrased without "will...by..." trigger words,
+        and gives Polymarket better search terms than the raw user query.
+        """
+        if not query or not query.strip():
+            return None
+        system_extra = (
+            "TASK: Classify a Discord message into one of three buckets so the "
+            "bot knows whether to fetch live market data before answering.\n"
+            "\n"
+            "Buckets:\n"
+            "  sports             - asking about a specific game, parlay, player "
+            "prop, spread, moneyline, total. Mentions teams, leagues, or betting "
+            "vocabulary.\n"
+            "  prediction_market  - asking about a future event Polymarket / "
+            "Kalshi might list: elections, culture moments (will X drop by Y), "
+            "policy outcomes, celebrity beefs, anything 'will X happen'.\n"
+            "  none               - anything else: general chat, image questions, "
+            "personal advice, jokes, unrelated topics.\n"
+            "\n"
+            "If sports, also identify the league. Use one of: "
+            "NBA, NFL, MLB, NHL, UFC, MLS, UCL, CFB, CBB. Map team names if "
+            "the user didn't say the league outright (OKC/Thunder/Spurs -> NBA, "
+            "Chiefs/Ravens -> NFL, etc.). Default to NBA if unsure.\n"
+            "\n"
+            "If sports or prediction_market, also extract 2-6 search terms that "
+            "would be useful for fetching the relevant market (drop filler words, "
+            "keep team names, market topics, key entities).\n"
+            "\n"
+            "Respond on ONE line in EXACTLY this JSON shape (no markdown):\n"
+            "  {\"intent\": \"sports\", \"league\": \"NBA\", \"search_terms\": "
+            "\"OKC Spurs game 5\"}\n"
+            "  {\"intent\": \"prediction_market\", \"league\": null, "
+            "\"search_terms\": \"drake album july\"}\n"
+            "  {\"intent\": \"none\", \"league\": null, \"search_terms\": \"\"}"
+        )
+        try:
+            result = await self._call(
+                model=HAIKU, user_message=query, system_extra=system_extra,
+                max_tokens=120,
+                purpose="market_intent",
+            )
+        except Exception:
+            log.exception("classify_market_intent _call failed")
+            return None
+        return _parse_market_intent(result.text)
 
     async def preflight_order(
         self, request: str, channel_context: str = "",

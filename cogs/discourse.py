@@ -35,6 +35,7 @@ from utils.feeds import (
 )
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
+from utils.markets import MarketSnapshot
 from utils.metrics import track_command
 from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
@@ -227,8 +228,9 @@ class Discourse(commands.Cog):
         image_urls = recent_image_urls(all_feed_msgs, limit=8)
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
-        # Run link enrichment, Perplexity search, and DB history fetch in parallel.
-        # return_exceptions=True so a Perplexity outage can't cancel the others.
+        # Run link enrichment, Perplexity search, markets fetch, and DB history
+        # in parallel. return_exceptions=True so one fetcher's outage can't
+        # cancel the others.
         coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
         pplx_idx = -1
         pplx = self.bot.perplexity
@@ -241,6 +243,12 @@ class Discourse(commands.Cog):
                 ),
                 purpose="discourse",
             ))
+        # The "query" for markets in /discourse is the category + channel name,
+        # which feeds the Haiku classifier and gets routed to SGO (if sports) or
+        # Polymarket/Kalshi (if culture/elections/etc.).
+        markets_query = f"{category or ''} {channel.name}".strip() or channel.name
+        markets_idx = len(coros)
+        coros.append(self.bot.markets.get_context(markets_query))
         db_idx = len(coros)
         coros.append(self.bot.db.recent_discourse_all(guild.id, limit=20))
 
@@ -249,6 +257,10 @@ class Discourse(commands.Cog):
         pplx_result: str | None = (
             raw[pplx_idx]  # type: ignore[assignment]
             if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
+        markets_raw = raw[markets_idx]
+        markets_result: list[MarketSnapshot] | None = (
+            markets_raw if isinstance(markets_raw, list) else None
         )
         recent_all: list[Any] = (
             raw[db_idx] if not isinstance(raw[db_idx], BaseException) else []  # type: ignore[assignment]
@@ -277,6 +289,7 @@ class Discourse(commands.Cog):
             enriched_links=enriched,
             perplexity_context=pplx_result,
             recently_seen_urls=recently_seen_urls,
+            markets_context=markets_result,
         )
 
         if not line or line.strip().upper() == "EMPTY":

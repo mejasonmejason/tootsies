@@ -452,3 +452,69 @@ async def test_manager_fails_open_on_exception():
     m.polymarket.search_markets = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
     result = await m.get_context("will drake drop by july")
     assert result is None
+
+
+# ---- MarketsManager with Haiku classifier injected -----------------------
+
+
+async def test_manager_uses_haiku_classifier_when_injected():
+    classifier = AsyncMock(return_value={
+        "intent": "sports",
+        "league": "NBA",
+        "search_terms": "OKC Spurs game 5",
+    })
+    m = MarketsManager(sgo_api_key="test", intent_classifier=classifier)
+    expected = [MarketSnapshot(source="sgo", title="OKC @ SAS", url="u", odds={})]
+    m.sgo.get_event_odds = AsyncMock(return_value=expected)  # type: ignore[method-assign]
+    # Note: query has no regex-matchable keyword, but Haiku classified it as NBA.
+    result = await m.get_context("any reads on tonight")
+    assert result == expected
+    classifier.assert_awaited_once()
+    m.sgo.get_event_odds.assert_awaited_once_with("NBA", purpose="ask")
+
+
+async def test_manager_classifier_extracted_league_routes_to_league():
+    classifier = AsyncMock(return_value={
+        "intent": "sports",
+        "league": "NFL",
+        "search_terms": "chiefs ravens",
+    })
+    m = MarketsManager(sgo_api_key="test", intent_classifier=classifier)
+    m.sgo.get_event_odds = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    await m.get_context("chiefs vs ravens take")
+    m.sgo.get_event_odds.assert_awaited_once_with("NFL", purpose="ask")
+
+
+async def test_manager_classifier_uses_search_terms_for_pm():
+    classifier = AsyncMock(return_value={
+        "intent": "prediction_market",
+        "search_terms": "drake album july",
+    })
+    m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi.get_open_markets = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    await m.get_context("anything about drake")
+    m.polymarket.search_markets.assert_awaited_once_with("drake album july", limit=5)
+
+
+async def test_manager_classifier_failure_falls_back_to_regex():
+    """If the Haiku classifier errors, the manager should still try regex."""
+    classifier = AsyncMock(side_effect=RuntimeError("haiku down"))
+    m = MarketsManager(sgo_api_key="test", intent_classifier=classifier)
+    expected = [MarketSnapshot(source="sgo", title="A", url="u", odds={})]
+    m.sgo.get_event_odds = AsyncMock(return_value=expected)  # type: ignore[method-assign]
+    # The query DOES contain regex-matchable keywords, so fallback should fire.
+    result = await m.get_context("any good NBA parlays tonight")
+    assert result == expected
+    m.sgo.get_event_odds.assert_awaited_once()
+
+
+async def test_manager_classifier_returns_none_no_fetch():
+    classifier = AsyncMock(return_value=None)
+    m = MarketsManager(sgo_api_key="test", intent_classifier=classifier)
+    m.sgo.get_event_odds = AsyncMock()  # type: ignore[method-assign]
+    m.polymarket.search_markets = AsyncMock()  # type: ignore[method-assign]
+    result = await m.get_context("totally unrelated question")
+    assert result is None
+    m.sgo.get_event_odds.assert_not_awaited()
+    m.polymarket.search_markets.assert_not_awaited()

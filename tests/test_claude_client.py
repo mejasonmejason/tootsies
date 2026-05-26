@@ -430,3 +430,81 @@ async def test_preflight_uses_sonnet() -> None:
         await client.preflight_order("add /foo")
     assert fake.call_args.kwargs["model"] == SONNET
     assert fake.call_args.kwargs["purpose"] == "order_preflight"
+
+
+# ---- classify_market_intent ----------------------------------------------------
+
+
+from claude_client import _parse_market_intent  # noqa: E402
+
+
+def test_parse_market_intent_sports():
+    out = _parse_market_intent(
+        '{"intent": "sports", "league": "nba", "search_terms": "OKC Spurs"}'
+    )
+    assert out is not None
+    assert out["intent"] == "sports"
+    assert out["league"] == "NBA"
+    assert out["search_terms"] == "OKC Spurs"
+
+
+def test_parse_market_intent_prediction_market():
+    out = _parse_market_intent(
+        '{"intent": "prediction_market", "league": null, "search_terms": "drake album"}'
+    )
+    assert out is not None
+    assert out["intent"] == "prediction_market"
+    assert "league" not in out
+    assert out["search_terms"] == "drake album"
+
+
+def test_parse_market_intent_none_returns_none():
+    assert _parse_market_intent(
+        '{"intent": "none", "league": null, "search_terms": ""}'
+    ) is None
+
+
+def test_parse_market_intent_with_code_fences():
+    out = _parse_market_intent(
+        '```json\n{"intent": "sports", "league": "NFL", "search_terms": "chiefs"}\n```'
+    )
+    assert out is not None
+    assert out["league"] == "NFL"
+
+
+def test_parse_market_intent_unparseable():
+    assert _parse_market_intent("not json at all") is None
+    assert _parse_market_intent("") is None
+    assert _parse_market_intent('{"intent": "weird_value"}') is None
+
+
+@pytest.mark.asyncio
+async def test_classify_market_intent_uses_haiku():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(
+        text='{"intent": "sports", "league": "NBA", "search_terms": "OKC Spurs"}',
+    ))
+    with patch.object(client, "_call", fake):
+        result = await client.classify_market_intent("OKC vs Spurs tonight")
+    assert result == {"intent": "sports", "league": "NBA", "search_terms": "OKC Spurs"}
+    assert fake.call_args.kwargs["model"] == HAIKU
+    assert fake.call_args.kwargs["purpose"] == "market_intent"
+
+
+@pytest.mark.asyncio
+async def test_classify_market_intent_empty_query_returns_none_without_call():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock()
+    with patch.object(client, "_call", fake):
+        result = await client.classify_market_intent("")
+    assert result is None
+    fake.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_classify_market_intent_api_failure_returns_none():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(side_effect=RuntimeError("api down"))
+    with patch.object(client, "_call", fake):
+        result = await client.classify_market_intent("anything")
+    assert result is None
