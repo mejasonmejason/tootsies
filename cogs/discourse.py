@@ -353,10 +353,11 @@ class Discourse(commands.Cog):
                 return voice.pick(voice.DISCOURSE_FALLBACK)
             return ""
 
-        # Post-generation quality gate: Haiku scores engagement potential.
+        # Post-generation quality gate: Haiku scores engagement + freshness.
         try:
             score, reason = await self.bot.claude.discourse_score(
                 line, channel_name=channel.name,
+                recent_posts=recent_blob,
             )
         except Exception as exc:
             emit_error(
