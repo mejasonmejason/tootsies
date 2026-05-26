@@ -583,6 +583,22 @@ async def test_pick_kalshi_series_matches_ticker_inside_reply():
 
 
 @pytest.mark.asyncio
+async def test_pick_kalshi_series_prefers_longest_match():
+    """Tickers share prefixes (KXBTC is a substring of KXBTCD). When Haiku
+    returns the longer/more-specific ticker, we must resolve to that one,
+    not the shorter prefix that also substring-matches."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="KXBTCD"))
+    candidates = [
+        {"ticker": "KXBTC", "title": "Bitcoin range"},
+        {"ticker": "KXBTCD", "title": "Bitcoin above/below"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("btc above 100k", candidates)
+    assert result == "KXBTCD"
+
+
+@pytest.mark.asyncio
 async def test_pick_kalshi_series_unknown_reply_returns_none():
     """Haiku returns a ticker not in the candidates -> safer to skip."""
     client = ClaudeClient(api_key="test")

@@ -1211,9 +1211,17 @@ class ClaudeClient:
         reply = result.text.strip().upper()
         if not reply or reply.startswith("NONE"):
             return None
-        for cand in candidates:
-            ticker = cand.get("ticker") or ""
-            if ticker and ticker.upper() in reply:
+        # Prefer the LONGEST ticker substring match. Kalshi tickers share
+        # prefixes ("KXBTC" is a substring of "KXBTCD") so a naive iteration
+        # in input order could pick the shorter / less specific one. Sorting
+        # longest-first guarantees we resolve to the most specific candidate
+        # that actually appears in the reply.
+        valid = sorted(
+            [c.get("ticker") or "" for c in candidates if c.get("ticker")],
+            key=len, reverse=True,
+        )
+        for ticker in valid:
+            if ticker.upper() in reply:
                 return ticker
         return None
 

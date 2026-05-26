@@ -955,11 +955,16 @@ class KalshiClient:
         )
 
     async def stop_series_refresh_loop(self) -> None:
-        """Cancel the background refresh task. Called on bot shutdown."""
+        """Cancel the background refresh task. Called on bot shutdown.
+
+        Only suppresses CancelledError, the expected outcome of awaiting a
+        cancelled task. Real exceptions (programming bugs in the loop body)
+        should surface in shutdown logs rather than being silently eaten.
+        """
         if self._refresh_task is None:
             return
         self._refresh_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
+        with contextlib.suppress(asyncio.CancelledError):
             await self._refresh_task
         self._refresh_task = None
 
