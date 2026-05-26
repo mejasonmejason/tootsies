@@ -1,8 +1,11 @@
 """Anthropic client wrapper.
 
-Model routing:
-- HAIKU: /ask, /recap, /mood, ambient deflections, fast and cheap
-- SONNET: /discourse, /order pre-flight sanity check, needs judgment
+Model routing (rule: Haiku for pure classifiers + one-line fallback quips;
+Sonnet for everything else user-facing or judgment-heavy):
+- HAIKU: chimein_score, classify_market_intent (mechanical classifiers);
+  deflect (one-liner canned-ish quip, 60-token cap, no judgment)
+- SONNET: ask, recap, discourse, chimein_post, preflight_order
+  (every method that generates non-trivial user-facing content)
 
 System prompt is cached (constitution + persona are stable across calls).
 """
@@ -585,7 +588,7 @@ class ClaudeClient:
         )
         tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_web else None
         result = await self._call(
-            model=HAIKU,
+            model=SONNET,
             user_message=f"{question}{extra_context}",
             system_extra=system_extra,
             max_tokens=MAX_TOKENS_REPLY,
@@ -722,7 +725,7 @@ class ClaudeClient:
             f"{messages_blob}{hot_urls_block}{enriched_block}{perplexity_block}"
         )
         result = await self._call(
-            model=HAIKU, user_message=user, system_extra=system_extra,
+            model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             max_tokens=MAX_TOKENS_REPLY,
             purpose="recap",

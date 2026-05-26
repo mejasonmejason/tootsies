@@ -169,13 +169,14 @@ async def test_call_emits_claude_api_event_on_failure_and_reraises(
 
 
 @pytest.mark.asyncio
-async def test_ask_uses_haiku_with_web_search_when_use_web() -> None:
+async def test_ask_uses_sonnet_with_web_search_when_use_web() -> None:
+    """Per the model-routing rule: anything user-facing runs on Sonnet."""
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="answer"))
     with patch.object(client, "_call", fake):
         await client.ask("q", channel_context="chatter", use_web=True)
     kwargs = fake.call_args.kwargs
-    assert kwargs["model"] == HAIKU
+    assert kwargs["model"] == SONNET
     assert kwargs["purpose"] == "ask"
     assert kwargs["tools"] is not None
     assert "chatter" in kwargs["user_message"]
@@ -229,13 +230,13 @@ async def test_ask_keeps_url_from_enriched_links() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recap_uses_haiku_with_web_search() -> None:
+async def test_recap_uses_sonnet_with_web_search() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="recap"))
     with patch.object(client, "_call", fake):
         await client.recap("general", "msg blob")
     kwargs = fake.call_args.kwargs
-    assert kwargs["model"] == HAIKU
+    assert kwargs["model"] == SONNET
     assert kwargs["purpose"] == "recap"
     assert kwargs["tools"] is not None  # web_search always available
 
@@ -412,6 +413,8 @@ async def test_ask_dedups_url_from_question() -> None:
 
 @pytest.mark.asyncio
 async def test_deflect_uses_haiku_with_low_max_tokens() -> None:
+    """Deflect is the exception: one-liner canned-ish quip, no judgment,
+    60-token cap, runs as a fast fallback. Sonnet is overkill here."""
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="quip"))
     with patch.object(client, "_call", fake):
