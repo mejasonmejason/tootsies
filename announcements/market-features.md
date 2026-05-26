@@ -4,20 +4,23 @@ same `/ask`, same `@Toots`. she just checks the board before she answers now. sp
 
 ## try it
 
-`/ask what's the spread on the thunder game`
-> real book lines + her read on the NBA finals. links the source.
+`/ask thunder spurs game tonight, who you got`
+> pulls the spread + moneyline from real books. her read on the NBA finals.
 
-`@Toots yankees red sox over/under tonight`
-> MLB lines, which side she likes, cites the number.
+`/ask avalanche golden knights over/under`
+> NHL playoff lines, which side she likes, cites the number.
 
-`/ask will drake drop an album by july`
-> polymarket + kalshi odds, what the crowd thinks, her take on top.
+`/ask will the fed cut rates at the next meeting`
+> polymarket AND kalshi odds side by side. where the money's sitting.
 
-`/ask bitcoin hit 150k by end of year`
-> both platforms, where the money is, what it means if they disagree.
+`/ask sp500 above 6000 by friday`
+> kalshi's regulated contracts on the S&P. real money, real %.
 
-`/ask 2028 republican primary, who's got the lead`
-> full field with every candidate's %. not just the frontrunner.
+`/ask will drake drop ICEMAN before july`
+> polymarket crowd odds on the album drop + her take on top.
+
+`/ask who wins the nba championship this year`
+> futures from the books + prediction market %s from both platforms.
 
 `/ask is drake done`
 > no odds for that one. just toots being toots.

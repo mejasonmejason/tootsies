@@ -53,49 +53,49 @@ class Example:
 
 
 EXAMPLES: list[Example] = [
-    # Sports examples from the announcement (May 2026, NBA finals window)
+    # Sports (May 2026, NBA finals + MLB + NHL playoffs)
     Example(
-        "what's the spread on the thunder game",
+        "thunder spurs game tonight, who you got",
         "sports", "NBA",
-        "NBA finals window, OKC likely contending",
+        "NBA finals matchup",
     ),
     Example(
-        "any good NBA finals parlays tonight",
-        "sports", "NBA",
-        "parlay ask, NBA finals",
-    ),
-    Example(
-        "yankees red sox over/under tonight",
+        "any good parlays on tonight's MLB slate",
         "sports", "MLB",
-        "MLB regular season, late May",
+        "MLB regular season, broad slate ask",
     ),
     Example(
-        "who's favored in the stanley cup finals",
+        "avalanche golden knights over/under",
         "sports", "NHL",
-        "NHL playoffs, late May",
+        "NHL playoffs, specific matchup",
     ),
-    # Prediction market examples from the announcement
+    # Prediction markets (hits both Poly + Kalshi)
     Example(
-        "will drake drop an album by july",
+        "will the fed cut rates at the next meeting",
         "prediction_market", None,
-        "binary PM question, should hit Poly + Kalshi",
-    ),
-    Example(
-        "fed cuts rates at the june meeting?",
-        "prediction_market", None,
-        "Fed rates, next FOMC meeting",
+        "Fed rates, should hit both Poly and Kalshi",
     ),
     Example(
-        "bitcoin hit 150k by end of year",
-        "prediction_market", None,
-        "crypto price target, active on both platforms",
+        "who wins the nba championship this year",
+        "sports", "NBA",
+        "championship futures, SGO + Kalshi + Poly",
     ),
     Example(
-        "2028 republican primary, who's got the lead right now",
+        "sp500 above 6000 by friday",
         "prediction_market", None,
-        "multi-outcome, should show candidate field",
+        "S&P 500 price target, Kalshi strong here",
     ),
-    # Control examples (should NOT trigger markets)
+    Example(
+        "bitcoin above 120k end of this week",
+        "prediction_market", None,
+        "crypto price, both platforms active",
+    ),
+    Example(
+        "will drake drop ICEMAN before july",
+        "prediction_market", None,
+        "culture + prediction market crossover",
+    ),
+    # Control (should NOT trigger markets)
     Example(
         "is drake done",
         "none", None,
