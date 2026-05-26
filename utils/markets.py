@@ -322,7 +322,7 @@ def _sgo_event_to_snapshot(event: dict[str, Any], league: str) -> MarketSnapshot
         return None
     event_id = event.get("eventID") or event.get("id") or ""
 
-    # Team names — try medium, long, short, location in that order.
+    # Team names: try medium, long, short, location in that order.
     teams_raw = event.get("teams")
     teams: dict[str, Any] = teams_raw if isinstance(teams_raw, dict) else {}
     home = _sgo_team_name(teams.get("home"))
@@ -811,7 +811,7 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
     return MarketSnapshot(
         source="kalshi",
         title=str(title),
-        url=_kalshi_web_url(event_ticker, ticker, title),
+        url=_kalshi_web_url(event_ticker, ticker),
         probability=probability,
         meta={
             "ticker": ticker,
@@ -823,44 +823,31 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
     )
 
 
-def _kalshi_web_url(event_ticker: str, ticker: str, title: str) -> str:
-    """Construct the canonical kalshi.com web URL for a market.
+def _kalshi_web_url(event_ticker: str, ticker: str) -> str:
+    """Construct a kalshi.com URL that lands on the series page.
 
-    Verified pattern from a real Kalshi URL:
+    Verified from two real Kalshi URLs the user shared:
         https://kalshi.com/markets/kxmlbgame/professional-baseball-game
+        https://kalshi.com/markets/kxmayorla/la/kxmayorla-26?...
 
-    Two path segments:
-      1. series_ticker (lowercase): extracted from event_ticker by taking
-         everything before the first "-" (e.g. "KXMLBGAME-S20265B7F" -> "kxmlbgame")
-      2. event slug (lowercase, alphanumeric + hyphens): slugified from title
+    The FIRST path segment in both is the series ticker, lowercased. That's
+    the only part we can construct without guessing; the subsequent path
+    segments and slug formats vary by series shape (some use event slug,
+    some use category + event_ticker). The series page lists all events
+    under it, so the user can navigate from there to the specific market.
 
-    Falls back to a single-segment URL if we can't derive both halves cleanly.
+    Less specific than a deeplink, but always real.
     """
     series = ""
     if event_ticker:
         series = event_ticker.split("-", 1)[0].lower()
-    slug = _slugify(title)
-    if series and slug:
-        return f"https://kalshi.com/markets/{series}/{slug}"
     if series:
         return f"https://kalshi.com/markets/{series}"
     if ticker:
+        # Last-resort fallback: lowercased market ticker. Probably 404s but
+        # better than empty string (the model can still cite "Kalshi" textually).
         return f"https://kalshi.com/markets/{ticker.lower()}"
     return ""
-
-
-def _slugify(text: str) -> str:
-    """Lowercase + replace non-alphanumeric with hyphens, collapse repeats."""
-    out = []
-    prev_dash = False
-    for ch in text.lower():
-        if ch.isalnum():
-            out.append(ch)
-            prev_dash = False
-        elif not prev_dash:
-            out.append("-")
-            prev_dash = True
-    return "".join(out).strip("-")
 
 
 # ---- prompt formatter -------------------------------------------------------

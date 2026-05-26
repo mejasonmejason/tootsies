@@ -296,9 +296,10 @@ async def test_kalshi_parses_markets():
     assert snap.source == "kalshi"
     # Midpoint of bid/ask.
     assert snap.probability == pytest.approx(0.32)
-    # URL is series_ticker (extracted from event_ticker prefix, lowercased)
-    # + slugified title. Verified against real Kalshi URL pattern.
-    assert snap.url == "https://kalshi.com/markets/kxpres2028/trump-wins-2028-election"
+    # URL is the series landing page: lowercased series_ticker extracted
+    # from the event_ticker prefix. Less specific than a deeplink to the
+    # event, but always real — no slug-guessing.
+    assert snap.url == "https://kalshi.com/markets/kxpres2028"
     assert snap.meta["ticker"] == "KXPRES2028-DJT-T1"
     assert snap.meta["event_ticker"] == "KXPRES2028-DJT"
 
