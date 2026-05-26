@@ -45,6 +45,7 @@ from models import MoodMode
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
 from utils.link_enrich import enrich_batch
+from utils.markets import MarketSnapshot
 from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
 
@@ -288,8 +289,8 @@ class ChimeIn(commands.Cog):
         image_urls = recent_image_urls(msgs, limit=5)
         chime_hot_urls = hot_urls(msgs, limit=5)
 
-        # Run link enrichment and Perplexity search in parallel.
-        # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
+        # Run link enrichment, Perplexity search, and markets fetch in parallel.
+        # return_exceptions=True so one fetcher's outage can't cancel the others.
         coros: list[Any] = [enrich_batch(
             [u for u, _, _, _ in chime_hot_urls], concurrency=5,
         )]
@@ -300,11 +301,19 @@ class ChimeIn(commands.Cog):
             coros.append(pplx.search(
                 build_search_query(hook, surface="chimein"), purpose="chimein",
             ))
+        # The Haiku classifier reads the hook string to decide whether the room
+        # is talking about something market-grounded (game/parlay/election).
+        markets_idx = len(coros)
+        coros.append(self.bot.markets.get_context(hook))
         raw = await asyncio.gather(*coros, return_exceptions=True)
         enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
         pplx_result: str | None = (
             raw[pplx_idx]  # type: ignore[assignment]
             if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
+        markets_raw = raw[markets_idx]
+        markets_result: list[MarketSnapshot] | None = (
+            markets_raw if isinstance(markets_raw, list) else None
         )
 
         enriched = [v for v in enriched_map.values() if v is not None]
@@ -314,6 +323,7 @@ class ChimeIn(commands.Cog):
                 buffer_blob, hook=hook, image_urls=image_urls,
                 enriched_links=enriched, recent_posts=recent_posts,
                 perplexity_context=pplx_result,
+                markets_context=markets_result,
             )
         except Exception as exc:
             emit_error(

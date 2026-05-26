@@ -60,7 +60,12 @@ class TootsiesBot(commands.Bot):
         )
         # MarketsManager always exists: Polymarket + Kalshi reads are public, so
         # those routes work even without SGO. SGO is gated on the optional key.
-        self.markets = MarketsManager(config.sports_game_odds_api_key)
+        # Haiku classifier handles intent + league + search-term extraction; the
+        # manager falls back to regex if the Haiku call ever errors out.
+        self.markets = MarketsManager(
+            config.sports_game_odds_api_key,
+            intent_classifier=self.claude.classify_market_intent,
+        )
         self._ready_once = False
 
     async def setup_hook(self) -> None:

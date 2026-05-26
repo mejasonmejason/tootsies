@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -570,34 +571,51 @@ def detect_league(query: str) -> str | None:
     return None
 
 
+IntentClassifier = Callable[[str], Awaitable[dict[str, Any] | None]]
+
+
 class MarketsManager:
     """Single entry point for cogs. Routes a query to the right client(s)
-    and returns a formatted prompt block (or None if nothing relevant).
+    and returns a list of MarketSnapshot (or None if nothing relevant).
 
     SGO is conditional on a key; Polymarket and Kalshi always work since
     their read APIs are public.
+
+    `intent_classifier`: optional async callable that takes the user query and
+    returns a routing dict {intent, league, search_terms} or None. When wired
+    up (in bot.py we pass ClaudeClient.classify_market_intent), Haiku handles
+    intent + league detection + search-term extraction in one call. When None,
+    we fall back to the legacy regex (classify_intent + detect_league here).
     """
 
-    def __init__(self, sgo_api_key: str | None) -> None:
+    def __init__(
+        self,
+        sgo_api_key: str | None,
+        intent_classifier: IntentClassifier | None = None,
+    ) -> None:
         self.sgo = SportsGameOddsClient(sgo_api_key)
         self.polymarket = PolymarketClient()
         self.kalshi = KalshiClient()
+        self._classifier = intent_classifier
 
     async def get_context(self, query: str) -> list[MarketSnapshot] | None:
         """Fetch live market snapshots for a query if intent matches.
 
-        Returns a list of MarketSnapshot ready to pass into claude.ask(...) for
-        prompt injection, or None if no intent / no useful data. Fail-open:
-        any downstream error returns None, never raises.
+        Returns a list of MarketSnapshot ready to pass into claude.* methods
+        for prompt injection, or None if no intent / no useful data.
+        Fail-open: any downstream error returns None, never raises.
         """
-        intent = classify_intent(query)
-        if intent is None:
+        intent_data = await self._classify(query)
+        if intent_data is None:
             return None
+        intent = intent_data.get("intent")
         try:
             if intent == "sports":
-                return await self._sports_snapshots(query)
+                league = intent_data.get("league") or "NBA"
+                return await self._sports_snapshots(league)
             if intent == "prediction_market":
-                return await self._pm_snapshots(query)
+                search_terms = intent_data.get("search_terms") or query
+                return await self._pm_snapshots(search_terms)
         except Exception as exc:  # belt + suspenders; clients already swallow
             emit_error(
                 source="markets_manager",
@@ -607,16 +625,38 @@ class MarketsManager:
             )
         return None
 
-    async def _sports_snapshots(self, query: str) -> list[MarketSnapshot] | None:
+    async def _classify(self, query: str) -> dict[str, Any] | None:
+        """Route to the Haiku classifier if wired up, else fall back to regex."""
+        if self._classifier is not None:
+            try:
+                return await self._classifier(query)
+            except Exception as exc:
+                emit_error(
+                    source="markets_classifier",
+                    exc=exc,
+                    recoverable=True,
+                    context={"query_chars": len(query)},
+                )
+                # Fall through to regex on classifier failure.
+        intent = classify_intent(query)
+        if intent is None:
+            return None
+        out: dict[str, Any] = {"intent": intent, "search_terms": query}
+        if intent == "sports":
+            league = detect_league(query)
+            if league:
+                out["league"] = league
+        return out
+
+    async def _sports_snapshots(self, league: str) -> list[MarketSnapshot] | None:
         if not self.sgo.enabled:
             return None
-        league = detect_league(query) or "NBA"
         snaps = await self.sgo.get_event_odds(league, purpose="ask")
         return snaps[:5] if snaps else None
 
-    async def _pm_snapshots(self, query: str) -> list[MarketSnapshot] | None:
+    async def _pm_snapshots(self, search_terms: str) -> list[MarketSnapshot] | None:
         # Polymarket search first (broader topic coverage), Kalshi fallback.
-        snaps = await self.polymarket.search_markets(query, limit=5)
+        snaps = await self.polymarket.search_markets(search_terms, limit=5)
         if snaps:
             return snaps
         kalshi_snaps = await self.kalshi.get_open_markets(limit=5)
