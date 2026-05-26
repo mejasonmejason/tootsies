@@ -95,6 +95,16 @@ EXAMPLES: list[Example] = [
         "sports", "NBA",
         "championship futures, SGO lines",
     ),
+    Example(
+        "what does the smart money think about crypto right now",
+        "prediction_market", None,
+        "opinion-style, Kalshi crypto returns contracts",
+    ),
+    Example(
+        "what is the market saying about the economy",
+        "prediction_market", None,
+        "broad opinion, Kalshi state-of-economy contracts",
+    ),
     # Control (should NOT trigger markets)
     Example(
         "is beyonce the greatest performer alive",

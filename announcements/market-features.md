@@ -25,6 +25,12 @@ same `/ask`, same `@Toots`. she just checks the board before she answers now. sp
 `/ask who wins the nba championship this year`
 > futures from the books + prediction market %s from both platforms.
 
+`/ask what does the smart money think about crypto right now`
+> kalshi has "which cryptos will be positive in 2026" contracts. she breaks down where the money's sitting.
+
+`/ask what is the market saying about the economy`
+> kalshi's "state of the economy" contracts + her read. not vibes, actual positions.
+
 `/ask is beyonce the greatest performer alive`
 > no odds for that one. just toots being toots.
 
