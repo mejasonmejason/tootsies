@@ -79,6 +79,9 @@ Known kinds (keep this list in sync with what's emitted):
         redundant    : URL is real but the user/room just saw it
                        (recently_seen_urls match) so re-posting would be
                        double-embed clutter.
+  - market_fetch       : sports/prediction-market enricher call (utils/markets.py)
+      source (sgo|polymarket|kalshi), query, ok, duration_ms,
+      cache_hit, result_count, error (on failure)
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.
