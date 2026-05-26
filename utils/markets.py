@@ -78,22 +78,6 @@ class MarketSnapshot:
 
 
 @dataclass
-class MarketComment:
-    """A comment on a prediction market. Polymarket-only for v1.
-
-    Surfaced for "what's the room saying" signal: degens, sharps, and randoms
-    arguing about why a market is mispriced. The contrast between comment
-    sentiment and market price is often more interesting than the price alone.
-    """
-
-    market_id: str
-    author: str
-    text: str
-    upvotes: int = 0
-    created_at: str = ""
-
-
-@dataclass
 class PriceHistorySummary:
     """Compressed view of a price-history time series.
 
@@ -528,77 +512,6 @@ class PolymarketClient:
             return None
         return [snap for event in data if (snap := _poly_event_to_snapshot(event))]
 
-    async def get_market_comments(
-        self,
-        market_id: str,
-        *,
-        limit: int = 8,
-    ) -> list[MarketComment] | None:
-        """Pull comments on a specific Polymarket market.
-
-        Comments are the discourse layer of the market: degens, sharps, and
-        randoms arguing about why the price is wrong. The CONTRAST between
-        what news is saying and what the comments are saying is often more
-        interesting than either alone. Endpoint shape per the gamma docs.
-
-        Returns None on failure / disabled, empty list if no comments.
-        """
-        if not market_id:
-            return None
-        start = time.monotonic()
-        result = await self._get_comments_cached(market_id, limit)
-        cache_hit = bool(getattr(self._get_comments_cached, "_last_was_hit", False))
-        if result is None:
-            _emit_fetch(
-                source="polymarket", query=f"comments:{market_id}", ok=False,
-                start=start, cache_hit=cache_hit, error="fetch_failed",
-            )
-            return None
-        _emit_fetch(
-            source="polymarket", query=f"comments:{market_id}", ok=True,
-            start=start, cache_hit=cache_hit, result_count=len(result),
-        )
-        return result
-
-    @async_lru_cache(maxsize=_CACHE_SIZE)
-    async def _get_comments_cached(
-        self,
-        market_id: str,
-        limit: int,
-    ) -> list[MarketComment] | None:
-        data = await _fetch_json(
-            f"{_POLY_API_BASE}/comments",
-            params={
-                "parent_entity_type": "Event",
-                "parent_entity_id": market_id,
-                "limit": str(limit),
-            },
-        )
-        if not isinstance(data, list):
-            return None
-        out: list[MarketComment] = []
-        for item in data[:limit]:
-            if not isinstance(item, dict):
-                continue
-            body = item.get("body") or item.get("text") or ""
-            if not body:
-                continue
-            profile = item.get("profile") or {}
-            author = ""
-            if isinstance(profile, dict):
-                author = profile.get("name") or profile.get("displayUsernamePublic") or ""
-            upvotes = item.get("reactionCount") or item.get("upvotes") or 0
-            if not isinstance(upvotes, int):
-                upvotes = 0
-            out.append(MarketComment(
-                market_id=market_id,
-                author=str(author),
-                text=str(body)[:400],
-                upvotes=upvotes,
-                created_at=str(item.get("createdAt") or ""),
-            ))
-        return out
-
     async def get_price_history(
         self,
         market_id: str,
@@ -894,28 +807,6 @@ def format_markets_for_prompt(snapshots: list[MarketSnapshot]) -> str:
                 lines.append(
                     f"  - [{label}] {snap.title}  yes={prob_str}{vol_str}  {snap.url}"
                 )
-    return "\n".join(lines)
-
-
-def format_comments_for_prompt(comments: list[MarketComment]) -> str:
-    """Render market comments as a Claude-friendly block.
-
-    Empty list returns empty string so callers can concatenate unconditionally.
-    Truncates per-comment to keep the block tight.
-    """
-    if not comments:
-        return ""
-    lines: list[str] = [
-        "MARKET CHATTER (what the room is saying on these markets; use to "
-        "ground sentiment vs. the price, never quote verbatim):",
-    ]
-    for c in comments[:8]:
-        author = c.author or "anon"
-        upvote_str = f" (+{c.upvotes})" if c.upvotes else ""
-        text = c.text.strip().replace("\n", " ")
-        if len(text) > 240:
-            text = text[:237] + "..."
-        lines.append(f"  - @{author}{upvote_str}: {text}")
     return "\n".join(lines)
 
 
