@@ -20,6 +20,7 @@ from utils.events import emit_error
 from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
+from utils.markets import MarketSnapshot
 from utils.metrics import track_command
 from utils.perplexity import build_search_query
 from utils.rate_limits import check_user_limit, consume_user
@@ -115,10 +116,10 @@ class Ask(commands.Cog):
         text_for_urls = f"{question}\n{context}"
         raw_urls = extract_urls(text_for_urls)[:10]
 
-        # Run link enrichment and Perplexity search in parallel.
-        # return_exceptions=True so a Perplexity outage can't cancel enrich_batch.
+        # Run link enrichment, Perplexity search, and markets fetch in parallel.
+        # return_exceptions=True so one fetcher's outage can't cancel the others.
         coros: list[Any] = []
-        enrich_idx = pplx_idx = -1
+        enrich_idx = pplx_idx = markets_idx = -1
         if raw_urls:
             enrich_idx = len(coros)
             coros.append(enrich_batch(raw_urls))
@@ -126,6 +127,8 @@ class Ask(commands.Cog):
         if pplx:
             pplx_idx = len(coros)
             coros.append(pplx.search(build_search_query(question, surface="ask"), purpose="ask"))
+        markets_idx = len(coros)
+        coros.append(self.bot.markets.get_context(question))
 
         raw = await asyncio.gather(*coros, return_exceptions=True) if coros else []
         enriched_map: dict[str, Any] = (
@@ -136,6 +139,10 @@ class Ask(commands.Cog):
             raw[pplx_idx]  # type: ignore[assignment]
             if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
         )
+        markets_raw = raw[markets_idx] if markets_idx >= 0 else None
+        markets_result: list[MarketSnapshot] | None = (
+            markets_raw if isinstance(markets_raw, list) else None
+        )
 
         enriched = [e for e in enriched_map.values() if e is not None]
 
@@ -145,6 +152,7 @@ class Ask(commands.Cog):
             enriched_links=enriched if enriched else None,
             perplexity_context=pplx_result,
             recently_seen_urls=raw_urls if raw_urls else None,
+            markets_context=markets_result,
         )
 
     @commands.Cog.listener()

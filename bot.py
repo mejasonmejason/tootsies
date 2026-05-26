@@ -23,6 +23,8 @@ from utils.events import emit, emit_error
 from utils.github import GitHubClient
 from utils.healthcheck import HealthServer
 from utils.link_enrich import close_session as close_link_enrich_session
+from utils.markets import MarketsManager
+from utils.markets import close_session as close_markets_session
 from utils.permissions import can_send_in
 from utils.perplexity import PerplexityClient
 
@@ -56,6 +58,9 @@ class TootsiesBot(commands.Bot):
             if config.perplexity_api_key
             else None
         )
+        # MarketsManager always exists: Polymarket + Kalshi reads are public, so
+        # those routes work even without SGO. SGO is gated on the optional key.
+        self.markets = MarketsManager(config.sports_game_odds_api_key)
         self._ready_once = False
 
     async def setup_hook(self) -> None:
@@ -220,6 +225,7 @@ async def _main() -> None:
             if bot.perplexity:
                 await bot.perplexity.close()
             await close_link_enrich_session()
+            await close_markets_session()
             await bot.db.close()
 
     bot_task = asyncio.create_task(runner())

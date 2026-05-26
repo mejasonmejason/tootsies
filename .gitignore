@@ -6,6 +6,8 @@ venv/
 env/
 .env
 .env.local
+*.pem
+*.key
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
