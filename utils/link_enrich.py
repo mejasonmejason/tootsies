@@ -20,12 +20,10 @@ We NEVER bubble an exception into a cog.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import re
 import time
 import urllib.parse
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -33,6 +31,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from utils.async_cache import async_lru_cache
 from utils.events import emit, emit_error
 
 log = logging.getLogger(__name__)
@@ -130,43 +129,6 @@ def detect_platform(url: str) -> str | None:
     if _host_matches(url, _BLUESKY_HOSTS) and _BLUESKY_POST_RE.search(url):
         return "bluesky"
     return None
-
-
-# ---- async LRU --------------------------------------------------------------
-
-
-def _async_lru_cache(
-    maxsize: int = 256,
-) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
-    """Tiny async-friendly LRU. functools.lru_cache doesn't play with coros."""
-
-    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-        cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
-        # Track most recent lookup so callers can record cache_hit in events
-        # without changing the function signature. functools.wraps copies
-        # __name__/__doc__ so log lines stay readable.
-        sentinel = object()
-
-        @functools.wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            key = (args, tuple(sorted(kwargs.items())))
-            cached = cache.get(key, sentinel)
-            if cached is not sentinel:
-                cache.move_to_end(key)
-                wrapper._last_was_hit = True  # type: ignore[attr-defined]
-                return cached
-            wrapper._last_was_hit = False  # type: ignore[attr-defined]
-            result = await func(*args, **kwargs)
-            cache[key] = result
-            if len(cache) > maxsize:
-                cache.popitem(last=False)
-            return result
-
-        wrapper._last_was_hit = False  # type: ignore[attr-defined]
-        wrapper._cache = cache  # type: ignore[attr-defined]
-        return wrapper
-
-    return decorator
 
 
 # ---- HTTP session (module-level, github.py pattern) -------------------------
@@ -467,7 +429,7 @@ _ENRICHERS: dict[str, Callable[[str], Awaitable[EnrichedLink | None]]] = {
 }
 
 
-@_async_lru_cache(maxsize=_CACHE_SIZE)
+@async_lru_cache(maxsize=_CACHE_SIZE)
 async def _enrich_cached(url: str) -> EnrichedLink | None:
     """Cached enrichment helper. Wrapped by `enrich()` for event emission."""
     platform = detect_platform(url)

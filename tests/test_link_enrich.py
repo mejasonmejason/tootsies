@@ -12,7 +12,6 @@ import pytest
 
 from utils.link_enrich import (
     EnrichedLink,
-    _async_lru_cache,
     _enrich_bluesky,
     _enrich_cached,
     _enrich_reddit,
@@ -404,23 +403,8 @@ async def test_cache_hits_avoid_repeat_fetch() -> None:
     assert mock_fetch.call_count == 1
 
 
-@pytest.mark.asyncio
-async def test_async_lru_cache_evicts_oldest_past_maxsize() -> None:
-    """Tiny cache (maxsize=2) drops the LRU entry when a third arrives."""
-    calls: list[str] = []
-
-    @_async_lru_cache(maxsize=2)
-    async def fake(url: str) -> str:
-        calls.append(url)
-        return f"R:{url}"
-
-    assert await fake("a") == "R:a"
-    assert await fake("b") == "R:b"
-    assert await fake("a") == "R:a"  # cache hit (no new call)
-    assert await fake("c") == "R:c"  # evicts "b" since "a" was just touched
-    assert await fake("b") == "R:b"  # miss, re-fetch
-    # a, b, a-hit, c, b-refetch -> 4 underlying calls (a, b, c, b)
-    assert calls == ["a", "b", "c", "b"]
+# Note: the LRU eviction test that used to live here moved to
+# tests/test_async_cache.py when the decorator was extracted to utils.async_cache.
 
 
 # ---- batch helper ----------------------------------------------------------------

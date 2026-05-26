@@ -24,17 +24,15 @@ cache_hit, result_count, error) for the dashboard.
 
 from __future__ import annotations
 
-import functools
 import logging
 import re
 import time
-from collections import OrderedDict
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import aiohttp
 
+from utils.async_cache import async_lru_cache
 from utils.events import emit, emit_error
 
 log = logging.getLogger(__name__)
@@ -94,40 +92,6 @@ async def close_session() -> None:
     if _session is not None and not _session.closed:
         await _session.close()
     _session = None
-
-
-# ---- async LRU (copied pattern from link_enrich) ----------------------------
-
-
-def _async_lru_cache(
-    maxsize: int = _CACHE_SIZE,
-) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
-    """Tiny async-friendly LRU. functools.lru_cache doesn't play with coros."""
-
-    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-        cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
-        sentinel = object()
-
-        @functools.wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            key = (args, tuple(sorted(kwargs.items())))
-            cached = cache.get(key, sentinel)
-            if cached is not sentinel:
-                cache.move_to_end(key)
-                wrapper._last_was_hit = True  # type: ignore[attr-defined]
-                return cached
-            wrapper._last_was_hit = False  # type: ignore[attr-defined]
-            result = await func(*args, **kwargs)
-            cache[key] = result
-            if len(cache) > maxsize:
-                cache.popitem(last=False)
-            return result
-
-        wrapper._last_was_hit = False  # type: ignore[attr-defined]
-        wrapper._cache = cache  # type: ignore[attr-defined]
-        return wrapper
-
-    return decorator
 
 
 # ---- fetch + emit helper ----------------------------------------------------
@@ -221,7 +185,7 @@ class SportsGameOddsClient:
         )
         return result
 
-    @_async_lru_cache(maxsize=_CACHE_SIZE)
+    @async_lru_cache(maxsize=_CACHE_SIZE)
     async def _get_event_odds_cached(
         self,
         league: str,
@@ -316,7 +280,7 @@ class PolymarketClient:
         )
         return result
 
-    @_async_lru_cache(maxsize=_CACHE_SIZE)
+    @async_lru_cache(maxsize=_CACHE_SIZE)
     async def _get_trending_cached(
         self,
         limit: int,
@@ -356,7 +320,7 @@ class PolymarketClient:
         )
         return result
 
-    @_async_lru_cache(maxsize=_CACHE_SIZE)
+    @async_lru_cache(maxsize=_CACHE_SIZE)
     async def _search_cached(self, query: str, limit: int) -> list[MarketSnapshot] | None:
         data = await _fetch_json(
             f"{_POLY_API_BASE}/public-search",
@@ -460,7 +424,7 @@ class KalshiClient:
         )
         return result
 
-    @_async_lru_cache(maxsize=_CACHE_SIZE)
+    @async_lru_cache(maxsize=_CACHE_SIZE)
     async def _get_open_cached(
         self,
         query: str,
