@@ -61,6 +61,11 @@ class MarketSnapshot:
     For sports lines (`source="sgo"`), `odds` carries per-market values like
     {"spread": -3.5, "moneyline_home": -150}. For binary prediction markets,
     `probability` is in [0, 1].
+
+    `outcomes` is populated for multi-outcome prediction-market events (a
+    presidential election with 8 candidates, an Oscars race with 5 nominees).
+    Maps outcome label -> implied probability. Empty for binary markets where
+    `probability` is the YES side and the NO side is just (1 - probability).
     """
 
     source: MarketSource
@@ -68,7 +73,26 @@ class MarketSnapshot:
     url: str
     probability: float | None = None
     odds: dict[str, float] = field(default_factory=dict)
+    outcomes: dict[str, float] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PriceHistorySummary:
+    """Compressed view of a price-history time series.
+
+    The raw timeseries can be hundreds of points; for Toots' commentary the
+    load-bearing facts are: where it opened, where it is now, how much it
+    moved, how many data points are in the window. That's enough to say "this
+    moved 12 points in 6 hours" without spending a thousand tokens on a chart.
+    """
+
+    market_id: str
+    current_price: float
+    open_price: float
+    change: float
+    change_pct: float
+    history_points: int
 
 
 # ---- shared session ---------------------------------------------------------
@@ -216,6 +240,70 @@ class SportsGameOddsClient:
                 snapshots.append(snap)
         return snapshots
 
+    async def get_player_props(
+        self,
+        league: str,
+        *,
+        purpose: str = "unknown",
+        limit: int = 10,
+    ) -> list[MarketSnapshot] | None:
+        """Fetch player props (LeBron over 7.5 dimes, etc.) for a league.
+
+        Props are the personality territory for sports commentary, calling out
+        a specific player + line + over/under is way more interesting than the
+        team spread. SGO returns props nested inside event objects; we surface
+        each prop as its own MarketSnapshot so the format helper can render
+        them inline alongside the main lines.
+
+        Returns None on disabled / failure, empty list if no props available
+        for the league right now (mid-offseason, etc.).
+        """
+        if not self.enabled:
+            return None
+        start = time.monotonic()
+        result = await self._get_player_props_cached(league, limit)
+        cache_hit = bool(getattr(self._get_player_props_cached, "_last_was_hit", False))
+        if result is None:
+            _emit_fetch(
+                source="sgo", query=f"props:{league}", ok=False, start=start,
+                cache_hit=cache_hit, error="fetch_failed",
+            )
+            return None
+        _emit_fetch(
+            source="sgo", query=f"props:{league}", ok=True, start=start,
+            cache_hit=cache_hit, result_count=len(result),
+        )
+        return result
+
+    @async_lru_cache(maxsize=_CACHE_SIZE)
+    async def _get_player_props_cached(
+        self,
+        league: str,
+        limit: int,
+    ) -> list[MarketSnapshot] | None:
+        if not self._api_key:
+            return None
+        data = await _fetch_json(
+            f"{_SGO_API_BASE}/events",
+            params={
+                "leagueID": league,
+                "type": "match",
+                "oddsAvailable": "true",
+                "includeProps": "true",
+                "limit": str(limit),
+            },
+            headers={"X-Api-Key": self._api_key},
+        )
+        if not isinstance(data, dict):
+            return None
+        events = data.get("data") or data.get("events") or []
+        if not isinstance(events, list):
+            return None
+        snapshots: list[MarketSnapshot] = []
+        for event in events[:limit]:
+            snapshots.extend(_sgo_event_to_prop_snapshots(event, league))
+        return snapshots
+
 
 def _sgo_event_to_snapshot(event: dict[str, Any], league: str) -> MarketSnapshot | None:
     """Best-effort flatten of an SGO event into one MarketSnapshot.
@@ -246,6 +334,49 @@ def _sgo_event_to_snapshot(event: dict[str, Any], league: str) -> MarketSnapshot
         odds=flat_odds,
         meta={"league": league, "event_id": event_id},
     )
+
+
+def _sgo_event_to_prop_snapshots(event: dict[str, Any], league: str) -> list[MarketSnapshot]:
+    """Pull each player prop in the event out as its own MarketSnapshot.
+
+    SGO returns props nested under each event in a `playerProps` dict keyed by
+    player + market type (points / assists / rebounds / etc.). Shape varies
+    by API version so this is intentionally defensive: anything that doesn't
+    look like {player, market_type, line, over_odds, under_odds} is skipped.
+
+    Returns empty list (not None) on miss so the caller can extend() freely.
+    """
+    if not isinstance(event, dict):
+        return []
+    event_id = event.get("eventID") or event.get("id") or ""
+    props_payload = event.get("playerProps") or event.get("props") or {}
+    if not isinstance(props_payload, dict):
+        return []
+    snapshots: list[MarketSnapshot] = []
+    for prop_key, prop_data in props_payload.items():
+        if not isinstance(prop_data, dict):
+            continue
+        player = prop_data.get("player") or prop_data.get("playerName") or ""
+        market_type = prop_data.get("marketType") or prop_data.get("type") or ""
+        line = prop_data.get("line") or prop_data.get("threshold")
+        over_odds = prop_data.get("over") or prop_data.get("overOdds")
+        under_odds = prop_data.get("under") or prop_data.get("underOdds")
+        if not (player and market_type) or not isinstance(line, int | float):
+            continue
+        flat_odds: dict[str, float] = {"line": float(line)}
+        if isinstance(over_odds, int | float):
+            flat_odds["over"] = float(over_odds)
+        if isinstance(under_odds, int | float):
+            flat_odds["under"] = float(under_odds)
+        title = f"{player} {market_type} o/u {line}"
+        snapshots.append(MarketSnapshot(
+            source="sgo",
+            title=title,
+            url=f"https://sportsgameodds.com/event/{event_id}" if event_id else "",
+            odds=flat_odds,
+            meta={"league": league, "event_id": event_id, "prop_key": str(prop_key)},
+        ))
+    return snapshots
 
 
 # ---- Polymarket -------------------------------------------------------------
@@ -334,13 +465,136 @@ class PolymarketClient:
             return None
         return [snap for event in events if (snap := _poly_event_to_snapshot(event))]
 
+    async def get_competitive_events(
+        self,
+        *,
+        limit: int = 5,
+        tag: str | None = None,
+    ) -> list[MarketSnapshot] | None:
+        """Events sorted by `competitive` (markets near 50/50).
+
+        Sure-things at 95% are boring. The interesting commentary is on markets
+        that are genuinely uncertain, where the crowd is split or wrong. This
+        is the spiciest signal for /discourse beats: "polymarket has it 50/50,
+        the news consensus says it's a lock, somebody's wrong."
+        """
+        start = time.monotonic()
+        result = await self._get_competitive_cached(limit, tag or "")
+        cache_hit = bool(getattr(self._get_competitive_cached, "_last_was_hit", False))
+        if result is None:
+            _emit_fetch(
+                source="polymarket", query=f"competitive:{tag or 'all'}", ok=False,
+                start=start, cache_hit=cache_hit, error="fetch_failed",
+            )
+            return None
+        _emit_fetch(
+            source="polymarket", query=f"competitive:{tag or 'all'}", ok=True,
+            start=start, cache_hit=cache_hit, result_count=len(result),
+        )
+        return result
+
+    @async_lru_cache(maxsize=_CACHE_SIZE)
+    async def _get_competitive_cached(
+        self,
+        limit: int,
+        tag: str,
+    ) -> list[MarketSnapshot] | None:
+        params: dict[str, str] = {
+            "order": "competitive",
+            "ascending": "false",
+            "limit": str(limit),
+            "closed": "false",
+        }
+        if tag:
+            params["tag"] = tag
+        data = await _fetch_json(f"{_POLY_API_BASE}/events", params=params)
+        if not isinstance(data, list):
+            return None
+        return [snap for event in data if (snap := _poly_event_to_snapshot(event))]
+
+    async def get_price_history(
+        self,
+        market_id: str,
+        *,
+        hours: int = 24,
+    ) -> PriceHistorySummary | None:
+        """Summarized price history for a market over the last `hours`.
+
+        The CLOB `/prices-history` endpoint returns hundreds of price points
+        which is too much to inject into a prompt. We compress to: where it
+        opened, where it is now, how much it moved, total point count. Lets
+        Toots say "this opened at 22%, money's been hammering it to 38% all
+        week" without burning a thousand tokens on a chart.
+
+        Returns None on failure or if fewer than 2 points exist.
+        """
+        if not market_id:
+            return None
+        start = time.monotonic()
+        result = await self._get_price_history_cached(market_id, hours)
+        cache_hit = bool(getattr(self._get_price_history_cached, "_last_was_hit", False))
+        if result is None:
+            _emit_fetch(
+                source="polymarket", query=f"history:{market_id}:{hours}h", ok=False,
+                start=start, cache_hit=cache_hit, error="fetch_failed",
+            )
+            return None
+        _emit_fetch(
+            source="polymarket", query=f"history:{market_id}:{hours}h", ok=True,
+            start=start, cache_hit=cache_hit, result_count=result.history_points,
+        )
+        return result
+
+    @async_lru_cache(maxsize=_CACHE_SIZE)
+    async def _get_price_history_cached(
+        self,
+        market_id: str,
+        hours: int,
+    ) -> PriceHistorySummary | None:
+        # CLOB API lives on a different host than Gamma.
+        start_ts = int(time.time()) - hours * 3600
+        data = await _fetch_json(
+            "https://clob.polymarket.com/prices-history",
+            params={
+                "market": market_id,
+                "startTs": str(start_ts),
+                "fidelity": "60",
+            },
+        )
+        if not isinstance(data, dict):
+            return None
+        history = data.get("history") or []
+        if not isinstance(history, list) or len(history) < 2:
+            return None
+        try:
+            open_price = float(history[0].get("p", 0))
+            current_price = float(history[-1].get("p", 0))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
+        if open_price == 0:
+            return None
+        change = current_price - open_price
+        change_pct = change / open_price
+        return PriceHistorySummary(
+            market_id=market_id,
+            current_price=current_price,
+            open_price=open_price,
+            change=change,
+            change_pct=change_pct,
+            history_points=len(history),
+        )
+
 
 def _poly_event_to_snapshot(event: dict[str, Any]) -> MarketSnapshot | None:
-    """Flatten a Polymarket event into one snapshot using its top market.
+    """Flatten a Polymarket event into one normalized snapshot.
 
-    Polymarket events nest a `markets` array; for snapshot purposes we use
-    the primary market (first in the list) and its YES price. Multi-outcome
-    events lose nuance here but gain consistency with other sources.
+    Polymarket events nest a `markets` array. For binary events (`will X
+    happen`), the first market's YES price IS the probability and `outcomes`
+    stays empty. For multi-outcome events (election with 8 candidates, Oscars
+    with 5 nominees), `outcomes` is populated with each market's name -> YES
+    probability and `probability` carries the leader's price for quick
+    reference. Lets the format helper show all candidates at once instead of
+    silently dropping all but the first.
     """
     if not isinstance(event, dict):
         return None
@@ -349,28 +603,63 @@ def _poly_event_to_snapshot(event: dict[str, Any]) -> MarketSnapshot | None:
     if not title:
         return None
     markets = event.get("markets") or []
+    market_ids: list[str] = []
+    # First pass: collect every market's YES price + best-guess label.
+    market_prices: list[tuple[str, float]] = []
+    if isinstance(markets, list):
+        for market in markets:
+            if not isinstance(market, dict):
+                continue
+            market_id = market.get("id") or market.get("conditionId") or ""
+            if market_id and isinstance(market_id, str):
+                market_ids.append(market_id)
+            yes_price = _extract_market_yes_price(market)
+            if yes_price is None:
+                continue
+            label_raw = market.get("groupItemTitle") or market.get("question") or ""
+            label = label_raw.strip() if isinstance(label_raw, str) else ""
+            market_prices.append((label, yes_price))
+
+    # Decide binary vs multi-outcome based on how many distinct labeled markets
+    # we found. A single market (or many markets with no usable labels) is
+    # binary and uses the first market's YES price as `probability`.
     probability: float | None = None
-    if isinstance(markets, list) and markets:
-        market = markets[0]
-        if isinstance(market, dict):
-            # outcomePrices is the canonical source; falls through to bestBid.
-            prices_raw = market.get("outcomePrices")
-            prices = _parse_prices(prices_raw)
-            if prices:
-                probability = prices[0]
-            elif isinstance(market.get("bestBid"), int | float):
-                probability = float(market["bestBid"])
+    outcomes: dict[str, float] = {}
+    labeled = {label: price for label, price in market_prices if label}
+    if len(labeled) > 1:
+        outcomes = labeled
+        probability = max(outcomes.values())
+    elif market_prices:
+        probability = market_prices[0][1]
+
     return MarketSnapshot(
         source="polymarket",
         title=str(title),
         url=f"https://polymarket.com/event/{slug}" if slug else "",
         probability=probability,
+        outcomes=outcomes,
         meta={
             "volume": event.get("volume"),
             "liquidity": event.get("liquidity"),
             "end_date": event.get("endDate"),
+            "market_ids": market_ids,
         },
     )
+
+
+def _extract_market_yes_price(market: dict[str, Any]) -> float | None:
+    """Pull the YES price from a Polymarket market dict.
+
+    Tries outcomePrices first (canonical), falls back to bestBid. Returns None
+    if neither is parseable.
+    """
+    prices = _parse_prices(market.get("outcomePrices"))
+    if prices:
+        return prices[0]
+    best_bid = market.get("bestBid")
+    if isinstance(best_bid, int | float):
+        return float(best_bid)
+    return None
 
 
 def _parse_prices(raw: Any) -> list[float]:
@@ -486,6 +775,8 @@ def format_markets_for_prompt(snapshots: list[MarketSnapshot]) -> str:
     """Render market snapshots as a Claude-friendly block.
 
     Empty list returns empty string so callers can concatenate unconditionally.
+    Multi-outcome events render each candidate inline so Toots sees the whole
+    race, not just the leader.
     """
     if not snapshots:
         return ""
@@ -499,11 +790,35 @@ def format_markets_for_prompt(snapshots: list[MarketSnapshot]) -> str:
             lines.append(f"  - [SGO] {snap.title}  {odds_str}  {snap.url}")
         elif snap.source in ("polymarket", "kalshi"):
             label = "Polymarket" if snap.source == "polymarket" else "Kalshi"
-            prob_str = f"{snap.probability * 100:.0f}%" if snap.probability is not None else "?"
             vol = snap.meta.get("volume")
             vol_str = f" vol ${vol:,.0f}" if isinstance(vol, int | float) else ""
-            lines.append(f"  - [{label}] {snap.title}  yes={prob_str}{vol_str}  {snap.url}")
+            if snap.outcomes:
+                # Multi-outcome: show all candidates sorted by probability.
+                top = sorted(snap.outcomes.items(), key=lambda kv: -kv[1])[:6]
+                outcomes_str = ", ".join(f"{name} {p * 100:.0f}%" for name, p in top)
+                lines.append(
+                    f"  - [{label}] {snap.title}{vol_str}  {snap.url}\n"
+                    f"      outcomes: {outcomes_str}"
+                )
+            else:
+                prob_str = (
+                    f"{snap.probability * 100:.0f}%" if snap.probability is not None else "?"
+                )
+                lines.append(
+                    f"  - [{label}] {snap.title}  yes={prob_str}{vol_str}  {snap.url}"
+                )
     return "\n".join(lines)
+
+
+def format_price_history_for_prompt(summary: PriceHistorySummary) -> str:
+    """Render a single price-history summary as a one-line block."""
+    direction = "up" if summary.change > 0 else ("down" if summary.change < 0 else "flat")
+    return (
+        f"PRICE MOVEMENT ({summary.market_id}): opened {summary.open_price * 100:.0f}%, "
+        f"now {summary.current_price * 100:.0f}% "
+        f"({direction} {abs(summary.change) * 100:.0f}pts, "
+        f"{summary.history_points} data points)."
+    )
 
 
 # ---- intent routing + manager ----------------------------------------------
