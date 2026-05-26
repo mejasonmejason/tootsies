@@ -59,17 +59,29 @@ async def test_sgo_returns_none_when_disabled():
 
 
 async def test_sgo_parses_event():
+    """Verified against real SGO API response shape (May 2026)."""
     client = SportsGameOddsClient(api_key="test")
     payload = {
         "data": [
             {
                 "eventID": "evt_1",
-                "teams": {"home": {"name": "Lakers"}, "away": {"name": "Warriors"}},
+                "teams": {
+                    "home": {"names": {"long": "Los Angeles Lakers", "medium": "Lakers"}},
+                    "away": {"names": {"long": "Golden State Warriors", "medium": "Warriors"}},
+                },
                 "odds": {
-                    "spread": -3.5,
-                    "moneyline_home": -150,
-                    "moneyline_away": 130,
-                    "total": 225.5,
+                    "points-home-game-ml-home": {"bookOdds": "-150"},
+                    "points-away-game-ml-away": {"bookOdds": "+130"},
+                    "points-home-game-sp-home": {"bookOdds": "-110"},
+                    "points-away-game-sp-away": {"bookOdds": "-110"},
+                    "points-all-game-ou-over": {"bookOdds": "-108"},
+                    "points-all-game-ou-under": {"bookOdds": "-112"},
+                },
+                "links": {
+                    "bookmakers": {
+                        "draftkings": "https://sportsbook.draftkings.com/event/12345",
+                        "fanduel": "https://sportsbook.fanduel.com/basketball/-/12345",
+                    },
                 },
             },
         ],
@@ -83,10 +95,62 @@ async def test_sgo_parses_event():
     assert len(result) == 1
     snap = result[0]
     assert snap.source == "sgo"
-    assert "Warriors" in snap.title and "Lakers" in snap.title
-    assert snap.odds["spread"] == -3.5
-    assert snap.odds["total"] == 225.5
-    assert "evt_1" in snap.url
+    # Title uses team `names.medium`, formatted as "{away} @ {home}".
+    assert snap.title == "Warriors @ Lakers"
+    # Moneyline extracted from the nested structure.
+    assert snap.odds["moneyline_home"] == -150
+    assert snap.odds["moneyline_away"] == 130
+    assert snap.odds["total_over"] == -108
+    # URL prefers direct bookmaker deeplink over the SGO event page.
+    assert snap.url == "https://sportsbook.draftkings.com/event/12345"
+
+
+async def test_sgo_falls_back_to_event_url_when_no_bookmaker_link():
+    client = SportsGameOddsClient(api_key="test")
+    payload = {
+        "data": [
+            {
+                "eventID": "evt_2",
+                "teams": {
+                    "home": {"names": {"medium": "Spurs"}},
+                    "away": {"names": {"medium": "Thunder"}},
+                },
+                "odds": {},
+            },
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_event_odds("NBA")
+    assert result is not None
+    assert result[0].title == "Thunder @ Spurs"
+    assert result[0].url == "https://sportsgameodds.com/event/evt_2"
+
+
+async def test_sgo_team_name_fallback_chain():
+    """When .medium missing, falls back to long, short, location."""
+    client = SportsGameOddsClient(api_key="test")
+    payload = {
+        "data": [
+            {
+                "eventID": "evt_3",
+                "teams": {
+                    "home": {"names": {"long": "Boston Celtics"}},  # only long
+                    "away": {"names": {"short": "MIA"}},  # only short
+                },
+                "odds": {},
+            },
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_event_odds("NBA")
+    assert result is not None
+    assert result[0].title == "MIA @ Boston Celtics"
 
 
 async def test_sgo_http_error_returns_none():
