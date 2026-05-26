@@ -808,16 +808,10 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
         probability = float(yes_bid)
     elif isinstance(yes_ask, int | float):
         probability = float(yes_ask)
-    # URL: prefer event_ticker over the full market ticker. Market tickers
-    # are hash-like (e.g. "KXMVENBASINGLEGAME-S20265B7F41E94F0-619C418D98A")
-    # and don't appear in Kalshi's web URLs; event tickers are the canonical
-    # parent (e.g. "KXMVENBASINGLEGAME-S20265B7F41E94F0") and land on the
-    # event page where all related markets are listed.
-    url_slug = event_ticker or ticker
     return MarketSnapshot(
         source="kalshi",
         title=str(title),
-        url=f"https://kalshi.com/markets/{url_slug}" if url_slug else "",
+        url=_kalshi_web_url(event_ticker, ticker, title),
         probability=probability,
         meta={
             "ticker": ticker,
@@ -827,6 +821,46 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
             "expiration": market.get("expiration_time"),
         },
     )
+
+
+def _kalshi_web_url(event_ticker: str, ticker: str, title: str) -> str:
+    """Construct the canonical kalshi.com web URL for a market.
+
+    Verified pattern from a real Kalshi URL:
+        https://kalshi.com/markets/kxmlbgame/professional-baseball-game
+
+    Two path segments:
+      1. series_ticker (lowercase) — extracted from event_ticker by taking
+         everything before the first "-" (e.g. "KXMLBGAME-S20265B7F" -> "kxmlbgame")
+      2. event slug (lowercase, alphanumeric + hyphens) — slugified from title
+
+    Falls back to a single-segment URL if we can't derive both halves cleanly.
+    """
+    series = ""
+    if event_ticker:
+        series = event_ticker.split("-", 1)[0].lower()
+    slug = _slugify(title)
+    if series and slug:
+        return f"https://kalshi.com/markets/{series}/{slug}"
+    if series:
+        return f"https://kalshi.com/markets/{series}"
+    if ticker:
+        return f"https://kalshi.com/markets/{ticker.lower()}"
+    return ""
+
+
+def _slugify(text: str) -> str:
+    """Lowercase + replace non-alphanumeric with hyphens, collapse repeats."""
+    out = []
+    prev_dash = False
+    for ch in text.lower():
+        if ch.isalnum():
+            out.append(ch)
+            prev_dash = False
+        elif not prev_dash:
+            out.append("-")
+            prev_dash = True
+    return "".join(out).strip("-")
 
 
 # ---- prompt formatter -------------------------------------------------------

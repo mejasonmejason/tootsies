@@ -296,20 +296,20 @@ async def test_kalshi_parses_markets():
     assert snap.source == "kalshi"
     # Midpoint of bid/ask.
     assert snap.probability == pytest.approx(0.32)
-    # URL prefers event_ticker (cleaner web URL) over the full market ticker
-    # which is hash-like and doesn't appear in Kalshi's frontend routing.
-    assert snap.url == "https://kalshi.com/markets/KXPRES2028-DJT"
+    # URL is series_ticker (extracted from event_ticker prefix, lowercased)
+    # + slugified title. Verified against real Kalshi URL pattern.
+    assert snap.url == "https://kalshi.com/markets/kxpres2028/trump-wins-2028-election"
     assert snap.meta["ticker"] == "KXPRES2028-DJT-T1"
     assert snap.meta["event_ticker"] == "KXPRES2028-DJT"
 
 
 async def test_kalshi_falls_back_to_ticker_when_no_event_ticker():
-    """If event_ticker is missing, fall back to the market ticker for the URL."""
+    """If event_ticker is missing, fall back to the lowercased market ticker."""
     client = KalshiClient()
     payload = {
         "markets": [
             {
-                "ticker": "T",
+                "ticker": "STANDALONE-T1",
                 "title": "Standalone market",
                 "yes_bid_dollars": 0.5,
             },
@@ -321,7 +321,7 @@ async def test_kalshi_falls_back_to_ticker_when_no_event_ticker():
     ):
         result = await client.get_open_markets()
     assert result is not None
-    assert result[0].url == "https://kalshi.com/markets/T"
+    assert result[0].url == "https://kalshi.com/markets/standalone-t1"
 
 
 async def test_kalshi_handles_only_bid():
