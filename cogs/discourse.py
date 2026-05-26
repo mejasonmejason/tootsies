@@ -51,7 +51,7 @@ CATEGORIES = ["pop", "sports", "cinema", "hiphop", "nba"]
 
 ET = ZoneInfo("America/New_York")
 CHILL_TIMES = [time(12, 0), time(19, 0)]
-YAPS_TIMES = [time(10, 0), time(14, 0), time(18, 0), time(22, 0)]
+YAPS_TIMES = [time(9, 0), time(12, 0), time(15, 0), time(18, 0), time(22, 0)]
 
 # Gap between per-channel compose calls inside a single scheduler tick.
 # Each compose burns ~10K input tokens on sonnet-4-6 and the org TPM ceiling
@@ -62,6 +62,10 @@ _SCHEDULED_CHANNEL_GAP_SECONDS = 15
 # 429. TPM rolling windows max out at 60s; 65 gives a small cushion without
 # letting a misbehaving header pin a tick for minutes.
 _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS = 65.0
+
+# Post-generation quality gate: Haiku scores the generated post before it ships.
+# Below this threshold, scheduled slots are skipped and manual posts retry once.
+DISCOURSE_SCORE_THRESHOLD = 0.6
 
 
 def _parse_retry_after_seconds(exc: anthropic.RateLimitError) -> float | None:
@@ -282,14 +286,25 @@ class Discourse(commands.Cog):
             u for msg in local for u in extract_urls(msg.content)
         ] if local else None
 
-        line = await self.bot.claude.discourse(
-            category, sources_blob, recent_with_timestamps=recent_blob,
-            channel_name=channel.name, must_post=must_post,
+        compose_kwargs: dict[str, Any] = dict(
+            category=category, sources_blob=sources_blob,
+            recent_with_timestamps=recent_blob, channel_name=channel.name,
             image_urls=image_urls, hot_urls=feed_hot_urls,
-            enriched_links=enriched,
-            perplexity_context=pplx_result,
+            enriched_links=enriched, perplexity_context=pplx_result,
             recently_seen_urls=recently_seen_urls,
             markets_context=markets_result,
+        )
+
+        line = await self.bot.claude.discourse(
+            compose_kwargs["category"], compose_kwargs["sources_blob"],
+            recent_with_timestamps=compose_kwargs["recent_with_timestamps"],
+            channel_name=compose_kwargs["channel_name"], must_post=must_post,
+            image_urls=compose_kwargs["image_urls"],
+            hot_urls=compose_kwargs["hot_urls"],
+            enriched_links=compose_kwargs["enriched_links"],
+            perplexity_context=compose_kwargs["perplexity_context"],
+            recently_seen_urls=compose_kwargs["recently_seen_urls"],
+            markets_context=compose_kwargs["markets_context"],
         )
 
         if not line or line.strip().upper() == "EMPTY":
@@ -310,7 +325,52 @@ class Discourse(commands.Cog):
             if must_post:
                 return voice.pick(voice.DISCOURSE_FALLBACK)
             return ""
-        return line
+
+        # Post-generation quality gate: Haiku scores engagement potential.
+        try:
+            score, reason = await self.bot.claude.discourse_score(
+                line, channel_name=channel.name,
+            )
+        except Exception as exc:
+            emit_error(
+                source="discourse_score", exc=exc, recoverable=True,
+                guild_id=guild.id, channel_id=channel.id,
+            )
+            score, reason = 1.0, "score_failed_pass_through"
+
+        emit(
+            "discourse_scored",
+            guild_id=guild.id, channel_id=channel.id, user_id=user_id,
+            score=score, reason=reason, must_post=must_post,
+            category=category, post_preview=line[:120],
+        )
+
+        if score >= DISCOURSE_SCORE_THRESHOLD:
+            return line
+
+        # Below threshold: scheduled posts skip, manual posts retry once.
+        if not must_post:
+            log.info(
+                "discourse scored %.2f (< %.2f) for guild %d channel %d, skipping slot",
+                score, DISCOURSE_SCORE_THRESHOLD, guild.id, channel.id,
+            )
+            return ""
+
+        # Manual: retry with a nudge to pick a different angle.
+        line2 = await self.bot.claude.discourse(
+            compose_kwargs["category"], compose_kwargs["sources_blob"],
+            recent_with_timestamps=compose_kwargs["recent_with_timestamps"],
+            channel_name=compose_kwargs["channel_name"], must_post=True,
+            image_urls=compose_kwargs["image_urls"],
+            hot_urls=compose_kwargs["hot_urls"],
+            enriched_links=compose_kwargs["enriched_links"],
+            perplexity_context=compose_kwargs["perplexity_context"],
+            recently_seen_urls=compose_kwargs["recently_seen_urls"],
+            markets_context=compose_kwargs["markets_context"],
+        )
+        if not line2 or line2.strip().upper() == "EMPTY":
+            return line  # retry produced nothing, send the original
+        return line2
 
     # ---- scheduler --------------------------------------------------------------
 

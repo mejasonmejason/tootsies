@@ -94,6 +94,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `error` | cogs/* + bot.py error handler | source (e.g. `ask`, `order_preflight`, `undo`), error (exception class), guild_id, user_id, optional context |
 | `recap_deflected` | cogs/recap.py | guild_id, user_id, period, channel_id, channel_name, reason (`no_permission`/`no_messages`), can_read_history, total_messages |
 | `discourse_fallback` | cogs/discourse.py | guild_id, user_id, category, source_count, recent_topic_count, reason |
+| `discourse_scored` | cogs/discourse.py | guild_id, channel_id, score, reason, must_post, category, user_id, post_preview |
 | `link_enrich` | utils/link_enrich.py | platform, url_host, ok, duration_ms, cache_hit |
 | `pplx_ask` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `pplx_discourse` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |

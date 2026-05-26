@@ -264,23 +264,23 @@ async def test_yaps_passes_cooldown_that_chill_would_block(monkeypatch: pytest.M
 
 @pytest.mark.asyncio
 async def test_chill_daily_cap_lower_than_yaps(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A count of 4 today: chill (cap 3) blocks, yaps (cap 6) doesn't."""
+    """A count of 6 today: chill (cap 5) blocks, yaps (cap 10) doesn't."""
     cog = _make_cog()
     claude = _stub_claude()
     cog.bot.claude = claude
     cog._buffers[(1, 2)].extend([_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE)])
     _force_et_hour(monkeypatch, 12)
-    cog.bot.db = _stub_db(mood=MoodMode.CHILL, count_today=4)
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL, count_today=6)
     await cog._maybe_chime_in_one(1, 2)
-    claude.chimein_score.assert_not_called()  # blocked by chill cap of 3
+    claude.chimein_score.assert_not_called()  # blocked by chill cap of 5
 
     cog2 = _make_cog()
     claude2 = _stub_claude()
     cog2.bot.claude = claude2
     cog2._buffers[(1, 2)].extend([_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE)])
-    cog2.bot.db = _stub_db(mood=MoodMode.YAPS, count_today=4)
+    cog2.bot.db = _stub_db(mood=MoodMode.YAPS, count_today=6)
     await cog2._maybe_chime_in_one(1, 2)
-    claude2.chimein_score.assert_called_once()  # 4 < yaps cap of 6
+    claude2.chimein_score.assert_called_once()  # 6 < yaps cap of 10
 
 
 @pytest.mark.asyncio

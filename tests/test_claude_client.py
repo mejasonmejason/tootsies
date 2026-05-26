@@ -721,3 +721,73 @@ async def test_pick_kalshi_market_api_failure_returns_none():
     with patch.object(client, "_call", fake):
         result = await client.pick_kalshi_market("anything", candidates)
     assert result is None
+
+
+# ---- _parse_discourse_score -------------------------------------------------------
+
+from claude_client import _parse_discourse_score  # noqa: E402
+
+
+def test_parse_discourse_score_happy_path():
+    score, reason = _parse_discourse_score('{"score": 0.72, "reason": "has a take"}')
+    assert score == pytest.approx(0.72)
+    assert reason == "has a take"
+
+
+def test_parse_discourse_score_strips_code_fence():
+    score, reason = _parse_discourse_score(
+        '```json\n{"score": 0.85, "reason": "spicy"}\n```'
+    )
+    assert score == pytest.approx(0.85)
+    assert reason == "spicy"
+
+
+def test_parse_discourse_score_with_preamble():
+    score, reason = _parse_discourse_score(
+        'Here is my assessment: {"score": 0.5, "reason": "bland"}'
+    )
+    assert score == pytest.approx(0.5)
+    assert reason == "bland"
+
+
+def test_parse_discourse_score_clamps_out_of_range():
+    score, _ = _parse_discourse_score('{"score": 1.5, "reason": "off"}')
+    assert score == pytest.approx(1.0)
+    score2, _ = _parse_discourse_score('{"score": -0.3, "reason": "off"}')
+    assert score2 == pytest.approx(0.0)
+
+
+def test_parse_discourse_score_empty_returns_zero():
+    assert _parse_discourse_score("") == (0.0, "")
+
+
+def test_parse_discourse_score_no_json_returns_zero():
+    assert _parse_discourse_score("no json here") == (0.0, "")
+
+
+def test_parse_discourse_score_malformed_json_returns_zero():
+    assert _parse_discourse_score("{bad json}") == (0.0, "")
+
+
+def test_parse_discourse_score_missing_score_returns_zero():
+    assert _parse_discourse_score('{"reason": "no score field"}') == (0.0, "")
+
+
+def test_parse_discourse_score_missing_reason_defaults_empty():
+    score, reason = _parse_discourse_score('{"score": 0.7}')
+    assert score == pytest.approx(0.7)
+    assert reason == ""
+
+
+@pytest.mark.asyncio
+async def test_discourse_score_uses_haiku():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(
+        text='{"score": 0.8, "reason": "strong take"}',
+    ))
+    with patch.object(client, "_call", fake):
+        score, reason = await client.discourse_score("some post text")
+    assert score == pytest.approx(0.8)
+    assert reason == "strong take"
+    assert fake.call_args.kwargs["model"] == HAIKU
+    assert fake.call_args.kwargs["purpose"] == "discourse_score"

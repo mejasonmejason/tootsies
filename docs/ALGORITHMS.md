@@ -18,8 +18,8 @@ The discourse `mood` setting (set in `/menu`) is the single dial that controls e
 
 | Surface | `off` | `chill` | `yaps` |
 |---|---|---|---|
-| [`/discourse` scheduled posts](../cogs/discourse.py) | silent | 2/day at **12pm + 7pm ET** | 4/day at **10am, 2pm, 6pm, 10pm ET** |
-| [Chime-in](../cogs/chimein.py) | silent | up to **3/day**, **60 min** cooldown, score **>= 0.8** | up to **6/day**, **20 min** cooldown, score **>= 0.6** |
+| [`/discourse` scheduled posts](../cogs/discourse.py) | silent | 2/day at **12pm + 7pm ET** | 5/day at **9am, 12pm, 3pm, 6pm, 10pm ET** |
+| [Chime-in](../cogs/chimein.py) | silent | up to **5/day**, **40 min** cooldown, score **>= 0.8** | up to **10/day**, **20 min** cooldown, score **>= 0.6** |
 | Hours window (both) | n/a | 9am to 2am ET | 9am to 2am ET |
 | Tick frequency | n/a | scheduler: 1/min, chime-in: 1/min | scheduler: 1/min, chime-in: 1/min |
 
@@ -159,7 +159,7 @@ Same backend, same rate limit. The mention handler in [cogs/ask.py](../cogs/ask.
 
 | What | Where | Current |
 |---|---|---|
-| Scheduled times | [`cogs/discourse.py` CHILL_TIMES / YAPS_TIMES](../cogs/discourse.py) | chill: 12pm/7pm PT; yaps: 10am/2pm/6pm/10pm PT |
+| Scheduled times | [`cogs/discourse.py` CHILL_TIMES / YAPS_TIMES](../cogs/discourse.py) | chill: 12pm/7pm PT; yaps: 9am/12pm/3pm/6pm/10pm ET |
 | Tick frequency | `@tasks.loop(minutes=1)` | 1 min |
 | Cross-category history depth | `recent_discourse_all(limit=20)` | 20 most recent posts |
 | Model | `claude.mood_post()` uses HAIKU | Haiku 4.5 |
@@ -203,7 +203,7 @@ The cog then branches on the verdict for the user-facing message (different defl
 
 Toots leans into the conversation when she has something real to say. No commands of its own, it rides on two settings already in `/menu`:
 - **Listen channel:** the configured `discourse_channel`. Whatever room is your "chatter" / "general" channel is the one Toots will listen in on.
-- **On/off + cadence:** the discourse mood. `mood=off` silences chime-in; `chill` makes her reserved (3/day, 60 min cooldown, 0.8 threshold); `yaps` makes her chatty (6/day, 20 min cooldown, 0.6 threshold). Same 2:4 ratio scheduled discourse already uses.
+- **On/off + cadence:** the discourse mood. `mood=off` silences chime-in; `chill` makes her reserved (5/day, 40 min cooldown, 0.8 threshold); `yaps` makes her chatty (10/day, 20 min cooldown, 0.6 threshold).
 
 ### Design intent
 
@@ -217,8 +217,8 @@ In [`cogs/chimein.py`](../cogs/chimein.py):
 2. **`tasks.loop(seconds=60)` tick** refreshes each guild's listen channel from settings, then walks every (guild, channel) with new buffered activity and runs the gate sequence in `_maybe_chime_in_one()`:
    - **mood_off_gate**: if the discourse mood is `off`, skip
    - **hours_gate**: only 9am-2am ET, else skip
-   - **cooldown_gate**: no chime-in within the mood-tuned cooldown (60 min chill / 20 min yaps)
-   - **daily_cap_gate**: bounded by the mood-tuned daily cap (3 chill / 6 yaps) per channel per 24h
+   - **cooldown_gate**: no chime-in within the mood-tuned cooldown (40 min chill / 20 min yaps)
+   - **daily_cap_gate**: bounded by the mood-tuned daily cap (5 chill / 10 yaps) per channel per 24h
    - Calls **Haiku 4.5** [`chimein_score()`](../claude_client.py) on the buffer, returns `(score, vibe, hook)`
    - **vibe_gate**: drop if vibe in `{vulnerable, catchup, other}` (Toots doesn't interrupt private moments)
    - **threshold_gate**: drop if score < mood-tuned threshold (0.8 chill / 0.6 yaps)
@@ -231,7 +231,7 @@ In [`cogs/chimein.py`](../cogs/chimein.py):
 |---|---|---|
 | Min buffer to score | `BUFFER_MIN_FOR_SCORE` in [`cogs/chimein.py`](../cogs/chimein.py) | 5 messages |
 | Buffer max | `BUFFER_MAX` | 50 messages per channel |
-| Per-mood cadence | `MOOD_TUNING` | chill: 0.8 / 3 / 60min · yaps: 0.6 / 6 / 20min |
+| Per-mood cadence | `MOOD_TUNING` | chill: 0.8 / 5 / 40min · yaps: 0.6 / 10 / 20min |
 | Hours window | `HOURS_START_ET`, `HOURS_END_ET_NEXT_DAY` | 9am to 2am ET |
 | Skip vibes | `SKIP_VIBES` | `vulnerable`, `catchup`, `other` |
 | Tick frequency | `TICK_SECONDS` | 60s (cheap, only scores buffers with new activity) |
