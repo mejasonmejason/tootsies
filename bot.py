@@ -65,6 +65,7 @@ class TootsiesBot(commands.Bot):
         self.markets = MarketsManager(
             config.sports_game_odds_api_key,
             intent_classifier=self.claude.classify_market_intent,
+            kalshi_series_picker=self.claude.pick_kalshi_series,
         )
         self._ready_once = False
 
@@ -73,6 +74,11 @@ class TootsiesBot(commands.Bot):
         for cog in COGS:
             await self.load_extension(cog)
             log.info("loaded %s", cog)
+        # Kalshi has no free-text search API, so discovery rides on a top-N
+        # series index populated here and refreshed hourly in the background.
+        # The first fetch happens inside the loop; first few queries during
+        # warm-up fall through to Polymarket-only (handled by _kalshi_snapshots).
+        await self.markets.kalshi.start_series_refresh_loop()
 
     async def on_ready(self) -> None:
         # Sync per guild, pushes commands fast (~10s) instead of the global ~1hr propagation.
@@ -229,6 +235,7 @@ async def _main() -> None:
             await bot.gh.close()
             if bot.perplexity:
                 await bot.perplexity.close()
+            await bot.markets.kalshi.stop_series_refresh_loop()
             await close_link_enrich_session()
             await close_markets_session()
             await bot.db.close()
