@@ -21,6 +21,7 @@ a real link) cost more than false negatives (letting a near-miss through).
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # Match http(s)://... URLs in free text. Stops at whitespace, brackets/parens,
 # quotes, and angle brackets. Trailing punctuation is trimmed separately in
@@ -117,6 +118,49 @@ def enforce_allowlist(
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip(), rejected, deduped
+
+
+def ensure_market_citation(
+    text: str,
+    snapshots: list[Any] | None,
+) -> str:
+    """Force-append a market URL if the response cites market data without one.
+
+    The model is prompted to cite market URLs but routinely forgets under
+    prompt pressure (long system_extra + DATA INTEGRITY rule + many tactics
+    compete for attention). This is the mechanical safety net: if markets
+    data was fetched AND the response contains no market URL, append the
+    snapshot that best matches what she said.
+
+    Matching strategy:
+      1. If any snapshot's title text appears in the response, append that URL.
+      2. Else, fall back to the first snapshot with a URL.
+
+    No-op when no snapshots were provided or when the response already cites
+    one of the snapshot URLs. Safe to call unconditionally after the
+    guardrail.
+    """
+    if not snapshots:
+        return text
+    snapshot_urls = [getattr(s, "url", "") for s in snapshots]
+    snapshot_urls = [u for u in snapshot_urls if u]
+    if not snapshot_urls:
+        return text
+    response_urls = {normalize(u) for u in extract_urls(text)}
+    if any(normalize(u) in response_urls for u in snapshot_urls):
+        return text
+    # Try to match a snapshot title to the response.
+    text_lower = text.lower()
+    chosen_url = ""
+    for s in snapshots:
+        title = (getattr(s, "title", "") or "").lower().strip()
+        if title and len(title) >= 4 and title in text_lower:
+            chosen_url = getattr(s, "url", "")
+            if chosen_url:
+                break
+    if not chosen_url:
+        chosen_url = snapshot_urls[0]
+    return f"{text.rstrip()}\n\n{chosen_url}"
 
 
 def enforce_source_links(

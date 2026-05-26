@@ -830,9 +830,9 @@ def _kalshi_web_url(event_ticker: str, ticker: str, title: str) -> str:
         https://kalshi.com/markets/kxmlbgame/professional-baseball-game
 
     Two path segments:
-      1. series_ticker (lowercase) — extracted from event_ticker by taking
+      1. series_ticker (lowercase): extracted from event_ticker by taking
          everything before the first "-" (e.g. "KXMLBGAME-S20265B7F" -> "kxmlbgame")
-      2. event slug (lowercase, alphanumeric + hyphens) — slugified from title
+      2. event slug (lowercase, alphanumeric + hyphens): slugified from title
 
     Falls back to a single-segment URL if we can't derive both halves cleanly.
     """

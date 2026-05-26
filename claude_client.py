@@ -26,7 +26,7 @@ from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.markets import MarketSnapshot, format_markets_for_prompt
 from utils.perplexity import format_perplexity_for_prompt
-from utils.url_guardrail import enforce_source_links
+from utils.url_guardrail import enforce_source_links, ensure_market_citation
 
 log = logging.getLogger(__name__)
 
@@ -612,6 +612,10 @@ class ClaudeClient:
             recently_seen_urls=recently_seen_urls,
             market_urls=market_urls,
         )
+        # Mechanical safety net: force-append a market URL if she cited market
+        # data without one. The prompt rule asks her to, but Haiku routinely
+        # forgets under prompt pressure (long system_extra + DATA INTEGRITY).
+        cleaned = ensure_market_citation(cleaned, markets_context)
         if rejected:
             emit(
                 "link_stripped", purpose="ask", reason="hallucinated",
@@ -931,6 +935,9 @@ class ClaudeClient:
             recently_seen_urls=recently_seen_urls,
             market_urls=market_urls,
         )
+        # Same mechanical safety net as /ask: force-append a market URL if
+        # she cited market data without one.
+        cleaned = ensure_market_citation(cleaned, markets_context)
         if rejected:
             emit(
                 "link_stripped", purpose=purpose, reason="hallucinated",
