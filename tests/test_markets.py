@@ -9,9 +9,12 @@ import pytest
 
 from utils.markets import (
     KalshiClient,
+    MarketsManager,
     MarketSnapshot,
     PolymarketClient,
     SportsGameOddsClient,
+    classify_intent,
+    detect_league,
     format_markets_for_prompt,
 )
 
@@ -316,3 +319,136 @@ def test_format_missing_probability_shows_question_mark():
     )
     out = format_markets_for_prompt([snap])
     assert "yes=?" in out
+
+
+# ---- classify_intent -------------------------------------------------------
+
+
+def test_classify_intent_sports_keywords():
+    for q in (
+        "make me a parlay for tonight",
+        "what's the spread on the lakers game",
+        "best NBA picks for tonight",
+        "any player props you like for warriors",
+        "draftkings has the line at -3",
+    ):
+        assert classify_intent(q) == "sports", q
+
+
+def test_classify_intent_prediction_market_keywords():
+    for q in (
+        "what does polymarket say about the election",
+        "odds of trump winning 2028",
+        "kalshi has it at 40%",
+        "will drake drop an album by july",
+        "will the fed cut rates before december",
+    ):
+        assert classify_intent(q) == "prediction_market", q
+
+
+def test_classify_intent_no_match():
+    for q in (
+        "is drake done",
+        "what's the vibe in here today",
+        "best taco spot in oakland",
+        "",
+    ):
+        assert classify_intent(q) is None, q
+
+
+# ---- detect_league ---------------------------------------------------------
+
+
+def test_detect_league_explicit_names():
+    assert detect_league("nba game tonight") == "NBA"
+    assert detect_league("NFL spread") == "NFL"
+    assert detect_league("the MLB playoffs") == "MLB"
+    assert detect_league("nhl over under") == "NHL"
+    assert detect_league("college football slate") == "CFB"
+
+
+def test_detect_league_sport_names():
+    assert detect_league("any good basketball games") == "NBA"
+    assert detect_league("football tonight") == "NFL"
+
+
+def test_detect_league_no_match():
+    assert detect_league("what's a good parlay") is None
+    assert detect_league("") is None
+
+
+# ---- MarketsManager -------------------------------------------------------
+
+
+def test_manager_init_with_sgo_key():
+    m = MarketsManager(sgo_api_key="test-key")
+    assert m.sgo.enabled is True
+    assert m.polymarket is not None
+    assert m.kalshi is not None
+
+
+def test_manager_init_without_sgo_key():
+    m = MarketsManager(sgo_api_key=None)
+    assert m.sgo.enabled is False
+    # Polymarket + Kalshi still work because they need no auth.
+    assert m.polymarket is not None
+    assert m.kalshi is not None
+
+
+async def test_manager_returns_none_for_unrelated_query():
+    m = MarketsManager(sgo_api_key="test")
+    result = await m.get_context("is drake done")
+    assert result is None
+
+
+async def test_manager_sports_query_calls_sgo():
+    m = MarketsManager(sgo_api_key="test")
+    expected = [
+        MarketSnapshot(source="sgo", title="A @ B", url="u", odds={"spread": -3.0}),
+    ]
+    m.sgo.get_event_odds = AsyncMock(return_value=expected)  # type: ignore[method-assign]
+    result = await m.get_context("any good NBA parlays tonight")
+    assert result == expected
+    m.sgo.get_event_odds.assert_awaited_once()
+
+
+async def test_manager_sports_query_skips_when_no_sgo_key():
+    m = MarketsManager(sgo_api_key=None)
+    result = await m.get_context("nba parlay tonight")
+    assert result is None
+
+
+async def test_manager_pm_query_calls_polymarket():
+    m = MarketsManager(sgo_api_key=None)
+    expected = [
+        MarketSnapshot(source="polymarket", title="Drake", url="u", probability=0.3),
+    ]
+    m.polymarket.search_markets = AsyncMock(return_value=expected)  # type: ignore[method-assign]
+    m.kalshi.get_open_markets = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    result = await m.get_context("will drake drop an album by july")
+    assert result == expected
+    m.polymarket.search_markets.assert_awaited_once()
+
+
+async def test_manager_pm_query_falls_back_to_kalshi():
+    m = MarketsManager(sgo_api_key=None)
+    kalshi_snaps = [
+        MarketSnapshot(source="kalshi", title="K1", url="u1", probability=0.5),
+        MarketSnapshot(source="kalshi", title="K2", url="u2", probability=0.6),
+        MarketSnapshot(source="kalshi", title="K3", url="u3", probability=0.7),
+        MarketSnapshot(source="kalshi", title="K4", url="u4", probability=0.8),
+    ]
+    m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi_snaps)  # type: ignore[method-assign]
+    result = await m.get_context("polymarket chances of the election")
+    assert result is not None
+    # Kalshi fallback returns top 3 only.
+    assert len(result) == 3
+    assert all(s.source == "kalshi" for s in result)
+
+
+async def test_manager_fails_open_on_exception():
+    m = MarketsManager(sgo_api_key=None)
+    m.polymarket.search_markets = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+    result = await m.get_context("will drake drop by july")
+    assert result is None

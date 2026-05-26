@@ -24,6 +24,7 @@ from anthropic import AsyncAnthropic
 from persona import system_prompt
 from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
+from utils.markets import MarketSnapshot, format_markets_for_prompt
 from utils.perplexity import format_perplexity_for_prompt
 from utils.url_guardrail import enforce_source_links
 
@@ -425,6 +426,7 @@ class ClaudeClient:
         enriched_links: list[EnrichedLink] | None = None,
         perplexity_context: str | None = None,
         recently_seen_urls: list[str] | None = None,
+        markets_context: list[MarketSnapshot] | None = None,
     ) -> str:
         """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
 
@@ -450,6 +452,8 @@ class ClaudeClient:
             extra_context += "\n\n" + format_enriched_for_prompt(enriched_links)
         if perplexity_context:
             extra_context += "\n\n" + format_perplexity_for_prompt(perplexity_context)
+        if markets_context:
+            extra_context += "\n\n" + format_markets_for_prompt(markets_context)
 
         system_extra = (
             "TASK: Answer the user's question in your voice.\n"

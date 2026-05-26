@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -34,7 +35,7 @@ from typing import Any, Literal
 
 import aiohttp
 
-from utils.events import emit
+from utils.events import emit, emit_error
 
 log = logging.getLogger(__name__)
 
@@ -538,3 +539,121 @@ def format_markets_for_prompt(snapshots: list[MarketSnapshot]) -> str:
             vol_str = f" vol ${vol:,.0f}" if isinstance(vol, int | float) else ""
             lines.append(f"  - [{label}] {snap.title}  yes={prob_str}{vol_str}  {snap.url}")
     return "\n".join(lines)
+
+
+# ---- intent routing + manager ----------------------------------------------
+
+
+# Keywords that signal the user is asking about a sports line / parlay / game.
+# Intentionally narrow on betting vocabulary so /ask about a movie that happens
+# to mention "playoffs" metaphorically doesn't trigger an odds fetch.
+_SPORTS_PATTERNS: tuple[str, ...] = (
+    "nba", "nfl", "mlb", "nhl", "ufc", "mls", "ucl",
+    "basketball", "football", "baseball", "hockey", "soccer",
+    "spread", "parlay", "moneyline", "money line", "over under", "over/under",
+    "prop bet", "player prop", "point spread", "odds on", "ats",
+    "sportsbook", "draftkings", "fanduel", "betmgm",
+)
+
+# Keywords + the canonical "will X happen by Y" shape that prediction markets cover.
+_PM_PATTERNS: tuple[str, ...] = (
+    "polymarket", "kalshi", "prediction market", "prediction markets",
+    "election", "presidential", "primary", "primaries",
+    "odds of ", "chance of ",
+)
+_WILL_X_BY_RE = re.compile(r"\bwill\b.{1,80}\b(by|before)\b", re.IGNORECASE)
+
+# League keyword groups for routing the SGO fetch. League names + sport names
+# only; team-name detection would need ~150 entries per sport to be useful and
+# is out of scope for v1. If a user asks about a specific game without naming
+# the league, we default to NBA below.
+_LEAGUE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    # College leagues first so "college football" beats "football" -> NFL.
+    "CFB": ("college football", "cfb"),
+    "CBB": ("college basketball", "cbb"),
+    "NBA": ("nba", "basketball"),
+    "NFL": ("nfl", "football"),
+    "MLB": ("mlb", "baseball"),
+    "NHL": ("nhl", "hockey"),
+    "UFC": ("ufc",),
+    "MLS": ("mls",),
+    "UCL": ("ucl", "champions league"),
+}
+
+Intent = Literal["sports", "prediction_market"]
+
+
+def classify_intent(query: str) -> Intent | None:
+    """Best-effort keyword router. Returns None if no clear market intent."""
+    if not query:
+        return None
+    q = query.lower()
+    if any(p in q for p in _SPORTS_PATTERNS):
+        return "sports"
+    if any(p in q for p in _PM_PATTERNS) or _WILL_X_BY_RE.search(query):
+        return "prediction_market"
+    return None
+
+
+def detect_league(query: str) -> str | None:
+    """Return canonical league ID (e.g. 'NBA') if the query names one, else None."""
+    if not query:
+        return None
+    q = query.lower()
+    for league, keywords in _LEAGUE_KEYWORDS.items():
+        if any(k in q for k in keywords):
+            return league
+    return None
+
+
+class MarketsManager:
+    """Single entry point for cogs. Routes a query to the right client(s)
+    and returns a formatted prompt block (or None if nothing relevant).
+
+    SGO is conditional on a key; Polymarket and Kalshi always work since
+    their read APIs are public.
+    """
+
+    def __init__(self, sgo_api_key: str | None) -> None:
+        self.sgo = SportsGameOddsClient(sgo_api_key)
+        self.polymarket = PolymarketClient()
+        self.kalshi = KalshiClient()
+
+    async def get_context(self, query: str) -> list[MarketSnapshot] | None:
+        """Fetch live market snapshots for a query if intent matches.
+
+        Returns a list of MarketSnapshot ready to pass into claude.ask(...) for
+        prompt injection, or None if no intent / no useful data. Fail-open:
+        any downstream error returns None, never raises.
+        """
+        intent = classify_intent(query)
+        if intent is None:
+            return None
+        try:
+            if intent == "sports":
+                return await self._sports_snapshots(query)
+            if intent == "prediction_market":
+                return await self._pm_snapshots(query)
+        except Exception as exc:  # belt + suspenders; clients already swallow
+            emit_error(
+                source="markets_manager",
+                exc=exc,
+                recoverable=True,
+                context={"intent": intent, "query_chars": len(query)},
+            )
+        return None
+
+    async def _sports_snapshots(self, query: str) -> list[MarketSnapshot] | None:
+        if not self.sgo.enabled:
+            return None
+        league = detect_league(query) or "NBA"
+        snaps = await self.sgo.get_event_odds(league, purpose="ask")
+        return snaps[:5] if snaps else None
+
+    async def _pm_snapshots(self, query: str) -> list[MarketSnapshot] | None:
+        # Polymarket search first (broader topic coverage), Kalshi fallback.
+        snaps = await self.polymarket.search_markets(query, limit=5)
+        if snaps:
+            return snaps
+        kalshi_snaps = await self.kalshi.get_open_markets(limit=5)
+        return kalshi_snaps[:3] if kalshi_snaps else None
