@@ -981,36 +981,16 @@ class ClaudeClient:
             )
         return cleaned
 
-    async def discourse_score(
-        self,
-        post: str,
-        channel_name: str = "",
-        recent_posts: str = "",
-    ) -> tuple[float, str]:
-        """Score a generated discourse post on engagement potential + freshness.
+    async def discourse_score(self, post: str, channel_name: str = "") -> tuple[float, str]:
+        """Score a generated discourse post on engagement potential.
 
         Cheap Haiku call. Returns (score 0..1, reason):
           - score: how likely this post is to make someone in the room respond.
           - reason: one-line explanation of the score.
 
-        When `recent_posts` is provided, Haiku also penalizes posts that
-        rehash a topic already covered in the last 72h.
-
         Returns (0.0, "") if unparseable, which guarantees skip.
         """
         channel_ctx = f" in #{channel_name}" if channel_name else ""
-        dedup_block = ""
-        if recent_posts:
-            dedup_block = (
-                "\n\nDUPLICATE CHECK (load-bearing, score BEFORE engagement):\n"
-                "Recently posted (last 72h):\n"
-                f"{recent_posts}\n"
-                "If the candidate post covers the SAME topic, angle, or claim "
-                "as any recent post above, score it 0.2 or below regardless of "
-                "engagement quality. The room already saw this take. Only score "
-                "normally if the topic has materially evolved (new score, new "
-                "news, new development) since the recent post.\n"
-            )
         system_extra = (
             "TASK: You are scoring a generated Discord post BEFORE it gets sent to a channel. "
             "Rate how engaging this post is, how likely it is to make someone respond.\n"
@@ -1036,7 +1016,7 @@ class ClaudeClient:
             "  - Curator voice ('this is worth watching', 'this just dropped')\n"
             "  - Hedging ('could be interesting', 'we'll see')\n"
             "  - Generic framing anyone could write ('big game tonight')\n"
-            f"{dedup_block}\n"
+            "\n"
             "Respond on ONE line, exactly this format:\n"
             '  {"score": 0.72, "reason": "has a take but could be spicier"}\n'
             "If the response can't be parsed we treat it as 0-score skip."
