@@ -9,13 +9,17 @@ import pytest
 
 from utils.markets import (
     KalshiClient,
+    MarketComment,
     MarketsManager,
     MarketSnapshot,
     PolymarketClient,
+    PriceHistorySummary,
     SportsGameOddsClient,
     classify_intent,
     detect_league,
+    format_comments_for_prompt,
     format_markets_for_prompt,
+    format_price_history_for_prompt,
 )
 
 # ---- helpers ---------------------------------------------------------------
@@ -518,3 +522,335 @@ async def test_manager_classifier_returns_none_no_fetch():
     assert result is None
     m.sgo.get_event_odds.assert_not_awaited()
     m.polymarket.search_markets.assert_not_awaited()
+
+
+# ---- SGO player props -----------------------------------------------------
+
+
+async def test_sgo_player_props_disabled_when_no_key():
+    client = SportsGameOddsClient(api_key=None)
+    assert await client.get_player_props("NBA") is None
+
+
+async def test_sgo_player_props_parses_props():
+    client = SportsGameOddsClient(api_key="test")
+    payload = {
+        "data": [
+            {
+                "eventID": "evt_1",
+                "playerProps": {
+                    "lebron_pts": {
+                        "player": "LeBron James",
+                        "marketType": "points",
+                        "line": 24.5,
+                        "over": -110,
+                        "under": -110,
+                    },
+                    "luka_ast": {
+                        "player": "Luka Doncic",
+                        "marketType": "assists",
+                        "line": 7.5,
+                        "over": -120,
+                        "under": 100,
+                    },
+                },
+            },
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_player_props("NBA")
+    assert result is not None
+    assert len(result) == 2
+    lebron = next(s for s in result if "LeBron" in s.title)
+    assert lebron.odds["line"] == 24.5
+    assert lebron.odds["over"] == -110
+    assert "evt_1" in lebron.url
+
+
+async def test_sgo_player_props_skips_malformed():
+    client = SportsGameOddsClient(api_key="test")
+    payload = {
+        "data": [
+            {
+                "eventID": "evt_1",
+                "playerProps": {
+                    "valid": {
+                        "player": "Steph", "marketType": "threes", "line": 4.5,
+                    },
+                    "no_player": {"marketType": "points", "line": 20},
+                    "no_line": {"player": "Joker", "marketType": "rebounds"},
+                    "not_a_dict": "garbage",
+                },
+            },
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_player_props("NBA")
+    assert result is not None
+    assert len(result) == 1
+    assert "Steph" in result[0].title
+
+
+# ---- Polymarket multi-outcome events --------------------------------------
+
+
+async def test_polymarket_multi_outcome_event_populates_outcomes():
+    client = PolymarketClient()
+    payload = [
+        {
+            "title": "2028 Presidential Election",
+            "slug": "pres-2028",
+            "markets": [
+                {
+                    "id": "m1",
+                    "groupItemTitle": "Trump",
+                    "outcomePrices": ["0.42", "0.58"],
+                },
+                {
+                    "id": "m2",
+                    "groupItemTitle": "Vance",
+                    "outcomePrices": ["0.31", "0.69"],
+                },
+                {
+                    "id": "m3",
+                    "groupItemTitle": "Harris",
+                    "outcomePrices": ["0.18", "0.82"],
+                },
+            ],
+        },
+    ]
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_trending_events()
+    assert result is not None
+    assert len(result) == 1
+    snap = result[0]
+    assert snap.outcomes == {"Trump": 0.42, "Vance": 0.31, "Harris": 0.18}
+    # Leader's probability surfaced as the snapshot's `probability`.
+    assert snap.probability == pytest.approx(0.42)
+    assert snap.meta["market_ids"] == ["m1", "m2", "m3"]
+
+
+async def test_polymarket_binary_event_leaves_outcomes_empty():
+    """One market, no label = binary. outcomes must stay empty."""
+    client = PolymarketClient()
+    payload = [
+        {
+            "title": "Will Drake drop an album by July?",
+            "slug": "drake",
+            "markets": [{"outcomePrices": ["0.38", "0.62"]}],
+        },
+    ]
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_trending_events()
+    assert result is not None
+    snap = result[0]
+    assert snap.outcomes == {}
+    assert snap.probability == pytest.approx(0.38)
+
+
+# ---- Polymarket competitive sort ------------------------------------------
+
+
+async def test_polymarket_competitive_events_hits_correct_endpoint():
+    client = PolymarketClient()
+    payload = [
+        {
+            "title": "Close race",
+            "slug": "close",
+            "markets": [{"outcomePrices": ["0.49", "0.51"]}],
+        },
+    ]
+    mock_sess = _mock_session(_mock_resp(200, payload))
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=mock_sess),
+    ):
+        result = await client.get_competitive_events(limit=5)
+    assert result is not None
+    assert len(result) == 1
+    # Verify the call used the competitive sort param.
+    call_args = mock_sess.get.call_args
+    assert call_args.kwargs["params"]["order"] == "competitive"
+
+
+# ---- Polymarket comments --------------------------------------------------
+
+
+async def test_polymarket_get_market_comments_parses_response():
+    client = PolymarketClient()
+    payload = [
+        {
+            "body": "this is a free money lock",
+            "profile": {"name": "degenchad"},
+            "reactionCount": 42,
+            "createdAt": "2026-05-25T12:00:00Z",
+        },
+        {
+            "body": "sharps disagree, take the other side",
+            "profile": {"name": "sharpsguy"},
+            "reactionCount": 8,
+        },
+    ]
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_market_comments("event-123")
+    assert result is not None
+    assert len(result) == 2
+    assert isinstance(result[0], MarketComment)
+    assert result[0].author == "degenchad"
+    assert "free money" in result[0].text
+    assert result[0].upvotes == 42
+
+
+async def test_polymarket_comments_skips_empty_body():
+    client = PolymarketClient()
+    payload = [
+        {"body": "", "profile": {"name": "empty"}},
+        {"body": "real comment", "profile": {"name": "real"}},
+    ]
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_market_comments("event-123")
+    assert result is not None
+    assert len(result) == 1
+    assert result[0].text == "real comment"
+
+
+async def test_polymarket_comments_requires_market_id():
+    client = PolymarketClient()
+    assert await client.get_market_comments("") is None
+
+
+# ---- Polymarket price history ---------------------------------------------
+
+
+async def test_polymarket_price_history_summarizes_series():
+    client = PolymarketClient()
+    payload = {
+        "history": [
+            {"t": 1000, "p": 0.22},
+            {"t": 2000, "p": 0.28},
+            {"t": 3000, "p": 0.32},
+            {"t": 4000, "p": 0.38},
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_price_history("market-abc", hours=24)
+    assert result is not None
+    assert isinstance(result, PriceHistorySummary)
+    assert result.open_price == pytest.approx(0.22)
+    assert result.current_price == pytest.approx(0.38)
+    assert result.change == pytest.approx(0.16)
+    assert result.change_pct == pytest.approx(0.16 / 0.22)
+    assert result.history_points == 4
+
+
+async def test_polymarket_price_history_returns_none_for_too_few_points():
+    client = PolymarketClient()
+    payload = {"history": [{"t": 1, "p": 0.5}]}
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_price_history("m")
+    assert result is None
+
+
+async def test_polymarket_price_history_returns_none_when_open_is_zero():
+    client = PolymarketClient()
+    payload = {"history": [{"t": 1, "p": 0}, {"t": 2, "p": 0.1}]}
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        result = await client.get_price_history("m")
+    assert result is None
+
+
+# ---- format helpers for new types -----------------------------------------
+
+
+def test_format_markets_renders_multi_outcome():
+    snap = MarketSnapshot(
+        source="polymarket",
+        title="2028 Election",
+        url="https://polymarket.com/event/pres-2028",
+        probability=0.42,
+        outcomes={"Trump": 0.42, "Vance": 0.31, "Harris": 0.18},
+        meta={"volume": 1_000_000},
+    )
+    out = format_markets_for_prompt([snap])
+    assert "outcomes:" in out
+    assert "Trump 42%" in out
+    assert "Vance 31%" in out
+    assert "Harris 18%" in out
+
+
+def test_format_comments_empty():
+    assert format_comments_for_prompt([]) == ""
+
+
+def test_format_comments_renders_author_and_upvotes():
+    out = format_comments_for_prompt([
+        MarketComment(market_id="m1", author="degen", text="lock", upvotes=10),
+        MarketComment(market_id="m1", author="", text="fading"),
+    ])
+    assert "@degen (+10): lock" in out
+    assert "@anon: fading" in out
+
+
+def test_format_comments_truncates_long_text():
+    long_text = "x" * 500
+    out = format_comments_for_prompt([
+        MarketComment(market_id="m1", author="a", text=long_text),
+    ])
+    assert "..." in out
+    assert len(out.splitlines()[-1]) < 280
+
+
+def test_format_price_history_summary():
+    summary = PriceHistorySummary(
+        market_id="abc",
+        current_price=0.38,
+        open_price=0.22,
+        change=0.16,
+        change_pct=0.727,
+        history_points=24,
+    )
+    out = format_price_history_for_prompt(summary)
+    assert "opened 22%" in out
+    assert "now 38%" in out
+    assert "up 16pts" in out
+    assert "24 data points" in out
+
+
+def test_format_price_history_flat():
+    summary = PriceHistorySummary(
+        market_id="abc",
+        current_price=0.5,
+        open_price=0.5,
+        change=0.0,
+        change_pct=0.0,
+        history_points=5,
+    )
+    out = format_price_history_for_prompt(summary)
+    assert "flat" in out
