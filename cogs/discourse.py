@@ -51,7 +51,7 @@ CATEGORIES = ["pop", "sports", "cinema", "hiphop", "nba"]
 
 ET = ZoneInfo("America/New_York")
 CHILL_TIMES = [time(12, 0), time(19, 0)]
-YAPS_TIMES = [time(10, 0), time(14, 0), time(18, 0), time(22, 0)]
+YAPS_TIMES = [time(9, 0), time(12, 0), time(15, 0), time(18, 0), time(22, 0)]
 
 # Gap between per-channel compose calls inside a single scheduler tick.
 # Each compose burns ~10K input tokens on sonnet-4-6 and the org TPM ceiling

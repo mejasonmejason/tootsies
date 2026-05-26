@@ -18,7 +18,7 @@ The discourse `mood` setting (set in `/menu`) is the single dial that controls e
 
 | Surface | `off` | `chill` | `yaps` |
 |---|---|---|---|
-| [`/discourse` scheduled posts](../cogs/discourse.py) | silent | 2/day at **12pm + 7pm ET** | 4/day at **10am, 2pm, 6pm, 10pm ET** |
+| [`/discourse` scheduled posts](../cogs/discourse.py) | silent | 2/day at **12pm + 7pm ET** | 5/day at **9am, 12pm, 3pm, 6pm, 10pm ET** |
 | [Chime-in](../cogs/chimein.py) | silent | up to **5/day**, **40 min** cooldown, score **>= 0.8** | up to **10/day**, **20 min** cooldown, score **>= 0.6** |
 | Hours window (both) | n/a | 9am to 2am ET | 9am to 2am ET |
 | Tick frequency | n/a | scheduler: 1/min, chime-in: 1/min | scheduler: 1/min, chime-in: 1/min |
@@ -159,7 +159,7 @@ Same backend, same rate limit. The mention handler in [cogs/ask.py](../cogs/ask.
 
 | What | Where | Current |
 |---|---|---|
-| Scheduled times | [`cogs/discourse.py` CHILL_TIMES / YAPS_TIMES](../cogs/discourse.py) | chill: 12pm/7pm PT; yaps: 10am/2pm/6pm/10pm PT |
+| Scheduled times | [`cogs/discourse.py` CHILL_TIMES / YAPS_TIMES](../cogs/discourse.py) | chill: 12pm/7pm PT; yaps: 9am/12pm/3pm/6pm/10pm ET |
 | Tick frequency | `@tasks.loop(minutes=1)` | 1 min |
 | Cross-category history depth | `recent_discourse_all(limit=20)` | 20 most recent posts |
 | Model | `claude.mood_post()` uses HAIKU | Haiku 4.5 |
