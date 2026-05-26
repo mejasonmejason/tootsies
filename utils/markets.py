@@ -798,6 +798,13 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
     title = market.get("title") or ""
     if not title:
         return None
+    # Skip MVE (Multi-Variate Event) "Exotics" combo/parlay markets. Kalshi
+    # surfaces these heavily in default /markets sort — they were 100% of the
+    # first 50 results in live testing — but they're aggregation series like
+    # KXMVECROSSCATEGORY ("MVE Cross Category") and KXMVESPORTSMULTIGAMEEXTENDED.
+    # Not what users mean when they ask about prediction markets.
+    if event_ticker.startswith("KXMVE"):
+        return None
     # Kalshi quotes in dollars [0, 1]. Use the midpoint of yes_bid and yes_ask
     # when both are present; fall back to whichever exists.
     yes_bid = market.get("yes_bid_dollars")

@@ -324,11 +324,20 @@ def test_source_links_market_urls_none_or_empty_no_change():
 # ---- ensure_market_citation -------------------------------------------------
 
 
-def test_market_citation_appends_when_response_has_no_url():
-    """Mechanical safety net: append a market URL when none is present."""
+def test_market_citation_appends_when_title_appears_in_response():
+    """Append a market URL when the response actually mentions the snapshot title."""
     snaps = [_Snap("Lakers @ Spurs", "https://polymarket.com/event/lakers-spurs")]
-    out = ensure_market_citation("Lakers tonight, take the points.", snaps)
+    out = ensure_market_citation("the lakers @ spurs game is a trap.", snaps)
     assert "https://polymarket.com/event/lakers-spurs" in out
+
+
+def test_market_citation_falls_back_to_first_snapshot_when_no_title_match():
+    """When no snapshot title matches the response, fall back to first snapshot.
+    Relies on the source-side filters (e.g. MVE filter on Kalshi) to keep the
+    snapshot pool relevant; we don't second-guess them here."""
+    snaps = [_Snap("Some Market", "https://polymarket.com/event/some")]
+    out = ensure_market_citation("Drake albums tonight.", snaps)
+    assert "https://polymarket.com/event/some" in out
 
 
 def test_market_citation_noop_when_response_already_has_market_url():
