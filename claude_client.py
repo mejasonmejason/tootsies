@@ -1147,14 +1147,7 @@ class ClaudeClient:
             "\n"
             "STANCE: like a regular at the bar leaning in mid-shift, not "
             "announcing yourself. Call out a name from the buffer if it lands "
-            "(\"@gaza you're cooking with that take\").\n"
-            "\n"
-            "NO PARROTING: your line must be YOUR take, not a copy of what "
-            "someone in the buffer already said. If a patron just said "
-            "\"spider-noir drops tomorrow, nic cage is wild\", you don't repeat "
-            "that. you ADD to it (\"nic cage career arc is the best anime "
-            "redemption since vegeta\"). Restating what the room already knows "
-            "is bartender malpractice."
+            "(\"@gaza you're cooking with that take\")."
             + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         dedup_block = ""

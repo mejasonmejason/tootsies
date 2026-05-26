@@ -32,10 +32,9 @@ from cogs.chimein import (
     MOOD_TUNING,
     SKIP_VIBES,
     ChimeIn,
-    _is_parrot,
 )
-from cogs.discourse import _is_duplicate_of_recent
 from models import MoodMode, ScheduleState
+from utils.dedup import is_duplicate_of_recent
 
 # ---- _parse_chimein_score ----------------------------------------------------
 
@@ -452,65 +451,38 @@ async def test_stale_buffer_cleaned_on_channel_removal() -> None:
     assert (1, 999) not in cog._new_since_eval
 
 
-# ---- parrot gate ---------------------------------------------------------------
+# ---- dedup gate (shared by discourse + chimein) --------------------------------
 
 
-def test_parrot_exact_copy() -> None:
-    msg = _stub_message("Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series")
-    assert _is_parrot(
-        "Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series", [msg],
-    )
-
-
-def test_parrot_near_copy() -> None:
-    msg = _stub_message("spider-noir drops tomorrow on prime, nic cage is wild")
-    assert _is_parrot("spider-noir drops tomorrow on prime. nic cage is wild.", [msg])
-
-
-def test_parrot_allows_original_take() -> None:
-    msg = _stub_message("Spider-Noir drops tomorrow on Prime.")
-    assert not _is_parrot(
-        "nic cage career arc is the best anime redemption since vegeta", [msg],
-    )
-
-
-def test_parrot_ignores_urls_and_mentions() -> None:
-    msg = _stub_message("check this out https://fxtwitter.com/foo <@123456>")
-    assert not _is_parrot("completely different take about something else", [msg])
-
-
-def test_parrot_empty_line() -> None:
-    msg = _stub_message("some content")
-    assert not _is_parrot("", [msg])
-
-
-def test_parrot_empty_buffer() -> None:
-    assert not _is_parrot("some generated text", [])
-
-
-# ---- discourse dedup gate -------------------------------------------------------
-
-
-def test_discourse_dedup_catches_exact_repeat() -> None:
+def test_dedup_catches_exact_repeat() -> None:
     recent = ["Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series"]
-    assert _is_duplicate_of_recent(
+    assert is_duplicate_of_recent(
         "Spider-Noir drops tomorrow on Prime. Nic Cage doing a whole TV series", recent,
     )
 
 
-def test_discourse_dedup_catches_near_repeat() -> None:
+def test_dedup_catches_near_repeat() -> None:
     recent = ["spider-noir drops tomorrow on prime, nic cage is wild"]
-    assert _is_duplicate_of_recent(
+    assert is_duplicate_of_recent(
         "spider-noir drops tomorrow on prime. nic cage is wild.", recent,
     )
 
 
-def test_discourse_dedup_allows_different_topic() -> None:
+def test_dedup_allows_different_topic() -> None:
     recent = ["Spider-Noir drops tomorrow on Prime"]
-    assert not _is_duplicate_of_recent(
+    assert not is_duplicate_of_recent(
         "knicks finals tickets going for 8k courtside, that's a mortgage payment", recent,
     )
 
 
-def test_discourse_dedup_empty_recent() -> None:
-    assert not _is_duplicate_of_recent("any post", [])
+def test_dedup_ignores_urls_and_mentions() -> None:
+    recent = ["check this out https://fxtwitter.com/foo <@123456>"]
+    assert not is_duplicate_of_recent("completely different take", recent)
+
+
+def test_dedup_empty_line() -> None:
+    assert not is_duplicate_of_recent("", ["some recent post"])
+
+
+def test_dedup_empty_recent() -> None:
+    assert not is_duplicate_of_recent("any post", [])

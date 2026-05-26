@@ -33,10 +33,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
-from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -44,6 +42,7 @@ import discord
 from discord.ext import commands, tasks
 
 from models import MoodMode
+from utils.dedup import is_duplicate_of_recent
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
 from utils.link_enrich import enrich_batch
@@ -79,38 +78,6 @@ SKIP_VIBES = {"vulnerable", "catchup", "other"}
 
 # Tick frequency. Cheap; the scoring pass only fires when buffer has activity.
 TICK_SECONDS = 60
-
-# Similarity threshold for the parrot gate. If the generated chime-in is >=60%
-# similar to any single message in the buffer, we suppress it. SequenceMatcher
-# ratio() is case-insensitive on normalized text.
-PARROT_SIMILARITY_THRESHOLD = 0.6
-
-_MENTION_RE = re.compile(r"<@!?\d+>")
-_URL_RE = re.compile(r"https?://\S+")
-
-
-def _normalize(text: str) -> str:
-    """Lowercase, strip mentions/URLs/extra whitespace for comparison."""
-    text = _MENTION_RE.sub("", text)
-    text = _URL_RE.sub("", text)
-    return " ".join(text.lower().split())
-
-
-def _is_parrot(line: str, msgs: list[discord.Message]) -> bool:
-    """Return True if `line` is too similar to any message in the buffer."""
-    norm_line = _normalize(line)
-    if not norm_line:
-        return False
-    for msg in msgs:
-        if not msg.content:
-            continue
-        norm_msg = _normalize(msg.content)
-        if not norm_msg:
-            continue
-        ratio = SequenceMatcher(None, norm_line, norm_msg).ratio()
-        if ratio >= PARROT_SIMILARITY_THRESHOLD:
-            return True
-    return False
 
 
 class _MoodTuning:
@@ -373,10 +340,11 @@ class ChimeIn(commands.Cog):
             )
             return
 
-        if _is_parrot(line, msgs):
+        recent_summaries = [topic for _, topic, _ in recent_all]
+        if is_duplicate_of_recent(line, recent_summaries):
             emit(
                 "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="parrot_gate", vibe=vibe, score=score,
+                decision="dedup_gate", vibe=vibe, score=score,
             )
             return
 
