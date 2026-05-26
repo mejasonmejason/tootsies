@@ -31,6 +31,9 @@ same `/ask`, same `@Toots`. she just checks the board before she answers now. sp
 `/ask what is the market saying about the economy`
 > kalshi's "state of the economy" contracts + her read. not vibes, actual positions.
 
+`/ask give me the best odds to make money right now`
+> she pulls whatever's live, finds the value, and gives you a real take. no "locks", just her read with the numbers behind it.
+
 `/ask is beyonce the greatest performer alive`
 > no odds for that one. just toots being toots.
 

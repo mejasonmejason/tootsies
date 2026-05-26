@@ -105,6 +105,11 @@ EXAMPLES: list[Example] = [
         "prediction_market", None,
         "broad opinion, Kalshi state-of-economy contracts",
     ),
+    Example(
+        "give me the best odds to make money right now",
+        "sports", None,
+        "broad value-hunting, classifier may route sports or PM, both valid",
+    ),
     # Control (should NOT trigger markets)
     Example(
         "is beyonce the greatest performer alive",
