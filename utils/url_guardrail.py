@@ -123,6 +123,8 @@ def enforce_allowlist(
 def ensure_market_citation(
     text: str,
     snapshots: list[Any] | None,
+    *,
+    recently_seen_urls: list[str] | None = None,
 ) -> str:
     """Force-append a market URL if the response cites market data without one.
 
@@ -136,6 +138,12 @@ def ensure_market_citation(
       1. If any snapshot's title text appears in the response, append that URL.
       2. Else, fall back to the first snapshot with a URL.
 
+    `recently_seen_urls` (URLs the user just saw in their question or recent
+    channel chatter) are excluded from the candidate pool so we don't repost
+    something already in front of them. This complements the dedup pass in
+    enforce_source_links, which strips redundant URLs the MODEL wrote;
+    without this filter we would re-add a URL the guardrail just removed.
+
     No-op when no snapshots were provided or when the response already cites
     one of the snapshot URLs. Safe to call unconditionally after the
     guardrail.
@@ -144,20 +152,27 @@ def ensure_market_citation(
         return text
     snapshot_urls = [getattr(s, "url", "") for s in snapshots]
     snapshot_urls = [u for u in snapshot_urls if u]
+    # Drop any candidate URLs the user already saw recently.
+    seen_norm = {normalize(u) for u in (recently_seen_urls or [])}
+    snapshot_urls = [u for u in snapshot_urls if normalize(u) not in seen_norm]
     if not snapshot_urls:
         return text
     response_urls = {normalize(u) for u in extract_urls(text)}
     if any(normalize(u) in response_urls for u in snapshot_urls):
         return text
-    # Try to match a snapshot title to the response.
+    # Try to match a snapshot title to the response, skipping snapshots whose
+    # URL was already-seen (filtered above).
+    valid_urls = set(snapshot_urls)
     text_lower = text.lower()
     chosen_url = ""
     for s in snapshots:
+        candidate = getattr(s, "url", "")
+        if candidate not in valid_urls:
+            continue
         title = (getattr(s, "title", "") or "").lower().strip()
         if title and len(title) >= 4 and title in text_lower:
-            chosen_url = getattr(s, "url", "")
-            if chosen_url:
-                break
+            chosen_url = candidate
+            break
     if not chosen_url:
         chosen_url = snapshot_urls[0]
     return f"{text.rstrip()}\n\n{chosen_url}"
