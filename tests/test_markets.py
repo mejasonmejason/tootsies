@@ -269,90 +269,259 @@ async def test_polymarket_skips_event_without_title():
 # ---- KalshiClient ----------------------------------------------------------
 
 
-async def test_kalshi_parses_markets():
+async def test_kalshi_refresh_sorts_by_volume_and_keeps_top_n():
+    """Series index is sorted by volume_fp desc, capped at _CACHE_TOP_N."""
     client = KalshiClient()
+    client._CACHE_TOP_N = 3  # type: ignore[misc]  # shrink for test
     payload = {
-        "markets": [
-            {
-                "ticker": "KXPRES2028-DJT-T1",
-                "event_ticker": "KXPRES2028-DJT",
-                "title": "Trump wins 2028 election",
-                "yes_bid_dollars": 0.30,
-                "yes_ask_dollars": 0.34,
-                "volume_fp": 50000,
-                "liquidity_dollars": 12000,
-                "expiration_time": "2028-11-04T00:00:00Z",
-            },
+        "series": [
+            {"ticker": "KXLOW", "title": "Low vol", "volume_fp": "100"},
+            {"ticker": "KXHIGH", "title": "High vol", "volume_fp": "999999"},
+            {"ticker": "KXMID", "title": "Mid vol", "volume_fp": "5000"},
+            {"ticker": "KXTINY", "title": "Tiny vol", "volume_fp": "1"},
         ],
     }
     with patch(
         "utils.markets._get_session",
         AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ), patch.object(
+        client, "_fetch_open_event_series_tickers",
+        AsyncMock(return_value=None),  # skip filter for sort/cap isolation
     ):
-        result = await client.get_open_markets()
-    assert result is not None
-    assert len(result) == 1
-    snap = result[0]
-    assert snap.source == "kalshi"
-    # Midpoint of bid/ask.
-    assert snap.probability == pytest.approx(0.32)
-    # URL is the series landing page: lowercased series_ticker extracted
-    # from the event_ticker prefix. Less specific than a deeplink to the
-    # event, but always real — no slug-guessing.
-    assert snap.url == "https://kalshi.com/markets/kxpres2028"
-    assert snap.meta["ticker"] == "KXPRES2028-DJT-T1"
-    assert snap.meta["event_ticker"] == "KXPRES2028-DJT"
+        ok = await client.refresh_series_index()
+    assert ok is True
+    assert [s["ticker"] for s in client.series_index] == ["KXHIGH", "KXMID", "KXLOW"]
 
 
-async def test_kalshi_falls_back_to_ticker_when_no_event_ticker():
-    """If event_ticker is missing, fall back to the lowercased market ticker."""
+async def test_kalshi_refresh_filters_out_series_without_open_events():
+    """When the open-events set is known, series outside it get pruned even
+    if they have higher volume_fp than series inside it."""
     client = KalshiClient()
     payload = {
-        "markets": [
-            {
-                "ticker": "STANDALONE-T1",
-                "title": "Standalone market",
-                "yes_bid_dollars": 0.5,
-            },
+        "series": [
+            {"ticker": "KXDEAD", "title": "High vol but no events", "volume_fp": "999999"},
+            {"ticker": "KXALIVE", "title": "Low vol, has events", "volume_fp": "10"},
+            {"ticker": "KXALSODEAD", "title": "Also no events", "volume_fp": "500000"},
         ],
     }
     with patch(
         "utils.markets._get_session",
         AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ), patch.object(
+        client, "_fetch_open_event_series_tickers",
+        AsyncMock(return_value={"KXALIVE"}),
     ):
-        result = await client.get_open_markets()
-    assert result is not None
-    assert result[0].url == "https://kalshi.com/markets/standalone-t1"
+        await client.refresh_series_index()
+    assert [s["ticker"] for s in client.series_index] == ["KXALIVE"]
 
 
-async def test_kalshi_handles_only_bid():
+async def test_kalshi_refresh_keeps_unfiltered_index_when_events_fetch_fails():
+    """If the open-events helper returns None (fetch error), the index stays
+    unfiltered rather than blanking. Better some shelves than no shelves."""
     client = KalshiClient()
     payload = {
-        "markets": [
-            {
-                "ticker": "T",
-                "title": "Bid-only market",
-                "yes_bid_dollars": 0.42,
-            },
+        "series": [
+            {"ticker": "KXA", "title": "a", "volume_fp": "100"},
+            {"ticker": "KXB", "title": "b", "volume_fp": "50"},
         ],
     }
     with patch(
         "utils.markets._get_session",
         AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ), patch.object(
+        client, "_fetch_open_event_series_tickers",
+        AsyncMock(return_value=None),
     ):
-        result = await client.get_open_markets()
-    assert result is not None
-    assert result[0].probability == pytest.approx(0.42)
+        await client.refresh_series_index()
+    assert [s["ticker"] for s in client.series_index] == ["KXA", "KXB"]
 
 
-async def test_kalshi_http_error_returns_none():
+async def test_kalshi_refresh_keeps_stale_cache_on_failure():
+    """Network/parse errors preserve the previous cache rather than blank it."""
+    client = KalshiClient()
+    # Seed a stale cache to defend.
+    client._series_index = [{"ticker": "KXOLD", "title": "old"}]
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(500))),
+    ):
+        ok = await client.refresh_series_index()
+    assert ok is False
+    assert client.series_index == [{"ticker": "KXOLD", "title": "old"}]
+
+
+async def test_kalshi_refresh_skips_malformed_series_entries():
+    """Non-dict entries / missing ticker / missing title get filtered out."""
+    client = KalshiClient()
+    payload = {
+        "series": [
+            {"ticker": "KXOK", "title": "ok", "volume_fp": "10"},
+            {"ticker": None, "title": "no ticker", "volume_fp": "5"},
+            "not a dict",
+            {"ticker": "KXNOTITLE", "title": None, "volume_fp": "5"},
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ), patch.object(
+        client, "_fetch_open_event_series_tickers",
+        AsyncMock(return_value=None),
+    ):
+        await client.refresh_series_index()
+    assert client.series_index == [{"ticker": "KXOK", "title": "ok"}]
+
+
+async def test_kalshi_fetch_open_event_series_tickers_paginates_and_dedupes():
+    """Cursors across multiple pages; same series can appear in multiple events."""
+    client = KalshiClient()
+    page1 = {
+        "events": [
+            {"series_ticker": "KXA", "event_ticker": "KXA-1"},
+            {"series_ticker": "KXB", "event_ticker": "KXB-1"},
+            {"series_ticker": "KXA", "event_ticker": "KXA-2"},  # dup series
+        ],
+        "cursor": "p2",
+    }
+    page2 = {
+        "events": [
+            {"series_ticker": "KXC", "event_ticker": "KXC-1"},
+        ],
+        "cursor": "",  # last page
+    }
+    sess = MagicMock()
+    sess.get = MagicMock(
+        side_effect=[_mock_resp(200, page1), _mock_resp(200, page2)],
+    )
+    with patch("utils.markets._get_session", AsyncMock(return_value=sess)):
+        result = await client._fetch_open_event_series_tickers()
+    assert result == {"KXA", "KXB", "KXC"}
+
+
+async def test_kalshi_fetch_open_event_series_tickers_http_error_returns_none():
     client = KalshiClient()
     with patch(
         "utils.markets._get_session",
         AsyncMock(return_value=_mock_session(_mock_resp(500))),
     ):
-        result = await client.get_open_markets()
+        result = await client._fetch_open_event_series_tickers()
     assert result is None
+
+
+async def test_kalshi_get_events_for_series_flattens_nested_markets():
+    """/events?with_nested_markets=true returns events with .markets inside;
+    we flatten across events into a single snapshot list."""
+    client = KalshiClient()
+    payload = {
+        "events": [
+            {
+                "event_ticker": "KXBILLBOARD-26-DEC",
+                "markets": [
+                    {
+                        "ticker": "KXBILLBOARD-26-DEC-DRAKE",
+                        "event_ticker": "KXBILLBOARD-26-DEC",
+                        "title": "Drake #1 on Dec 31",
+                        "yes_bid_dollars": 0.30,
+                        "yes_ask_dollars": 0.34,
+                    },
+                ],
+            },
+            {
+                "event_ticker": "KXBILLBOARD-27-JAN",
+                "markets": [
+                    {
+                        "ticker": "KXBILLBOARD-27-JAN-DRAKE",
+                        "event_ticker": "KXBILLBOARD-27-JAN",
+                        "title": "Drake #1 on Jan 7",
+                        "yes_bid_dollars": 0.20,
+                    },
+                ],
+            },
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        snaps = await client.get_events_for_series("KXBILLBOARD")
+    assert snaps is not None
+    assert len(snaps) == 2
+    assert snaps[0].title == "Drake #1 on Dec 31"
+    assert snaps[0].probability == pytest.approx(0.32)
+    assert snaps[0].url == "https://kalshi.com/markets/kxbillboard"
+
+
+async def test_kalshi_get_events_filters_mve_combo_markets():
+    """MVE Exotics (combo/parlay aggregations) get filtered by the snapshot
+    converter, same as before the refactor."""
+    client = KalshiClient()
+    payload = {
+        "events": [
+            {
+                "event_ticker": "KXMVENBASINGLEGAME",
+                "markets": [
+                    {
+                        "ticker": "KXMVE-T1",
+                        "event_ticker": "KXMVENBASINGLEGAME",
+                        "title": "MVE NBA",
+                        "yes_bid_dollars": 0.5,
+                    },
+                ],
+            },
+            {
+                "event_ticker": "KXNBAGAME-LAL-BOS",
+                "markets": [
+                    {
+                        "ticker": "KXNBA-T1",
+                        "event_ticker": "KXNBAGAME-LAL-BOS",
+                        "title": "Lakers beat Celtics",
+                        "yes_bid_dollars": 0.5,
+                    },
+                ],
+            },
+        ],
+    }
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(200, payload))),
+    ):
+        snaps = await client.get_events_for_series("KXNBAGAME")
+    assert snaps is not None
+    titles = [s.title for s in snaps]
+    assert "Lakers beat Celtics" in titles
+    assert "MVE NBA" not in titles
+
+
+async def test_kalshi_get_events_empty_ticker_returns_none():
+    client = KalshiClient()
+    assert await client.get_events_for_series("") is None
+
+
+async def test_kalshi_get_events_http_error_returns_none():
+    client = KalshiClient()
+    with patch(
+        "utils.markets._get_session",
+        AsyncMock(return_value=_mock_session(_mock_resp(500))),
+    ):
+        result = await client.get_events_for_series("KXFOO")
+    assert result is None
+
+
+async def test_kalshi_market_snapshot_parses_midpoint_and_url():
+    """Direct sanity check on the snapshot converter (used by get_events_for_series)."""
+    from utils.markets import _kalshi_market_to_snapshot
+    snap = _kalshi_market_to_snapshot({
+        "ticker": "KXPRES2028-DJT-T1",
+        "event_ticker": "KXPRES2028-DJT",
+        "title": "Trump wins 2028 election",
+        "yes_bid_dollars": 0.30,
+        "yes_ask_dollars": 0.34,
+        "volume_fp": 50000,
+    })
+    assert snap is not None
+    assert snap.probability == pytest.approx(0.32)
+    assert snap.url == "https://kalshi.com/markets/kxpres2028"
+    assert snap.meta["ticker"] == "KXPRES2028-DJT-T1"
 
 
 # ---- format_markets_for_prompt ---------------------------------------------
@@ -510,19 +679,44 @@ async def test_manager_sports_query_skips_when_no_sgo_key():
     assert result is None
 
 
+def _kalshi_mocks(
+    manager: MarketsManager,
+    *,
+    series_index: list[dict[str, str]] | None = None,
+    picker_ticker: str | None = "KXFOO",
+    events: list[MarketSnapshot] | None = None,
+) -> tuple[AsyncMock, AsyncMock]:
+    """Wire a MarketsManager with a hot Kalshi cache + a picker + an events fetch.
+
+    Mirrors the production wiring: bot.setup_hook calls start_series_refresh_loop
+    which populates series_index, then per-query MarketsManager._kalshi_snapshots
+    hands the cache to the picker and fetches events for the chosen ticker.
+    """
+    manager.kalshi._series_index = series_index or [
+        {"ticker": "KXFOO", "title": "Foo series"},
+        {"ticker": "KXBAR", "title": "Bar series"},
+    ]
+    picker = AsyncMock(return_value=picker_ticker)
+    manager._kalshi_picker = picker
+    fetch = AsyncMock(return_value=events or [])
+    manager.kalshi.get_events_for_series = fetch  # type: ignore[method-assign]
+    return picker, fetch
+
+
 async def test_manager_pm_query_hits_both_sources_in_parallel():
     """Polymarket and Kalshi are peer sources, not fallback. Both fire."""
     m = MarketsManager(sgo_api_key=None)
     poly = [MarketSnapshot(source="polymarket", title="P", url="u", probability=0.3)]
     kalshi = [MarketSnapshot(source="kalshi", title="K", url="u2", probability=0.4)]
     m.polymarket.search_markets = AsyncMock(return_value=poly)  # type: ignore[method-assign]
-    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi)  # type: ignore[method-assign]
+    picker, fetch = _kalshi_mocks(m, events=kalshi)
     result = await m.get_context("will drake drop an album by july")
     assert result is not None
     # Default order: Polymarket first, Kalshi after.
     assert [s.source for s in result] == ["polymarket", "kalshi"]
     m.polymarket.search_markets.assert_awaited_once()
-    m.kalshi.get_open_markets.assert_awaited_once()
+    picker.assert_awaited_once()
+    fetch.assert_awaited_once_with("KXFOO", limit=4)
 
 
 async def test_manager_pm_kalshi_first_when_user_mentions_kalshi():
@@ -531,30 +725,70 @@ async def test_manager_pm_kalshi_first_when_user_mentions_kalshi():
     poly = [MarketSnapshot(source="polymarket", title="P", url="u", probability=0.3)]
     kalshi = [MarketSnapshot(source="kalshi", title="K", url="u2", probability=0.4)]
     m.polymarket.search_markets = AsyncMock(return_value=poly)  # type: ignore[method-assign]
-    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi)  # type: ignore[method-assign]
+    _kalshi_mocks(m, events=kalshi)
     result = await m.get_context("any spicy kalshi markets right now")
     assert result is not None
     assert [s.source for s in result] == ["kalshi", "polymarket"]
 
 
 async def test_manager_pm_one_source_outage_keeps_other():
-    """If one source errors, the other source's results still come through."""
+    """If Polymarket errors, Kalshi results still come through."""
     m = MarketsManager(sgo_api_key=None)
     kalshi_snaps = [MarketSnapshot(source="kalshi", title="K", url="u", probability=0.5)]
     m.polymarket.search_markets = AsyncMock(side_effect=RuntimeError("polymarket down"))  # type: ignore[method-assign]
-    m.kalshi.get_open_markets = AsyncMock(return_value=kalshi_snaps)  # type: ignore[method-assign]
+    _kalshi_mocks(m, events=kalshi_snaps)
     # Prompt mentions polymarket/kalshi so regex classifier routes to PM intent.
     result = await m.get_context("polymarket trump 2028 election")
     assert result == kalshi_snaps
 
 
 async def test_manager_fails_open_on_exception():
-    """Both PM sources fail -> manager returns None."""
+    """Both PM sources fail (poly errors, kalshi picker errors) -> manager returns None."""
     m = MarketsManager(sgo_api_key=None)
     m.polymarket.search_markets = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
-    m.kalshi.get_open_markets = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+    # Picker errors -> _kalshi_snapshots returns [] (swallowed via emit_error).
+    _kalshi_mocks(m, picker_ticker=None)
+    m._kalshi_picker = AsyncMock(side_effect=RuntimeError("haiku down"))
     result = await m.get_context("will drake drop by july")
     assert result is None
+
+
+async def test_manager_kalshi_no_picker_skips_kalshi():
+    """No picker wired (e.g. classifier never injected) -> Kalshi skipped silently."""
+    m = MarketsManager(sgo_api_key=None)
+    poly = [MarketSnapshot(source="polymarket", title="P", url="u", probability=0.3)]
+    m.polymarket.search_markets = AsyncMock(return_value=poly)  # type: ignore[method-assign]
+    # Don't wire picker; ensure get_events_for_series is never even reached.
+    m.kalshi.get_events_for_series = AsyncMock()  # type: ignore[method-assign]
+    result = await m.get_context("will drake drop by july")
+    assert result == poly
+    m.kalshi.get_events_for_series.assert_not_called()
+
+
+async def test_manager_kalshi_empty_cache_skips_kalshi():
+    """Cache still warming up (refresh hasn't fired) -> Kalshi skipped silently."""
+    m = MarketsManager(sgo_api_key=None)
+    poly = [MarketSnapshot(source="polymarket", title="P", url="u", probability=0.3)]
+    m.polymarket.search_markets = AsyncMock(return_value=poly)  # type: ignore[method-assign]
+    picker = AsyncMock()
+    m._kalshi_picker = picker
+    # series_index is empty (default) so picker shouldn't fire.
+    m.kalshi.get_events_for_series = AsyncMock()  # type: ignore[method-assign]
+    result = await m.get_context("will drake drop by july")
+    assert result == poly
+    picker.assert_not_called()
+
+
+async def test_manager_kalshi_picker_says_none_skips_fetch():
+    """Haiku NONE -> no series fetch, fall through to Polymarket-only."""
+    m = MarketsManager(sgo_api_key=None)
+    poly = [MarketSnapshot(source="polymarket", title="P", url="u", probability=0.3)]
+    m.polymarket.search_markets = AsyncMock(return_value=poly)  # type: ignore[method-assign]
+    picker, fetch = _kalshi_mocks(m, picker_ticker=None)
+    result = await m.get_context("will drake drop by july")
+    assert result == poly
+    picker.assert_awaited_once()
+    fetch.assert_not_called()
 
 
 # ---- MarketsManager with Haiku classifier injected -----------------------
@@ -589,16 +823,21 @@ async def test_manager_classifier_extracted_league_routes_to_league():
 
 
 async def test_manager_classifier_uses_search_terms_for_pm():
+    """Search terms from the classifier flow through to Polymarket AND the
+    Kalshi picker (both peer PM sources)."""
     classifier = AsyncMock(return_value={
         "intent": "prediction_market",
         "search_terms": "drake album july",
     })
     m = MarketsManager(sgo_api_key=None, intent_classifier=classifier)
     m.polymarket.search_markets = AsyncMock(return_value=None)  # type: ignore[method-assign]
-    m.kalshi.get_open_markets = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    picker, fetch = _kalshi_mocks(m, picker_ticker="KXBILLBOARD")
     await m.get_context("anything about drake")
     m.polymarket.search_markets.assert_awaited_once_with("drake album july", limit=4)
-    m.kalshi.get_open_markets.assert_awaited_once_with(limit=4)
+    # Picker sees the classifier's search_terms, not the raw query.
+    picker.assert_awaited_once()
+    assert picker.call_args.args[0] == "drake album july"
+    fetch.assert_awaited_once_with("KXBILLBOARD", limit=4)
 
 
 async def test_manager_classifier_failure_falls_back_to_regex():

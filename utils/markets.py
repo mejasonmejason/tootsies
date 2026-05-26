@@ -25,6 +25,7 @@ cache_hit, result_count, error) for the dashboard.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -741,53 +742,277 @@ def _parse_prices(raw: Any) -> list[float]:
 class KalshiClient:
     """CFTC-regulated US prediction markets. Public reads, no auth.
 
-    All market data (prices, order books, market details) is publicly
-    available per Kalshi's docs. Trading endpoints require RSA-signed
-    requests; we don't trade, so no signing here. If trading ever lands,
-    add KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY wiring.
+    Discovery model (Kalshi has no free-text search API): on startup we
+    fetch all series via `/series?include_volume=true`, sort by volume_fp
+    descending, and cache the top-N as a {ticker, title} list. A background
+    task refreshes hourly so newly-created markets for breaking news are
+    pickable within an hour. Per query, MarketsManager hands the cached
+    list to Haiku (`pick_kalshi_series`) which picks the best title match,
+    then we hit `/events?series_ticker=X&with_nested_markets=true` for the
+    actual markets under that series.
+
+    All market data is publicly available per Kalshi's docs. Trading
+    endpoints require RSA-signed requests; we don't trade, so no signing
+    here. If trading ever lands, add KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY.
     """
 
-    async def get_open_markets(
-        self,
-        *,
-        query: str = "",
-        limit: int = 5,
-    ) -> list[MarketSnapshot] | None:
+    # Top-N series to keep in the in-memory index. 1000 covers the head of
+    # Kalshi's ~10K-series distribution including long-horizon markets like
+    # KXBILLBOARD / KXNBAMVP / KXPRESPERSON which sit past position 200 when
+    # ranked by raw volume (the top is dominated by high-frequency daily
+    # markets like KXBTCD / KXNBAGAME). Past position 1000 is almost all
+    # expired / niche / per-state midterm long-tail; not worth the prompt
+    # bloat. Bumped from 200 after live eval showed misses on those exact
+    # long-horizon topics.
+    _CACHE_TOP_N = 1000
+
+    # Background refresh interval. Hourly catches new series Kalshi creates
+    # for breaking news without burning API calls; see also the user-facing
+    # note in CLAUDE.md about acceptable staleness.
+    _REFRESH_INTERVAL_SECONDS = 3600
+
+    def __init__(self) -> None:
+        # Cached series index used by MarketsManager + ClaudeClient.pick_kalshi_series.
+        # Empty until refresh_series_index() succeeds; downstream code treats
+        # an empty index as "Kalshi discovery unavailable" and falls through
+        # to Polymarket-only.
+        self._series_index: list[dict[str, str]] = []
+        self._refresh_task: asyncio.Task[None] | None = None
+
+    @property
+    def series_index(self) -> list[dict[str, str]]:
+        """Cached top-N series as [{ticker, title}, ...] sorted by volume."""
+        return self._series_index
+
+    async def refresh_series_index(self) -> bool:
+        """One-shot refresh of the cached series index. Returns True on success.
+
+        Two-pass: first fetch all series (~10K) and the set of series with
+        currently-open events; then sort by volume_fp desc, intersect with
+        the open-events set, and keep top-N. The intersection prevents Haiku
+        from picking series like PRES that have huge lifetime volume but no
+        currently-tradable markets (eval showed this caused ~40% of misses).
+
+        Fail-soft: any network/parse error on the /series fetch leaves the
+        previous cache intact. If the open-events fetch fails but /series
+        succeeds, we keep the unfiltered index (better some shelves than no
+        shelves; the user just gets occasional "no events" no-ops).
+        """
         start = time.monotonic()
-        result = await self._get_open_cached(query, limit)
-        cache_hit = bool(getattr(self._get_open_cached, "_last_was_hit", False))
-        if result is None:
+        data = await _fetch_json(
+            f"{_KALSHI_API_BASE}/series",
+            params={"include_volume": "true"},
+        )
+        if not isinstance(data, dict):
             _emit_fetch(
-                source="kalshi", query=query or "open", ok=False,
-                start=start, cache_hit=cache_hit, error="fetch_failed",
+                source="kalshi", query="series_index", ok=False,
+                start=start, error="fetch_failed",
+            )
+            return False
+        raw = data.get("series") or []
+        if not isinstance(raw, list):
+            _emit_fetch(
+                source="kalshi", query="series_index", ok=False,
+                start=start, error="bad_shape",
+            )
+            return False
+
+        # Parallel-ish: open-events set used to filter dead series.
+        open_event_tickers = await self._fetch_open_event_series_tickers()
+
+        def _vol(item: Any) -> float:
+            if not isinstance(item, dict):
+                return 0.0
+            try:
+                return float(item.get("volume_fp") or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        sorted_series = sorted(raw, key=_vol, reverse=True)
+        index: list[dict[str, str]] = []
+        for item in sorted_series:
+            if not isinstance(item, dict):
+                continue
+            ticker = item.get("ticker")
+            title = item.get("title")
+            if not (
+                isinstance(ticker, str) and ticker
+                and isinstance(title, str) and title
+            ):
+                continue
+            # Skip series whose only events have settled — Haiku would pick
+            # them on title match and then we'd hit an empty events fetch.
+            # When the open-events fetch itself failed (set is None), keep
+            # everything to avoid blanking the cache.
+            if open_event_tickers is not None and ticker not in open_event_tickers:
+                continue
+            index.append({"ticker": ticker, "title": title})
+            if len(index) >= self._CACHE_TOP_N:
+                break
+        self._series_index = index
+        _emit_fetch(
+            source="kalshi", query="series_index", ok=True,
+            start=start, result_count=len(index),
+        )
+        return True
+
+    async def _fetch_open_event_series_tickers(self) -> set[str] | None:
+        """Paginate /events?status=open and return the unique series_tickers.
+
+        Each /events page caps at 200; live Kalshi has many thousands of open
+        events (game-by-game NBA/NFL series alone contribute hundreds per
+        page) so 20+ pages of pagination is normal.
+
+        Failure handling: completing the pagination fully is load-bearing
+        because a PARTIAL set causes us to incorrectly prune cache entries
+        for series whose events sit on pages we never reached. Each page
+        gets one retry on transient failure (5xx, rate limit) with backoff;
+        only after the retry fails do we return None to signal "skip
+        filtering entirely" (safer than partial pruning).
+        """
+        tickers: set[str] = set()
+        cursor = ""
+        # Defensive cap on pagination loop. With ~5K open events at 200/page
+        # we expect ~25 pages; 60 gives 2x headroom if Kalshi grows.
+        for _ in range(60):
+            params: dict[str, str] = {
+                "status": "open",
+                "limit": "200",
+                "with_nested_markets": "false",
+            }
+            if cursor:
+                params["cursor"] = cursor
+            data = await self._fetch_with_retry(
+                f"{_KALSHI_API_BASE}/events", params=params,
+            )
+            if not isinstance(data, dict):
+                # Pagination failure (even after retry) leaves us with a
+                # partial set. Returning None tells refresh_series_index to
+                # skip filtering: better an unfiltered cache (a few dead
+                # picks) than a partial-set cache (real markets pruned).
+                log.warning(
+                    "kalshi open-events pagination failed after retry; "
+                    "skipping filter (had %d series so far)", len(tickers),
+                )
+                return None
+            events = data.get("events") or []
+            if not isinstance(events, list):
+                return None
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                st = event.get("series_ticker")
+                if isinstance(st, str) and st:
+                    tickers.add(st)
+            cursor = data.get("cursor") or ""
+            if not cursor:
+                break
+            # Pacing between pages: 250ms keeps us at 4 req/sec, comfortably
+            # under the ~6 req/sec rate limit Kalshi enforces on public reads
+            # (live testing confirmed HTTP 429 "too_many_requests" with no
+            # pacing). Total walk: ~25 pages * 250ms = ~6s background time.
+            await asyncio.sleep(0.25)
+        return tickers
+
+    async def _fetch_with_retry(
+        self, url: str, *, params: dict[str, str],
+    ) -> Any | None:
+        """One retry with backoff for the paginated open-events fetch.
+
+        Inline rather than extracting to a util because no other call site
+        needs retry semantics: SGO/Polymarket/Kalshi-events-by-series are
+        all one-shot reads where None-on-failure is the right behavior.
+        Only the paginated open-events walk needs robustness across many
+        sequential calls.
+        """
+        data = await _fetch_json(url, params=params)
+        if data is not None:
+            return data
+        # First attempt failed; back off and retry once.
+        await asyncio.sleep(1.0)
+        return await _fetch_json(url, params=params)
+
+    async def start_series_refresh_loop(self) -> None:
+        """Start the background refresh loop. Idempotent.
+
+        Runs an initial refresh immediately so the cache is warm as soon as
+        possible after boot, then sleeps `_REFRESH_INTERVAL_SECONDS` between
+        iterations. Per-iteration failures keep the stale cache.
+        """
+        if self._refresh_task is not None and not self._refresh_task.done():
+            return
+
+        async def _loop() -> None:
+            while True:
+                try:
+                    await self.refresh_series_index()
+                except Exception:
+                    log.exception("kalshi series index refresh crashed")
+                await asyncio.sleep(self._REFRESH_INTERVAL_SECONDS)
+
+        self._refresh_task = asyncio.create_task(
+            _loop(), name="kalshi-series-refresh",
+        )
+
+    async def stop_series_refresh_loop(self) -> None:
+        """Cancel the background refresh task. Called on bot shutdown.
+
+        Only suppresses CancelledError, the expected outcome of awaiting a
+        cancelled task. Real exceptions (programming bugs in the loop body)
+        should surface in shutdown logs rather than being silently eaten.
+        """
+        if self._refresh_task is None:
+            return
+        self._refresh_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._refresh_task
+        self._refresh_task = None
+
+    async def get_events_for_series(
+        self, series_ticker: str, *, limit: int = 4,
+    ) -> list[MarketSnapshot] | None:
+        """Fetch open events under a series, flattened to MarketSnapshots.
+
+        Calls /events?series_ticker=X&status=open&with_nested_markets=true,
+        flattens nested markets across events, MVE-filters each, and returns
+        snapshots. None on fetch failure; empty list if the series has no
+        open markets right now (settled/all-closed).
+        """
+        if not series_ticker:
+            return None
+        start = time.monotonic()
+        params = {
+            "series_ticker": series_ticker,
+            "status": "open",
+            "with_nested_markets": "true",
+            "limit": str(max(limit, 1)),
+        }
+        data = await _fetch_json(f"{_KALSHI_API_BASE}/events", params=params)
+        if not isinstance(data, dict):
+            _emit_fetch(
+                source="kalshi", query=f"series:{series_ticker}", ok=False,
+                start=start, error="fetch_failed",
             )
             return None
+        events = data.get("events") or []
+        if not isinstance(events, list):
+            return None
+        snapshots: list[MarketSnapshot] = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            nested = event.get("markets") or []
+            if not isinstance(nested, list):
+                continue
+            for market in nested:
+                snap = _kalshi_market_to_snapshot(market)
+                if snap is not None:
+                    snapshots.append(snap)
         _emit_fetch(
-            source="kalshi", query=query or "open", ok=True,
-            start=start, cache_hit=cache_hit, result_count=len(result),
+            source="kalshi", query=f"series:{series_ticker}", ok=True,
+            start=start, result_count=len(snapshots),
         )
-        return result
-
-    @async_lru_cache(maxsize=_CACHE_SIZE)
-    async def _get_open_cached(
-        self,
-        query: str,
-        limit: int,
-    ) -> list[MarketSnapshot] | None:
-        params: dict[str, str] = {"status": "open", "limit": str(limit)}
-        if query:
-            # Kalshi doesn't have a free-text search; the `tickers` param
-            # accepts a CSV of tickers. For free-text we hit `series` first
-            # in a future revision. For v1 we just pull open markets and
-            # let the caller filter by title match downstream.
-            pass
-        data = await _fetch_json(f"{_KALSHI_API_BASE}/markets", params=params)
-        if not isinstance(data, dict):
-            return None
-        markets = data.get("markets") or []
-        if not isinstance(markets, list):
-            return None
-        return [snap for market in markets if (snap := _kalshi_market_to_snapshot(market))]
+        return snapshots
 
 
 def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
@@ -977,6 +1202,12 @@ def detect_league(query: str) -> str | None:
 
 
 IntentClassifier = Callable[[str], Awaitable[dict[str, Any] | None]]
+# Callable signature for ClaudeClient.pick_kalshi_series. Takes a query and
+# a list of {ticker, title} candidates from the cached series index; returns
+# the chosen ticker (or None if Haiku says no candidate fits).
+KalshiSeriesPicker = Callable[
+    [str, list[dict[str, str]]], Awaitable[str | None],
+]
 
 
 class MarketsManager:
@@ -991,17 +1222,24 @@ class MarketsManager:
     up (in bot.py we pass ClaudeClient.classify_market_intent), Haiku handles
     intent + league detection + search-term extraction in one call. When None,
     we fall back to the legacy regex (classify_intent + detect_league here).
+
+    `kalshi_series_picker`: optional async callable (ClaudeClient.pick_kalshi_series
+    in production) that selects a series_ticker from the cached top-N series
+    list. When None (or when the Kalshi series-index cache is still empty)
+    we skip Kalshi entirely and fall through to Polymarket-only.
     """
 
     def __init__(
         self,
         sgo_api_key: str | None,
         intent_classifier: IntentClassifier | None = None,
+        kalshi_series_picker: KalshiSeriesPicker | None = None,
     ) -> None:
         self.sgo = SportsGameOddsClient(sgo_api_key)
         self.polymarket = PolymarketClient()
         self.kalshi = KalshiClient()
         self._classifier = intent_classifier
+        self._kalshi_picker = kalshi_series_picker
 
     async def get_context(self, query: str) -> list[MarketSnapshot] | None:
         """Fetch live market snapshots for a query if intent matches.
@@ -1074,7 +1312,7 @@ class MarketsManager:
         kalshi_first = "kalshi" in lower and "polymarket" not in lower
 
         poly_task = self.polymarket.search_markets(search_terms, limit=4)
-        kalshi_task = self.kalshi.get_open_markets(limit=4)
+        kalshi_task = self._kalshi_snapshots(search_terms)
         results = await asyncio.gather(
             poly_task, kalshi_task, return_exceptions=True,
         )
@@ -1087,3 +1325,34 @@ class MarketsManager:
             else poly_snaps + kalshi_snaps
         )
         return combined or None
+
+    async def _kalshi_snapshots(self, search_terms: str) -> list[MarketSnapshot]:
+        """Kalshi discovery flow: cached series → Haiku pick → fetch events.
+
+        Returns [] (never None or raises) on any miss so the gather in
+        _pm_snapshots treats Kalshi as "no results" rather than "error",
+        and Polymarket alone still fills the response.
+
+        Misses include: no picker wired (tests / classifier disabled), empty
+        series-index cache (refresh hasn't fired yet), Haiku says NONE,
+        events fetch fails or returns nothing.
+        """
+        if self._kalshi_picker is None:
+            return []
+        candidates = self.kalshi.series_index
+        if not candidates:
+            return []
+        try:
+            chosen = await self._kalshi_picker(search_terms, candidates)
+        except Exception as exc:
+            emit_error(
+                source="kalshi_picker",
+                exc=exc,
+                recoverable=True,
+                context={"query_chars": len(search_terms)},
+            )
+            return []
+        if not chosen:
+            return []
+        snaps = await self.kalshi.get_events_for_series(chosen, limit=4)
+        return snaps or []

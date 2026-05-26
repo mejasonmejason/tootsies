@@ -21,7 +21,6 @@ a real link) cost more than false negatives (letting a near-miss through).
 from __future__ import annotations
 
 import re
-from typing import Any
 
 # Match http(s)://... URLs in free text. Stops at whitespace, brackets/parens,
 # quotes, and angle brackets. Trailing punctuation is trimmed separately in
@@ -118,61 +117,6 @@ def enforce_allowlist(
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip(), rejected, deduped
-
-
-def ensure_market_citation(
-    text: str,
-    snapshots: list[Any] | None,
-    *,
-    recently_seen_urls: list[str] | None = None,
-) -> str:
-    """Force-append a market URL if the response cites market data without one.
-
-    The model is prompted to cite market URLs but routinely forgets under
-    prompt pressure (long system_extra + DATA INTEGRITY rule + many tactics
-    compete for attention). This is the mechanical safety net: if markets
-    data was fetched AND the response contains no market URL, append the
-    snapshot that best matches what she said.
-
-    Matching strategy:
-      1. If any snapshot's title text appears in the response, append that URL.
-      2. Else, fall back to the first snapshot with a URL.
-
-    `recently_seen_urls` (URLs the user just saw in their question or recent
-    channel chatter) are excluded from the candidate pool so we don't repost
-    something already in front of them. This complements the dedup pass in
-    enforce_source_links, which strips redundant URLs the MODEL wrote;
-    without this filter we would re-add a URL the guardrail just removed.
-
-    No-op when no snapshots were provided or when the response already cites
-    one of the snapshot URLs. Safe to call unconditionally after the
-    guardrail.
-    """
-    if not snapshots:
-        return text
-    snapshot_urls = [getattr(s, "url", "") for s in snapshots]
-    snapshot_urls = [u for u in snapshot_urls if u]
-    # Drop any candidate URLs the user already saw recently.
-    seen_norm = {normalize(u) for u in (recently_seen_urls or [])}
-    snapshot_urls = [u for u in snapshot_urls if normalize(u) not in seen_norm]
-    if not snapshot_urls:
-        return text
-    response_urls = {normalize(u) for u in extract_urls(text)}
-    if any(normalize(u) in response_urls for u in snapshot_urls):
-        return text
-    # Try to match a snapshot title to the response first (most relevant URL).
-    # Fall back to the first available snapshot URL if no title matches.
-    # Skip snapshots whose URL was already-seen (filtered above).
-    valid_urls = set(snapshot_urls)
-    text_lower = text.lower()
-    for s in snapshots:
-        candidate = getattr(s, "url", "")
-        if candidate not in valid_urls:
-            continue
-        title = (getattr(s, "title", "") or "").lower().strip()
-        if title and len(title) >= 4 and title in text_lower:
-            return f"{text.rstrip()}\n\n{candidate}"
-    return f"{text.rstrip()}\n\n{snapshot_urls[0]}"
 
 
 def enforce_source_links(

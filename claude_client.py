@@ -2,7 +2,8 @@
 
 Model routing (rule: Haiku for pure classifiers + one-line fallback quips;
 Sonnet for everything else user-facing or judgment-heavy):
-- HAIKU: chimein_score, classify_market_intent (mechanical classifiers);
+- HAIKU: chimein_score, classify_market_intent, pick_kalshi_series
+  (mechanical classifiers);
   deflect (one-liner canned-ish quip, 60-token cap, no judgment)
 - SONNET: ask, recap, discourse, chimein_post, preflight_order
   (every method that generates non-trivial user-facing content)
@@ -29,7 +30,7 @@ from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.markets import MarketSnapshot, format_markets_for_prompt
 from utils.perplexity import format_perplexity_for_prompt
-from utils.url_guardrail import enforce_source_links, ensure_market_citation
+from utils.url_guardrail import enforce_source_links
 
 log = logging.getLogger(__name__)
 
@@ -615,12 +616,6 @@ class ClaudeClient:
             recently_seen_urls=recently_seen_urls,
             market_urls=market_urls,
         )
-        # Mechanical safety net: force-append a market URL if she cited market
-        # data without one. The prompt rule asks her to, but Haiku routinely
-        # forgets under prompt pressure (long system_extra + DATA INTEGRITY).
-        cleaned = ensure_market_citation(
-            cleaned, markets_context, recently_seen_urls=recently_seen_urls,
-        )
         if rejected:
             emit(
                 "link_stripped", purpose="ask", reason="hallucinated",
@@ -940,11 +935,6 @@ class ClaudeClient:
             recently_seen_urls=recently_seen_urls,
             market_urls=market_urls,
         )
-        # Same mechanical safety net as /ask: force-append a market URL if
-        # she cited market data without one.
-        cleaned = ensure_market_citation(
-            cleaned, markets_context, recently_seen_urls=recently_seen_urls,
-        )
         if rejected:
             emit(
                 "link_stripped", purpose=purpose, reason="hallucinated",
@@ -1177,6 +1167,63 @@ class ClaudeClient:
             log.exception("classify_market_intent _call failed")
             return None
         return _parse_market_intent(result.text)
+
+    async def pick_kalshi_series(
+        self, query: str, candidates: list[dict[str, str]],
+    ) -> str | None:
+        """Pick the best Kalshi series_ticker for `query` from a cached list.
+
+        Kalshi has no free-text search API, so MarketsManager pulls the
+        top-N most-traded series at startup (and refreshes hourly), then
+        asks Haiku to pick the closest title match per query. The full
+        candidate list goes into system_extra so prompt-caching kicks in:
+        the same N-series prompt is paid once per 5-min window even though
+        callers pass it on every call.
+
+        `candidates` is `[{"ticker": "KXBILLBOARD", "title": "Billboard Hot 100"},
+        ...]`. Returns the chosen ticker (matched case-insensitive against the
+        input list) or None if Haiku says no candidate fits.
+        """
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0].get("ticker") or None
+        formatted = "\n".join(
+            f"  {c.get('ticker','')}: {c.get('title','')}"
+            for c in candidates if c.get("ticker")
+        )
+        system_extra = (
+            "TASK: Pick the single Kalshi series ticker that best matches the "
+            "user's query. Reply with EXACTLY the ticker string, nothing else. "
+            "Reply NONE if no candidate fits.\n"
+            "\n"
+            f"CANDIDATES:\n{formatted}"
+        )
+        try:
+            result = await self._call(
+                model=HAIKU, user_message=query, system_extra=system_extra,
+                max_tokens=30,
+                purpose="kalshi_pick",
+            )
+        except Exception:
+            log.exception("pick_kalshi_series _call failed")
+            return None
+        reply = result.text.strip().upper()
+        if not reply or reply.startswith("NONE"):
+            return None
+        # Prefer the LONGEST ticker substring match. Kalshi tickers share
+        # prefixes ("KXBTC" is a substring of "KXBTCD") so a naive iteration
+        # in input order could pick the shorter / less specific one. Sorting
+        # longest-first guarantees we resolve to the most specific candidate
+        # that actually appears in the reply.
+        valid = sorted(
+            [c.get("ticker") or "" for c in candidates if c.get("ticker")],
+            key=len, reverse=True,
+        )
+        for ticker in valid:
+            if ticker.upper() in reply:
+                return ticker
+        return None
 
     async def preflight_order(
         self, request: str, channel_context: str = "",

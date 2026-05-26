@@ -511,3 +511,115 @@ async def test_classify_market_intent_api_failure_returns_none():
     with patch.object(client, "_call", fake):
         result = await client.classify_market_intent("anything")
     assert result is None
+
+
+# ---- pick_kalshi_series --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_uses_haiku():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="KXBILLBOARD"))
+    candidates = [
+        {"ticker": "KXBILLBOARD", "title": "Billboard Hot 100"},
+        {"ticker": "KXSPOTIFYD", "title": "Daily US Spotify chart"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("drake hot 100", candidates)
+    assert result == "KXBILLBOARD"
+    assert fake.call_args.kwargs["model"] == HAIKU
+    assert fake.call_args.kwargs["purpose"] == "kalshi_pick"
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_single_candidate_skips_call():
+    """One candidate -> short-circuit, no Haiku call needed."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock()
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series(
+            "anything", [{"ticker": "KXONLY", "title": "Only option"}],
+        )
+    assert result == "KXONLY"
+    fake.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_empty_candidates_returns_none():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock()
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("anything", [])
+    assert result is None
+    fake.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_none_reply_returns_none():
+    """Haiku says NONE -> caller falls through to Polymarket-only."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="NONE"))
+    candidates = [
+        {"ticker": "KXFOO", "title": "Foo"},
+        {"ticker": "KXBAR", "title": "Bar"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("what's for dinner", candidates)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_matches_ticker_inside_reply():
+    """Haiku sometimes adds whitespace/quotes; we match the ticker substring."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="  KXBILLBOARD\n"))
+    candidates = [
+        {"ticker": "KXBILLBOARD", "title": "Billboard Hot 100"},
+        {"ticker": "KXSPOTIFYD", "title": "Spotify"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("drake", candidates)
+    assert result == "KXBILLBOARD"
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_prefers_longest_match():
+    """Tickers share prefixes (KXBTC is a substring of KXBTCD). When Haiku
+    returns the longer/more-specific ticker, we must resolve to that one,
+    not the shorter prefix that also substring-matches."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="KXBTCD"))
+    candidates = [
+        {"ticker": "KXBTC", "title": "Bitcoin range"},
+        {"ticker": "KXBTCD", "title": "Bitcoin above/below"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("btc above 100k", candidates)
+    assert result == "KXBTCD"
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_unknown_reply_returns_none():
+    """Haiku returns a ticker not in the candidates -> safer to skip."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="KXNOTREAL"))
+    candidates = [
+        {"ticker": "KXFOO", "title": "Foo"},
+        {"ticker": "KXBAR", "title": "Bar"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("anything", candidates)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pick_kalshi_series_api_failure_returns_none():
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(side_effect=RuntimeError("haiku down"))
+    candidates = [
+        {"ticker": "KXFOO", "title": "Foo"},
+        {"ticker": "KXBAR", "title": "Bar"},
+    ]
+    with patch.object(client, "_call", fake):
+        result = await client.pick_kalshi_series("anything", candidates)
+    assert result is None
