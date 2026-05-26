@@ -248,10 +248,13 @@ _TOOL_DISCIPLINE = (
 # /recap was at default 400). New surfaces pick one of these categories;
 # don't pass a bespoke max_tokens.
 
-# Replies and recaps: tweet-length target, ~400 char ceiling (100 tokens).
-# Some buffer above the 200 char prompt target so a clean medium answer
-# doesn't get cut mid-word.
-MAX_TOKENS_REPLY = 100
+# Replies and recaps: tweet-length target, ~600 char ceiling (150 tokens).
+# Bumped from 100 -> 150 after live Discord showed responses with markets
+# context (paraphrase + take + cited URL) hitting max_tokens and truncating
+# mid-sentence. Persona still says "aim tweet length" so most replies stay
+# under 200 chars; the extra 50 tokens is headroom for the URL on the rare
+# response that needs one.
+MAX_TOKENS_REPLY = 150
 
 # Output-to-room posts: same tweet-length target as replies for the body
 # (200 chars / ~50 tokens), plus headroom for a trailing source URL (~30-60
