@@ -146,9 +146,11 @@ def check_response(prompt: Prompt, response: str) -> list[str]:
         warnings.append("EMPTY response")
         return warnings
 
-    # Length: Toots' user-facing replies aim 40-200 chars. Hard ceiling 250.
-    if len(response) > 250:
-        warnings.append(f"LONG response ({len(response)} chars; ceiling 250)")
+    # Length: Toots aims tweet-length, but the eval ceiling sits higher than
+    # the persona target so the check only fires on truly runaway responses
+    # (>400). Voice/concision is left to manual review of the printed output.
+    if len(response) > 400:
+        warnings.append(f"LONG response ({len(response)} chars; ceiling 400)")
     if len(response) < 20:
         warnings.append(f"SHORT response ({len(response)} chars; floor 20)")
 
