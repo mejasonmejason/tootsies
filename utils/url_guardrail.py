@@ -160,22 +160,19 @@ def ensure_market_citation(
     response_urls = {normalize(u) for u in extract_urls(text)}
     if any(normalize(u) in response_urls for u in snapshot_urls):
         return text
-    # Try to match a snapshot title to the response, skipping snapshots whose
-    # URL was already-seen (filtered above).
+    # Try to match a snapshot title to the response first (most relevant URL).
+    # Fall back to the first available snapshot URL if no title matches.
+    # Skip snapshots whose URL was already-seen (filtered above).
     valid_urls = set(snapshot_urls)
     text_lower = text.lower()
-    chosen_url = ""
     for s in snapshots:
         candidate = getattr(s, "url", "")
         if candidate not in valid_urls:
             continue
         title = (getattr(s, "title", "") or "").lower().strip()
         if title and len(title) >= 4 and title in text_lower:
-            chosen_url = candidate
-            break
-    if not chosen_url:
-        chosen_url = snapshot_urls[0]
-    return f"{text.rstrip()}\n\n{chosen_url}"
+            return f"{text.rstrip()}\n\n{candidate}"
+    return f"{text.rstrip()}\n\n{snapshot_urls[0]}"
 
 
 def enforce_source_links(
