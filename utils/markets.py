@@ -24,6 +24,7 @@ cache_hit, result_count, error) for the dashboard.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -322,7 +323,7 @@ def _sgo_event_to_snapshot(event: dict[str, Any], league: str) -> MarketSnapshot
         return None
     event_id = event.get("eventID") or event.get("id") or ""
 
-    # Team names — try medium, long, short, location in that order.
+    # Team names: try medium, long, short, location in that order.
     teams_raw = event.get("teams")
     teams: dict[str, Any] = teams_raw if isinstance(teams_raw, dict) else {}
     home = _sgo_team_name(teams.get("home"))
@@ -793,6 +794,7 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
     if not isinstance(market, dict):
         return None
     ticker = market.get("ticker") or ""
+    event_ticker = market.get("event_ticker") or ""
     title = market.get("title") or ""
     if not title:
         return None
@@ -810,15 +812,43 @@ def _kalshi_market_to_snapshot(market: dict[str, Any]) -> MarketSnapshot | None:
     return MarketSnapshot(
         source="kalshi",
         title=str(title),
-        url=f"https://kalshi.com/markets/{ticker}" if ticker else "",
+        url=_kalshi_web_url(event_ticker, ticker),
         probability=probability,
         meta={
             "ticker": ticker,
+            "event_ticker": event_ticker,
             "volume": market.get("volume_fp"),
             "liquidity": market.get("liquidity_dollars"),
             "expiration": market.get("expiration_time"),
         },
     )
+
+
+def _kalshi_web_url(event_ticker: str, ticker: str) -> str:
+    """Construct a kalshi.com URL that lands on the series page.
+
+    Verified from two real Kalshi URLs the user shared:
+        https://kalshi.com/markets/kxmlbgame/professional-baseball-game
+        https://kalshi.com/markets/kxmayorla/la/kxmayorla-26?...
+
+    The FIRST path segment in both is the series ticker, lowercased. That's
+    the only part we can construct without guessing; the subsequent path
+    segments and slug formats vary by series shape (some use event slug,
+    some use category + event_ticker). The series page lists all events
+    under it, so the user can navigate from there to the specific market.
+
+    Less specific than a deeplink, but always real.
+    """
+    series = ""
+    if event_ticker:
+        series = event_ticker.split("-", 1)[0].lower()
+    if series:
+        return f"https://kalshi.com/markets/{series}"
+    if ticker:
+        # Last-resort fallback: lowercased market ticker. Probably 404s but
+        # better than empty string (the model can still cite "Kalshi" textually).
+        return f"https://kalshi.com/markets/{ticker.lower()}"
+    return ""
 
 
 # ---- prompt formatter -------------------------------------------------------
@@ -1023,9 +1053,30 @@ class MarketsManager:
         return snaps[:5] if snaps else None
 
     async def _pm_snapshots(self, search_terms: str) -> list[MarketSnapshot] | None:
-        # Polymarket search first (broader topic coverage), Kalshi fallback.
-        snaps = await self.polymarket.search_markets(search_terms, limit=5)
-        if snaps:
-            return snaps
-        kalshi_snaps = await self.kalshi.get_open_markets(limit=5)
-        return kalshi_snaps[:3] if kalshi_snaps else None
+        """Fetch prediction-market snapshots from Polymarket + Kalshi.
+
+        Both are peer sources, not Polymarket-first-Kalshi-fallback. We hit
+        them in parallel and combine. If the user mentions one platform
+        explicitly ("kalshi", "polymarket"), we still query both but their
+        preferred platform's results appear first in the list.
+
+        return_exceptions=True so a single-source outage doesn't blank the
+        other source's results.
+        """
+        lower = search_terms.lower()
+        kalshi_first = "kalshi" in lower and "polymarket" not in lower
+
+        poly_task = self.polymarket.search_markets(search_terms, limit=4)
+        kalshi_task = self.kalshi.get_open_markets(limit=4)
+        results = await asyncio.gather(
+            poly_task, kalshi_task, return_exceptions=True,
+        )
+        poly_snaps = results[0] if isinstance(results[0], list) else []
+        kalshi_snaps = results[1] if isinstance(results[1], list) else []
+
+        combined = (
+            kalshi_snaps + poly_snaps
+            if kalshi_first
+            else poly_snaps + kalshi_snaps
+        )
+        return combined or None
