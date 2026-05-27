@@ -363,9 +363,8 @@ _POST_GROUNDING = (
 
 # Replies and recaps: persona keeps most replies tweet-length. Bumped
 # 100 -> 150 -> 400 after list-style answers ("list all 13 MJ #1s") hit
-# max_tokens mid-list. The 400-token ceiling is headroom for the rare long
-# answer; a "see more" button (utils/long_message.py) catches any response
-# that exceeds Discord's 2000-char message limit.
+# max_tokens mid-list. 400 tokens tops out around 1600 chars, well under
+# Discord's 2000-char limit. Persona guidance still aims for tweet length.
 MAX_TOKENS_REPLY = 400
 
 # Output-to-room posts: same cap as replies (150 tokens). The take targets
