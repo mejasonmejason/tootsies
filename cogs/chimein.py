@@ -49,6 +49,7 @@ from utils.link_enrich import enrich_batch
 from utils.markets import MarketSnapshot
 from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
+from utils.url_guardrail import extract_urls
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -320,12 +321,17 @@ class ChimeIn(commands.Cog):
 
         enriched = [v for v in enriched_map.values() if v is not None]
 
+        recently_seen_urls = [
+            u for msg in msgs for u in extract_urls(msg.content)
+        ] if msgs else None
+
         try:
             line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
                 enriched_links=enriched, recent_posts=recent_posts,
                 perplexity_context=pplx_result,
                 markets_context=markets_result,
+                recently_seen_urls=recently_seen_urls,
             )
         except Exception as exc:
             emit_error(
@@ -351,7 +357,7 @@ class ChimeIn(commands.Cog):
 
         try:
             quality_score, quality_reason = await self.bot.claude.discourse_score(
-                line, channel_name=channel.name,
+                line, channel_name=channel.name, surface="chimein",
             )
         except Exception as exc:
             emit_error(

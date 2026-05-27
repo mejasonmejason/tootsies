@@ -818,15 +818,9 @@ class ClaudeClient:
             "recap in real fact. Prioritize whichever post got the most "
             "reactions. (Tool-use rules live below.)\n"
             "\n"
-            "TIME CLAIMS: if your recap says 'tonight', 'just dropped', "
-            "'earlier today', or any time reference, web_search to verify. "
-            "Something from last week is not 'just dropped'. Wrong times "
-            "go out public and kill credibility.\n"
-            "\n"
             "Match the room's energy: hype with them when they're hyped, roast "
-            "with them when they're roasting. Never moderate, never lecture, "
-            "never play tour guide ('it seems like the room is discussing...')."
-            + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+            "with them when they're roasting. Never moderate, never lecture."
+            + _POST_GROUNDING + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         user = (
             f"Channel: #{channel_name}\n\nMessages (most recent last):\n"
@@ -1009,19 +1003,28 @@ class ClaudeClient:
             )
         return cleaned
 
-    async def discourse_score(self, post: str, channel_name: str = "") -> tuple[float, str]:
-        """Score a generated discourse post on engagement potential.
+    async def discourse_score(
+        self, post: str, channel_name: str = "", surface: str = "discourse",
+    ) -> tuple[float, str]:
+        """Score a generated post on engagement potential.
 
         Cheap Haiku call. Returns (score 0..1, reason):
           - score: how likely this post is to make someone in the room respond.
           - reason: one-line explanation of the score.
 
+        `surface` tells the scorer what kind of post this is ("discourse" for a
+        conversation starter, "chimein" for a reaction to live conversation).
+
         Returns (0.0, "") if unparseable, which guarantees skip.
         """
         channel_ctx = f" in #{channel_name}" if channel_name else ""
+        surface_ctx = (
+            " This is a chime-in reacting to a live conversation (not starting one)."
+            if surface == "chimein" else ""
+        )
         system_extra = (
             "TASK: You are scoring a generated Discord post BEFORE it gets sent to a channel. "
-            "Rate how engaging this post is, how likely it is to make someone respond.\n"
+            f"Rate how engaging this post is, how likely it is to make someone respond.{surface_ctx}\n"
             "\n"
             "Score on a 0.0 to 1.0 scale:\n"
             "  - 0.9+: genuinely provocative take that people will argue about. has a clear "
@@ -1130,6 +1133,7 @@ class ClaudeClient:
         recent_posts: str = "",
         perplexity_context: str | None = None,
         markets_context: list[MarketSnapshot] | None = None,
+        recently_seen_urls: list[str] | None = None,
     ) -> str:
         """Generate the actual chime-in take given the buffer + scored hook.
 
@@ -1206,6 +1210,7 @@ class ClaudeClient:
             feed_urls=feed_urls,
             perplexity_context=perplexity_context,
             web_search_urls=result.web_search_urls,
+            recently_seen_urls=recently_seen_urls,
             market_urls=market_urls,
         )
         if rejected:
