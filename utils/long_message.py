@@ -61,6 +61,7 @@ async def send_long(
     truncated = _truncate(text)
     view = _SeeMoreView(text)
 
+    msg: discord.Message | None = None
     if followup:
         msg = await followup.send(truncated, view=view, wait=True)
     elif reply_to:
@@ -73,7 +74,9 @@ async def send_long(
     async def _disable_on_timeout() -> None:
         await view.wait()
         if msg is not None:
-            view.children[0].disabled = True  # type: ignore[union-attr]
+            for child in view.children:
+                if isinstance(child, discord.ui.Button):
+                    child.disabled = True
             with contextlib.suppress(discord.DiscordException):
                 await msg.edit(view=view)
 
