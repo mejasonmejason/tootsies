@@ -367,11 +367,10 @@ _POST_GROUNDING = (
 # response that needs one.
 MAX_TOKENS_REPLY = 150
 
-# Output-to-room posts: same tweet-length target as replies for the body
-# (200 chars / ~50 tokens), plus headroom for a trailing source URL (~30-60
-# chars but URL slugs tokenize denser, ~15-25 tokens). 100 leaves clean room
-# for take + URL without truncating mid-word.
-MAX_TOKENS_POST = 100
+# Output-to-room posts: same cap as replies (150 tokens). The take targets
+# 80-200 chars, plus a trailing source URL. Matches MAX_TOKENS_REPLY so
+# discourse and chimein_post have the same ceiling.
+MAX_TOKENS_POST = 150
 
 # One-liner deflections: ~200 char ceiling. Below the reply cap because
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
