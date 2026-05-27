@@ -22,7 +22,7 @@ from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.markets import MarketSnapshot
 from utils.metrics import track_command
-from utils.perplexity import build_search_query
+from utils.perplexity import build_chart_fact_query, build_search_query, is_chart_fact_question
 from utils.rate_limits import check_user_limit, consume_user
 from utils.url_guardrail import extract_urls
 
@@ -126,7 +126,12 @@ class Ask(commands.Cog):
         pplx = self.bot.perplexity
         if pplx:
             pplx_idx = len(coros)
-            coros.append(pplx.search(build_search_query(question, surface="ask"), purpose="ask"))
+            pplx_query = (
+                build_chart_fact_query(question)
+                if is_chart_fact_question(question)
+                else build_search_query(question, surface="ask")
+            )
+            coros.append(pplx.search(pplx_query, purpose="ask"))
         markets_idx = len(coros)
         coros.append(self.bot.markets.get_context(question))
 

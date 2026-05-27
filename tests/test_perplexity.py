@@ -8,9 +8,64 @@ import pytest
 
 from utils.perplexity import (
     PerplexityClient,
+    build_chart_fact_query,
     build_search_query,
     format_perplexity_for_prompt,
+    is_chart_fact_question,
 )
+
+# ---- is_chart_fact_question ---------------------------------------------------
+
+
+def test_chart_fact_most_hot_100_number_ones():
+    assert is_chart_fact_question("who's the male solo artist with the most number 1 hot 100?")
+
+
+def test_chart_fact_how_many_number_ones():
+    assert is_chart_fact_question("how many number ones does drake have")
+
+
+def test_chart_fact_how_many_hash_ones():
+    assert is_chart_fact_question("how many #1s does drake have on the billboard")
+
+
+def test_chart_fact_hot_100_record():
+    assert is_chart_fact_question("who holds the hot 100 #1 record")
+
+
+def test_chart_fact_all_time_number_one():
+    assert is_chart_fact_question("drake all time hot 100 #1s count")
+
+
+def test_not_chart_fact_generic_opinion():
+    assert not is_chart_fact_question("is drake done")
+
+
+def test_not_chart_fact_pure_chart_no_stat():
+    assert not is_chart_fact_question("drake billboard chart")
+
+
+def test_not_chart_fact_unrelated():
+    assert not is_chart_fact_question("who's bigger travis or kendrick")
+
+
+# ---- build_chart_fact_query ---------------------------------------------------
+
+
+def test_chart_fact_query_includes_question():
+    q = build_chart_fact_query("how many #1s does drake have")
+    assert "how many #1s does drake have" in q
+
+
+def test_chart_fact_query_mentions_billboard():
+    q = build_chart_fact_query("who has the most hot 100 number ones")
+    assert "Billboard" in q
+
+
+def test_chart_fact_query_asks_for_current_data():
+    q = build_chart_fact_query("drake hot 100 record")
+    assert "current" in q.lower() or "up-to-date" in q.lower()
+
 
 # ---- build_search_query -------------------------------------------------------
 

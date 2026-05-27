@@ -154,6 +154,52 @@ class PerplexityClient:
             return None
 
 
+# ---- chart fact detection -------------------------------------------------------
+# Chart records (number of #1s, chart milestones) live in Claude's training data
+# at a fixed point in time and go stale fast. When a question reads as a chart-
+# stat lookup, we swap the generic ask query for a targeted fact-check query so
+# Perplexity returns the verified current number rather than discourse chatter.
+
+_CHART_TERMS = frozenset({
+    "hot 100", "hot100", "billboard", "#1", "#1s", "number 1", "number one",
+    "number ones", "chart topper", "chart-topper", "chart toppers",
+})
+
+_STAT_TRIGGERS = frozenset({
+    "how many", "most", "record", "count", "total", "all time", "number of",
+    "how much", "all-time",
+})
+
+
+def is_chart_fact_question(question: str) -> bool:
+    """Return True when the question is asking for a verifiable chart stat.
+
+    Catches questions like "who has the most hot 100 #1s" or "how many number
+    ones does drake have" so the caller can swap in a targeted Perplexity query
+    instead of the generic discourse query.
+    """
+    q = question.lower()
+    return (
+        any(term in q for term in _CHART_TERMS)
+        and any(term in q for term in _STAT_TRIGGERS)
+    )
+
+
+def build_chart_fact_query(question: str) -> str:
+    """Build a targeted Perplexity query for a chart-record fact-check.
+
+    Returns a prompt that asks Perplexity to pull the exact, up-to-date
+    number from authoritative sources rather than trending discourse.
+    """
+    return (
+        f"Fact-check with current official data: {question}\n"
+        "Find the exact, up-to-date count from authoritative sources: "
+        "Billboard's official site, Wikipedia artist discography pages, and "
+        "recent music news. State the precise current number and note if the "
+        "record has changed recently. Include the source URL."
+    )
+
+
 _SOURCES = (
     "Pull from Twitter/X, Reddit, Instagram/Threads, TikTok, YouTube, "
     "and news outlets. Include specific names, numbers, and quotes."
