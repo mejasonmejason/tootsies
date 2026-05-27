@@ -184,8 +184,13 @@ class Ask(commands.Cog):
         if not await self.bot.db.is_configured(message.guild.id):
             return  # silent before setup
 
-        # Strip our mention (and any other user mentions) to get the actual question.
-        question = re.sub(r"<@!?\d+>", "", message.content).strip()
+        # Strip our mention; replace other user mentions with display names.
+        question = re.sub(rf"<@!?{me.id}>", "", message.content)
+        for u in message.mentions:
+            if u.id != me.id:
+                question = question.replace(f"<@{u.id}>", u.display_name)
+                question = question.replace(f"<@!{u.id}>", u.display_name)
+        question = question.strip()
         if not question:
             return
 
