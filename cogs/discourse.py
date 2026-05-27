@@ -36,7 +36,6 @@ from utils.feeds import (
 )
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
-from utils.long_message import truncate
 from utils.markets import MarketSnapshot
 from utils.metrics import track_command
 from utils.permissions import can_send_in
@@ -180,7 +179,7 @@ class Discourse(commands.Cog):
         except Exception:
             log.exception("post-discourse bookkeeping failed")
 
-        await interaction.followup.send(truncate(line))
+        await interaction.followup.send(line)
 
     # ---- shared compose pipeline ------------------------------------------------
 
@@ -525,7 +524,7 @@ class Discourse(commands.Cog):
             return
 
         try:
-            await channel.send(truncate(line))
+            await channel.send(line)
             await self.bot.db.add_discourse(guild.id, "open", line[:200])
         except discord.DiscordException:
             log.exception("scheduled post send failed")

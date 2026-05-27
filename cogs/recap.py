@@ -23,7 +23,6 @@ from utils.feeds import (
 )
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
-from utils.long_message import truncate
 from utils.metrics import track_command
 from utils.perplexity import build_search_query
 from utils.rate_limits import check_user_limit, consume_user
@@ -169,7 +168,7 @@ class Recap(commands.Cog):
         except Exception:
             log.exception("consume failed")
 
-        await interaction.followup.send(truncate(line))
+        await interaction.followup.send(line)
 
 
 def _period_to_window(period: str) -> timedelta:
