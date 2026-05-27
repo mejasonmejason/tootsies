@@ -4,7 +4,7 @@ No commands of its own. Wires into existing settings:
 
   - Listen channel: the guild's `discourse_channel` (set via /menu).
   - On/off + cadence: the mood schedule. mood=off silences, chill is reserved
-    (5/day, 40min cooldown, 0.8 threshold), yaps is chatty (10/day, 20min
+    (10/day, 40min cooldown, 0.8 threshold), yaps is chatty (20/day, 20min
     cooldown, 0.6 threshold). Mirrors the 2:4 ratio scheduled discourse
     already uses.
 
@@ -15,7 +15,7 @@ Algorithm (also documented in docs/ALGORITHMS.md):
       * Buffer has >= BUFFER_MIN_FOR_SCORE new messages since last evaluation
       * Outside cooldown (mood-tuned: 40min chill / 20min yaps)
       * Within hours window (9am to 2am ET)
-      * Under daily cap (mood-tuned: 5 chill / 10 yaps)
+      * Under daily cap (mood-tuned: 10 chill / 20 yaps)
     -> call Haiku to score (score, vibe, hook)
   - Then gate by:
       * vibe not in {vulnerable, catchup, other}
@@ -97,10 +97,10 @@ class _MoodTuning:
 # reserved bartender, yaps is the one leaning across the bar.
 MOOD_TUNING: dict[MoodMode, _MoodTuning] = {
     MoodMode.CHILL: _MoodTuning(
-        threshold=0.8, daily_cap=5, cooldown=timedelta(minutes=40),
+        threshold=0.8, daily_cap=10, cooldown=timedelta(minutes=40),
     ),
     MoodMode.YAPS: _MoodTuning(
-        threshold=0.6, daily_cap=10, cooldown=timedelta(minutes=20),
+        threshold=0.6, daily_cap=20, cooldown=timedelta(minutes=20),
     ),
 }
 
