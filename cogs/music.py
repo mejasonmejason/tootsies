@@ -52,6 +52,14 @@ YAPS_TIMES = [time(11, 0), time(20, 0)]
 _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS = 65.0
 MUSIC_SCORE_THRESHOLD = 0.6
 
+_MUSIC_LINK_HOSTS = ("music.apple.com", "open.spotify.com", "spotify.link")
+
+
+def _has_music_link(text: str) -> bool:
+    """Check if the text contains a valid Apple Music or Spotify link."""
+    lowered = text.lower()
+    return any(host in lowered for host in _MUSIC_LINK_HOSTS)
+
 
 def _parse_retry_after_seconds(exc: anthropic.RateLimitError) -> float | None:
     response = getattr(exc, "response", None)
@@ -274,15 +282,44 @@ class Music(commands.Cog):
             post_preview=line[:120],
         )
 
-        if score >= MUSIC_SCORE_THRESHOLD:
-            return line
-
-        if not must_post:
+        if score < MUSIC_SCORE_THRESHOLD and not must_post:
             log.info(
                 "music scored %.2f (< %.2f) for guild %d channel %d, skipping",
                 score, MUSIC_SCORE_THRESHOLD, guild.id, channel.id,
             )
             return ""
+
+        # Links-only gate: post must contain an Apple Music or Spotify link.
+        # Retry once if missing; skip the slot if still no link.
+        if not _has_music_link(line):
+            emit(
+                "music_link_missing",
+                guild_id=guild.id, channel_id=channel.id,
+                must_post=must_post, attempt=1, post_preview=line[:120],
+            )
+            log.info("music post missing music link, retrying for guild %d channel %d", guild.id, channel.id)
+            line2 = await self.bot.claude.music_post(
+                sources_blob=sources_blob,
+                recent_posts=recent_blob,
+                channel_name=channel.name,
+                must_post=must_post,
+                hot_urls=feed_hot_urls,
+                enriched_links=enriched,
+                perplexity_context=pplx_result,
+            )
+            if line2 and line2.strip().upper() != "EMPTY" and _has_music_link(line2):
+                return line2
+            emit(
+                "music_link_missing",
+                guild_id=guild.id, channel_id=channel.id,
+                must_post=must_post, attempt=2, post_preview=(line2 or "")[:120],
+            )
+            if not must_post:
+                log.info("music post still missing link after retry, skipping slot")
+                return ""
+            # Manual /music drop: return the best attempt even without a link
+            # rather than showing nothing. The user invoked it explicitly.
+            return line2 if line2 and line2.strip().upper() != "EMPTY" else line
 
         return line
 
