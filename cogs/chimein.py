@@ -49,6 +49,7 @@ from utils.link_enrich import enrich_batch
 from utils.markets import MarketSnapshot
 from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
+from utils.url_guardrail import extract_urls
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -63,6 +64,7 @@ ET = ZoneInfo("America/New_York")
 # Buffer must have at least this many messages before we even score it. Below
 # this, we don't have enough signal to know what the room's talking about.
 BUFFER_MIN_FOR_SCORE = 5
+CHIMEIN_QUALITY_THRESHOLD = 0.6
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
@@ -319,12 +321,17 @@ class ChimeIn(commands.Cog):
 
         enriched = [v for v in enriched_map.values() if v is not None]
 
+        recently_seen_urls = [
+            u for msg in msgs for u in extract_urls(msg.content)
+        ] if msgs else None
+
         try:
             line = await self.bot.claude.chimein_post(
                 buffer_blob, hook=hook, image_urls=image_urls,
                 enriched_links=enriched, recent_posts=recent_posts,
                 perplexity_context=pplx_result,
                 markets_context=markets_result,
+                recently_seen_urls=recently_seen_urls,
             )
         except Exception as exc:
             emit_error(
@@ -349,6 +356,26 @@ class ChimeIn(commands.Cog):
             return
 
         try:
+            quality_score, quality_reason = await self.bot.claude.discourse_score(
+                line, channel_name=channel.name, surface="chimein",
+            )
+        except Exception as exc:
+            emit_error(
+                source="chimein_quality_score", exc=exc, recoverable=True,
+                guild_id=guild_id, channel_id=channel_id,
+            )
+            quality_score, quality_reason = 1.0, "score_failed_pass_through"
+
+        if quality_score < CHIMEIN_QUALITY_THRESHOLD:
+            emit(
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                decision="quality_gate", vibe=vibe, score=score,
+                quality_score=quality_score, quality_reason=quality_reason,
+                post_preview=line[:120],
+            )
+            return
+
+        try:
             await channel.send(line)
         except discord.DiscordException:
             log.exception("chime-in send failed for guild=%s channel=%s", guild_id, channel_id)
@@ -363,6 +390,7 @@ class ChimeIn(commands.Cog):
             guild_id=guild_id, channel_id=channel_id,
             score=score, vibe=vibe, hook=hook[:200],
             mood=str(schedule.mood),
+            quality_score=quality_score, quality_reason=quality_reason,
         )
 
 

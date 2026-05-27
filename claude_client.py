@@ -278,6 +278,81 @@ _TOOL_DISCIPLINE = (
     "with tools, the customer sees the take, never the search."
 )
 
+# Shared grounding rules for room-posting surfaces (discourse + chimein_post).
+# Extracted so they can't drift apart. Surface-specific rules (link policy,
+# EMPTY handling, hook framing) stay inline in each prompt.
+_POST_GROUNDING = (
+    "\n\n---\n"
+    "GROUNDING (shared rules for all room-facing posts):\n"
+    "\n"
+    "ONE TOPIC. Pick the single most talk-worthy thing and commit to it. "
+    "Don't stack two unrelated topics in one message. Don't restate the "
+    "same topic in different words across two sentences either, one angle, "
+    "one pass.\n"
+    "\n"
+    "BARTENDER, NOT CURATOR. React to the thing like a person who saw it "
+    "and has a take. Never evaluate whether something 'fits' the channel, "
+    "is 'fresh', 'confirms' a vibe, or is 'cinema-adjacent'. Never narrate "
+    "the room's mood or tell people what to talk about next. That's curator "
+    "mode, the #1 voice drift on this surface.\n"
+    "\n"
+    "CALIBRATION (same source two ways):\n"
+    "  BAD: 'new kendrick track is a lyrical exercise that confirms his "
+    "range. this is relevant and fresh for the room.'\n"
+    "  GOOD: 'new kendrick track. second verse is a cole diss whether he "
+    "admits it or not.'\n"
+    "  BAD names what the content IS. GOOD has a TAKE on it.\n"
+    "\n"
+    "  BAD: 'room is deep in the drake debate. the \"emotional rapping = "
+    "crying\" take has legs. drop something that cuts across both without "
+    "picking a lane.'\n"
+    "  GOOD: 'emotional rapping is just rapping. drake cried on marvin's "
+    "room and nobody called it soft then.'\n"
+    "  BAD narrates the room and hands out assignments like an editor. "
+    "GOOD is a person IN the room with an opinion.\n"
+    "\n"
+    "ACCURACY IS NON-NEGOTIABLE. Every claim you make (a score, a stat, "
+    "a name, a matchup, a song, an event) must come from the conversation "
+    "or your web_search results. If you can't verify it, don't say it. "
+    "Wrong facts posted to a live room kill credibility instantly. No "
+    "invented stats, no wrong names, no made-up events.\n"
+    "\n"
+    "STAY ON-TOPIC. The channel name and recent conversation tell you "
+    "what belongs here. Post about what this room cares about. Don't "
+    "introduce unrelated topics, don't mash two threads together, and "
+    "don't invent context that isn't in the conversation.\n"
+    "\n"
+    "ALWAYS web_search. Whether the channel is active or quiet, search "
+    "for the latest on whatever you're about to post about. Your training "
+    "data is months stale, scores change by the minute, and "
+    "trades/drops/drama move fast. An uninformed take is worse than no "
+    "take.\n"
+    "\n"
+    "READ THE SOURCE MATERIAL. Feed channels are populated by "
+    "webhooks/bots that auto-embed tweets, posts, and articles. The embed "
+    "snippet is just the first chunk. For anything you're seriously "
+    "considering posting about, OPEN the URL via web_search (silently, per "
+    "tool rules below) to read the full tweet, quoted tweet if any, top "
+    "replies, and reactions. Don't form a take based on a 200-char preview "
+    "alone.\n"
+    "\n"
+    "STATE. Bake the current state of the topic into your line so we can "
+    "tell later if it's the same beat or a new one (e.g. 'lakers vs "
+    "nuggets r2, series tied 1-1', not just 'lakers').\n"
+    "\n"
+    "TIME CLAIMS: if your post says 'just dropped', 'tonight', 'this "
+    "weekend', 'earlier today', or any time reference, web_search to "
+    "verify it actually happened TODAY. Something from last week is not "
+    "'just dropped'. A finale that aired 5 days ago is not 'tonight'. "
+    "Wrong times go out public and kill credibility. When in doubt, "
+    "include the actual date.\n"
+    "\n"
+    "IMAGES + REACTIONS: when vision blocks are attached, look at them. "
+    "If the picture matters (who's in it, the meme, the screenshot), "
+    "reference it. Messages with reactions are signal: the room is telling "
+    "you what they care about. Lean into those."
+)
+
 
 # ---- per-surface output caps -----------------------------------------------
 # Single source of truth for how many tokens each user-facing prompt category
@@ -294,11 +369,10 @@ _TOOL_DISCIPLINE = (
 # response that needs one.
 MAX_TOKENS_REPLY = 150
 
-# Output-to-room posts: same tweet-length target as replies for the body
-# (200 chars / ~50 tokens), plus headroom for a trailing source URL (~30-60
-# chars but URL slugs tokenize denser, ~15-25 tokens). 100 leaves clean room
-# for take + URL without truncating mid-word.
-MAX_TOKENS_POST = 100
+# Output-to-room posts: same cap as replies (150 tokens). The take targets
+# 80-200 chars, plus a trailing source URL. Matches MAX_TOKENS_REPLY so
+# discourse and chimein_post have the same ceiling.
+MAX_TOKENS_POST = 150
 
 # One-liner deflections: ~200 char ceiling. Below the reply cap because
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
@@ -746,6 +820,14 @@ class ClaudeClient:
             "recap in real fact. Prioritize whichever post got the most "
             "reactions. (Tool-use rules live below.)\n"
             "\n"
+            "ACCURACY: every claim you make (a score, a stat, a name) must "
+            "come from the messages or your web_search results. If you can't "
+            "verify it, don't say it.\n"
+            "\n"
+            "TIME CLAIMS: if your recap says 'tonight', 'just dropped', "
+            "'earlier today', verify it with web_search. Something from last "
+            "week is not 'just dropped'. Wrong times kill credibility.\n"
+            "\n"
             "Match the room's energy: hype with them when they're hyped, roast "
             "with them when they're roasting. Never moderate, never lecture, "
             "never play tour guide ('it seems like the room is discussing...')."
@@ -873,44 +955,8 @@ class ClaudeClient:
             "then drop the URL on its own line. Don't compress the take "
             "to make room for the URL.\n"
             "\n"
-            "ONE topic per post. Pick the single most talk-worthy thing "
-            "and commit to it. Don't stack two unrelated topics in one "
-            "message. Don't restate the same topic in different words "
-            "across two paragraphs either, one angle, one pass.\n"
-            "\n"
-            "BARTENDER, NOT CURATOR. React to the thing like a person "
-            "who saw it and has a take. Never evaluate whether something "
-            "'fits' the channel, is 'fresh', 'confirms' a vibe, or is "
-            "'cinema-adjacent'. Never narrate the room's mood or tell "
-            "people what to talk about next. That's curator mode, the #1 "
-            "voice drift on this surface.\n"
-            "\n"
-            "CALIBRATION (discourse-specific, same source two ways):\n"
-            "  BAD: 'new kendrick track is a lyrical exercise that "
-            "confirms his range. this is relevant and fresh for the "
-            "room.'\n"
-            "  GOOD: 'new kendrick track. second verse is a cole diss "
-            "whether he admits it or not.'\n"
-            "  BAD names what the content IS. GOOD has a TAKE on it.\n"
-            "\n"
-            "  BAD: 'room is deep in the drake debate. the \"emotional "
-            "rapping = crying\" take has legs. drop something that cuts "
-            "across both without picking a lane.'\n"
-            "  GOOD: 'emotional rapping is just rapping. drake cried on "
-            "marvin's room and nobody called it soft then.'\n"
-            "  BAD narrates the room and hands out assignments like an "
-            "editor. GOOD is a person IN the room with an opinion.\n"
-            "\n"
-            "STAY ON-TOPIC. The channel name and recent conversation tell "
-            "you what belongs here. Post about what this room cares about. "
             "If nothing on-topic is fresh, return EMPTY rather than going "
             "off-topic.\n"
-            "\n"
-            "ALWAYS web_search. Whether the channel is active or quiet, "
-            "search for the latest on whatever you're about to post about. "
-            "Your training data is months stale, scores change by the "
-            "minute, and trades/drops/drama move fast. An uninformed take "
-            "is worse than no take.\n"
             "\n"
             "ACTIVE CHANNEL: the conversation tells you what matters. Have "
             "your own take on the TOPIC, not on the conversation about it. "
@@ -923,33 +969,9 @@ class ClaudeClient:
             "QUIET CHANNEL: the room needs a spark. Use web_search to find "
             "what's breaking RIGHT NOW that fits this channel's vibe. "
             "Search for today's news, scores, drops, drama, whatever the "
-            "room would care about. Bring the outside world in.\n"
-            "\n"
-            "READ THE SOURCE MATERIAL. Feed channels are populated by "
-            "webhooks/bots that auto-embed tweets, posts, and articles. The "
-            "embed snippet is just the first chunk. For anything you're "
-            "seriously considering posting about, OPEN the URL via web_search "
-            "(silently, per tool rules below) to read the full tweet, quoted "
-            "tweet if any, top replies, and reactions. Don't form a take based "
-            "on a 200-char preview alone.\n"
-            "\n"
-            "IMAGES + REACTIONS: when vision blocks are attached, look at "
-            "them. If the picture matters (who's in it, the meme, the "
-            "screenshot), reference it. Messages with reactions are signal: "
-            "the room is telling you what they care about. Lean into those.\n"
-            "\n"
-            "STATE: Bake the current state of the topic into your line so we "
-            "can tell later if it's the same beat or a new one (e.g. 'lakers "
-            "vs nuggets r2, series tied 1-1', not just 'lakers').\n"
-            "\n"
-            "TIME CLAIMS: if your post says 'just dropped', 'tonight', "
-            "'this weekend', or any time reference, web_search to verify "
-            "it actually happened TODAY. Something from last week is not "
-            "'just dropped'. A finale that aired 5 days ago is not "
-            "'tonight'. Wrong times go out public and kill credibility. "
-            "When in doubt, include the actual date."
+            "room would care about. Bring the outside world in."
             f"{hot_urls_block}{enriched_block}{perplexity_block}{markets_block}{dedup_clause}"
-            + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+            + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
         category_line = f"Category: {category}\n" if category else ""
@@ -992,19 +1014,28 @@ class ClaudeClient:
             )
         return cleaned
 
-    async def discourse_score(self, post: str, channel_name: str = "") -> tuple[float, str]:
-        """Score a generated discourse post on engagement potential.
+    async def discourse_score(
+        self, post: str, channel_name: str = "", surface: str = "discourse",
+    ) -> tuple[float, str]:
+        """Score a generated post on engagement potential.
 
         Cheap Haiku call. Returns (score 0..1, reason):
           - score: how likely this post is to make someone in the room respond.
           - reason: one-line explanation of the score.
 
+        `surface` tells the scorer what kind of post this is ("discourse" for a
+        conversation starter, "chimein" for a reaction to live conversation).
+
         Returns (0.0, "") if unparseable, which guarantees skip.
         """
         channel_ctx = f" in #{channel_name}" if channel_name else ""
+        surface_ctx = (
+            " This is a chime-in reacting to a live conversation (not starting one)."
+            if surface == "chimein" else ""
+        )
         system_extra = (
             "TASK: You are scoring a generated Discord post BEFORE it gets sent to a channel. "
-            "Rate how engaging this post is, how likely it is to make someone respond.\n"
+            f"Rate how engaging this post is, how likely it is to make someone respond.{surface_ctx}\n"
             "\n"
             "Score on a 0.0 to 1.0 scale:\n"
             "  - 0.9+: genuinely provocative take that people will argue about. has a clear "
@@ -1113,6 +1144,7 @@ class ClaudeClient:
         recent_posts: str = "",
         perplexity_context: str | None = None,
         markets_context: list[MarketSnapshot] | None = None,
+        recently_seen_urls: list[str] | None = None,
     ) -> str:
         """Generate the actual chime-in take given the buffer + scored hook.
 
@@ -1144,22 +1176,10 @@ class ClaudeClient:
             "  - Don't tee yourself up for a follow-up. Drop the take and "
             "you're done.\n"
             "\n"
-            "WEB SEARCH: ALWAYS search for the current state of whatever "
-            "the room is discussing before you post. Scores, standings, "
-            "news, drama all move fast. If the conversation touches anything "
-            "verifiable (a game, a song, a release, a person), get the "
-            "latest so your take is informed, not stale. "
-            "(Use silently, per tool rules below.)\n"
-            "\n"
-            "IMAGES + REACTIONS: when vision blocks are attached, look at "
-            "them. If the picture matters (who's in it, the meme, the "
-            "screenshot), reference it. Messages with reactions are signal: "
-            "the room is telling you what they care about. Lean into those.\n"
-            "\n"
             "STANCE: like a regular at the bar leaning in mid-shift, not "
             "announcing yourself. Call out a name from the buffer if it lands "
             "(\"@gaza you're cooking with that take\")."
-            + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+            + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         dedup_block = ""
         if recent_posts:
@@ -1183,11 +1203,38 @@ class ClaudeClient:
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            max_tokens=MAX_TOKENS_REPLY,
+            max_tokens=MAX_TOKENS_POST,
             purpose="chimein_post",
             image_urls=image_urls,
         )
-        return result.text
+
+        feed_urls = (
+            [link.url for link in enriched_links if link.url]
+            if enriched_links else None
+        )
+        market_urls = (
+            [snap.url for snap in markets_context if snap.url]
+            if markets_context else None
+        )
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls,
+            perplexity_context=perplexity_context,
+            web_search_urls=result.web_search_urls,
+            recently_seen_urls=recently_seen_urls,
+            market_urls=market_urls,
+        )
+        if rejected:
+            emit(
+                "link_stripped", purpose="chimein_post", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        if deduped:
+            emit(
+                "link_stripped", purpose="chimein_post", reason="redundant",
+                count=len(deduped), urls=deduped[:5],
+            )
+        return cleaned
 
     async def deflect(self, situation: str) -> str:
         """Generate a fresh in-voice deflection. Falls back to canned variants on failure (caller's job)."""
@@ -1404,8 +1451,18 @@ class ClaudeClient:
             "  - it asks for moderation actions (kick/ban/mute/delete messages/role changes)\n"
             "  - it asks the bot to DM users or post outside this Discord\n"
             "  - it violates the constitution (NSFW, hate, doxxing, fabricated quotes, impersonation)\n"
-            "  - it's incoherent or has no actionable code change\n"
+            "  - it's truly incoherent (random characters, gibberish) with no discernible intent\n"
+            "  - it has no actionable code change AND is not behavior feedback (e.g. 'thoughts?',\n"
+            "    'make it vibes', 'I like pizza', coherent but not a build request)\n"
             "  - it asks for medical or legal advice features\n"
+            "\n"
+            "IMPORTANT: behavior complaints and quality feedback ARE actionable code changes.\n"
+            "  If a mod says the bot's output is bad (nonsensical, incoherent, off-topic, wrong),\n"
+            "  that's a request to improve the relevant feature. Interpret charitably:\n"
+            "  'chime-ins are nonsensical' → improve chime-in quality/filtering.\n"
+            "  'responses are too long' → adjust output length.\n"
+            "  'evaluate for clarity' → add a quality gate.\n"
+            "  These are ALLOWs, not REJECTs.\n"
             "\n"
             "PLUMBING: the request would require editing a protected path. Use when it would touch:\n"
             "  - constitution.py (the constitution itself)\n"
