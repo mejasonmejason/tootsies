@@ -5,6 +5,7 @@ from __future__ import annotations
 from utils.url_guardrail import (
     enforce_allowlist,
     enforce_source_links,
+    ensure_protocol,
     extract_urls,
     normalize,
     prefix_bare_urls,
@@ -366,3 +367,20 @@ def test_source_links_bare_www_in_perplexity_context():
     assert rejected == []
 
 
+# ---- ensure_protocol ----------------------------------------------------------
+
+
+def test_ensure_protocol_bare_www():
+    assert ensure_protocol("www.example.com/foo") == "https://www.example.com/foo"
+
+
+def test_ensure_protocol_bare_no_www():
+    assert ensure_protocol("scrippsnews.com/article") == "https://scrippsnews.com/article"
+
+
+def test_ensure_protocol_already_https():
+    assert ensure_protocol("https://example.com/foo") == "https://example.com/foo"
+
+
+def test_ensure_protocol_already_http():
+    assert ensure_protocol("http://example.com/foo") == "http://example.com/foo"

@@ -34,8 +34,15 @@ _TRAILING_PUNCT = ".,!?;:'\""
 _TRACKING_PARAM_KEYS = ("utm_", "fbclid", "gclid", "igshid", "ref", "si")
 
 
+def ensure_protocol(url: str) -> str:
+    """Prepend https:// to a known URL string if it lacks a protocol."""
+    if not url.startswith(("http://", "https://")):
+        return f"https://{url}"
+    return url
+
+
 def prefix_bare_urls(text: str) -> str:
-    """Prepend https:// to bare www. URLs so Discord auto-links them."""
+    """Prepend https:// to bare www. URLs in free text so Discord auto-links them."""
     return _BARE_WWW_RE.sub(r"https://\1", text)
 
 
