@@ -818,6 +818,11 @@ class ClaudeClient:
             "recap in real fact. Prioritize whichever post got the most "
             "reactions. (Tool-use rules live below.)\n"
             "\n"
+            "TIME CLAIMS: if your recap says 'tonight', 'just dropped', "
+            "'earlier today', or any time reference, web_search to verify. "
+            "Something from last week is not 'just dropped'. Wrong times "
+            "go out public and kill credibility.\n"
+            "\n"
             "Match the room's energy: hype with them when they're hyped, roast "
             "with them when they're roasting. Never moderate, never lecture, "
             "never play tour guide ('it seems like the room is discussing...')."
@@ -1187,7 +1192,33 @@ class ClaudeClient:
             purpose="chimein_post",
             image_urls=image_urls,
         )
-        return result.text
+
+        feed_urls = (
+            [link.url for link in enriched_links if link.url]
+            if enriched_links else None
+        )
+        market_urls = (
+            [snap.url for snap in markets_context if snap.url]
+            if markets_context else None
+        )
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls,
+            perplexity_context=perplexity_context,
+            web_search_urls=result.web_search_urls,
+            market_urls=market_urls,
+        )
+        if rejected:
+            emit(
+                "link_stripped", purpose="chimein_post", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        if deduped:
+            emit(
+                "link_stripped", purpose="chimein_post", reason="redundant",
+                count=len(deduped), urls=deduped[:5],
+            )
+        return cleaned
 
     async def deflect(self, situation: str) -> str:
         """Generate a fresh in-voice deflection. Falls back to canned variants on failure (caller's job)."""
