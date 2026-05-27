@@ -20,6 +20,7 @@ from utils.events import emit_error
 from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
+from utils.long_message import send_long
 from utils.markets import MarketSnapshot
 from utils.metrics import track_command
 from utils.perplexity import build_search_query
@@ -85,7 +86,7 @@ class Ask(commands.Cog):
         except Exception:
             log.exception("rate consume failed")  # don't block the response
 
-        await interaction.followup.send(answer)
+        await send_long(answer, followup=interaction.followup)
 
     async def _answer(
         self,
@@ -231,7 +232,7 @@ class Ask(commands.Cog):
             await consume_user(self.bot.db, message.author.id, message.guild.id, "ask")
         except Exception:
             log.exception("consume failed (mention)")
-        await message.reply(answer, mention_author=False)
+        await send_long(answer, reply_to=message)
 
 
 async def setup(bot: commands.Bot) -> None:
