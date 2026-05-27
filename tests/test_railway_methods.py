@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from utils.railway import Deployment, RailwayClient, RailwayError
+from utils.railway import Deployment, LogEntry, RailwayClient, RailwayError
 
 
 @pytest.fixture
@@ -87,6 +87,82 @@ async def test_redeploy_raises_when_response_missing_id(client: RailwayClient) -
         pytest.raises(RailwayError, match="missing id"),
     ):
         await client.redeploy("old-id")
+
+
+# ---- deployment_logs -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_deployment_logs_parses_entries(client: RailwayClient) -> None:
+    fake_data = {
+        "deploymentLogs": [
+            {"timestamp": "2026-05-27T02:36:25Z", "message": "boot", "severity": "info"},
+            {"timestamp": "2026-05-27T02:36:26Z", "message": "ready", "severity": "info"},
+        ]
+    }
+    with patch.object(client, "_gql", AsyncMock(return_value=fake_data)):
+        entries = await client.deployment_logs("dep-1", limit=50)
+    assert len(entries) == 2
+    assert entries[0] == LogEntry(timestamp="2026-05-27T02:36:25Z", message="boot", severity="info")
+
+
+@pytest.mark.asyncio
+async def test_deployment_logs_handles_empty(client: RailwayClient) -> None:
+    with patch.object(client, "_gql", AsyncMock(return_value={"deploymentLogs": []})):
+        assert await client.deployment_logs("dep-1") == []
+
+
+@pytest.mark.asyncio
+async def test_deployment_logs_handles_missing_key(client: RailwayClient) -> None:
+    with patch.object(client, "_gql", AsyncMock(return_value={})):
+        assert await client.deployment_logs("dep-1") == []
+
+
+@pytest.mark.asyncio
+async def test_deployment_logs_passes_filter(client: RailwayClient) -> None:
+    gql = AsyncMock(return_value={"deploymentLogs": []})
+    with patch.object(client, "_gql", gql):
+        await client.deployment_logs("dep-1", limit=20, filter_text="EVENT")
+    variables = gql.call_args.args[1]
+    assert variables["filter"] == "EVENT"
+    assert variables["limit"] == 20
+
+
+@pytest.mark.asyncio
+async def test_deployment_logs_omits_filter_when_none(client: RailwayClient) -> None:
+    gql = AsyncMock(return_value={"deploymentLogs": []})
+    with patch.object(client, "_gql", gql):
+        await client.deployment_logs("dep-1", limit=10)
+    variables = gql.call_args.args[1]
+    assert "filter" not in variables
+
+
+# ---- latest_deployment_id -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_latest_deployment_id_returns_first(client: RailwayClient) -> None:
+    fake_data = {
+        "deployments": {
+            "edges": [
+                {"node": {"id": "latest-dep", "status": "SUCCESS", "createdAt": "t1"}},
+            ]
+        }
+    }
+    with patch.object(client, "_gql", AsyncMock(return_value=fake_data)):
+        assert await client.latest_deployment_id() == "latest-dep"
+
+
+@pytest.mark.asyncio
+async def test_latest_deployment_id_raises_when_empty(client: RailwayClient) -> None:
+    with (
+        patch.object(client, "_gql", AsyncMock(return_value={"deployments": {"edges": []}})),
+        pytest.raises(RailwayError, match="no deployments found"),
+    ):
+        await client.latest_deployment_id()
+
+
+# ---- redeploy (existing) -------------------------------------------------------
 
 
 @pytest.mark.asyncio

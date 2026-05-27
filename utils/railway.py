@@ -32,6 +32,13 @@ class Deployment:
     created_at: str
 
 
+@dataclass(frozen=True)
+class LogEntry:
+    timestamp: str
+    message: str
+    severity: str
+
+
 class RailwayError(RuntimeError):
     """Raised when the Railway API rejects a request or returns malformed data."""
 
@@ -108,6 +115,57 @@ class RailwayClient:
         if not node or not node.get("id"):
             raise RailwayError(f"redeploy response missing id: {data}")
         return str(node["id"])
+
+    async def deployment_logs(
+        self,
+        deployment_id: str,
+        limit: int = 100,
+        filter_text: str | None = None,
+    ) -> list[LogEntry]:
+        """Fetch runtime log entries for a deployment, newest last."""
+        query = """
+        query DeploymentLogs($deploymentId: String!, $limit: Int, $filter: String) {
+          deploymentLogs(deploymentId: $deploymentId, limit: $limit, filter: $filter) {
+            timestamp
+            message
+            severity
+          }
+        }
+        """
+        variables: dict[str, Any] = {"deploymentId": deployment_id, "limit": limit}
+        if filter_text:
+            variables["filter"] = filter_text
+        data = await self._gql(query, variables)
+        raw = data.get("deploymentLogs") or []
+        return [
+            LogEntry(
+                timestamp=e.get("timestamp", ""),
+                message=e.get("message", ""),
+                severity=e.get("severity", ""),
+            )
+            for e in raw
+        ]
+
+    async def latest_deployment_id(self) -> str:
+        """Return the most recent deployment id for this service (any status)."""
+        query = """
+        query Deployments($serviceId: String!, $first: Int!) {
+          deployments(input: { serviceId: $serviceId }, first: $first) {
+            edges {
+              node {
+                id
+                status
+                createdAt
+              }
+            }
+          }
+        }
+        """
+        data = await self._gql(query, {"serviceId": self.service_id, "first": 1})
+        edges = (data.get("deployments") or {}).get("edges") or []
+        if not edges or not edges[0].get("node"):
+            raise RailwayError("no deployments found for this service")
+        return str(edges[0]["node"]["id"])
 
     async def rollback_to_previous(self) -> tuple[Deployment, str]:
         """End-to-end rollback. Returns (target_deployment, new_deployment_id).

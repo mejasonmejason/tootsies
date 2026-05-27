@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import os
 from typing import TYPE_CHECKING, cast
 
 import discord
@@ -114,6 +116,77 @@ class Admin(commands.Cog):
             f"rolling back to the deploy from `{target.created_at}` "
             f"(`{target.id[:8]}` → `{new_id[:8]}`). be back in a minute."
         )
+
+    @app_commands.command(name="logs", description="pull recent railway runtime logs.")
+    @app_commands.describe(
+        lines="number of log lines to fetch (1-500, default 100)",
+        filter="text filter, e.g. 'EVENT' or 'ERROR'",
+    )
+    @track_command("logs")
+    async def logs(
+        self,
+        interaction: discord.Interaction,
+        lines: app_commands.Range[int, 1, 500] = 100,
+        filter: str | None = None,
+    ) -> None:
+        if not await self._mod_gate(interaction):
+            return
+        assert interaction.guild is not None
+
+        cfg = self.bot.config
+        if not cfg.railway_api_token:
+            await interaction.response.send_message(
+                "no `RAILWAY_API_TOKEN` set. can't pull logs from here.",
+                ephemeral=True,
+            )
+            return
+        if not cfg.railway_service_id:
+            await interaction.response.send_message(
+                "no `RAILWAY_SERVICE_ID` set.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(thinking=True)
+        client = RailwayClient(cfg.railway_api_token, cfg.railway_service_id)
+        try:
+            dep_id = os.environ.get("RAILWAY_DEPLOYMENT_ID")
+            if not dep_id:
+                dep_id = await client.latest_deployment_id()
+            entries = await client.deployment_logs(dep_id, limit=lines, filter_text=filter)
+        except RailwayError as exc:
+            log.warning("railway logs fetch failed: %s", exc)
+            emit_error(
+                source="logs", exc=exc, recoverable=True,
+                guild_id=interaction.guild.id, user_id=interaction.user.id,
+            )
+            await interaction.followup.send(f"couldn't pull logs: {exc}")
+            return
+        except Exception as exc:
+            log.exception("railway logs fetch crashed")
+            emit_error(
+                source="logs", exc=exc, recoverable=False,
+                guild_id=interaction.guild.id, user_id=interaction.user.id,
+            )
+            await interaction.followup.send(voice.pick(voice.DB_ERROR))
+            return
+
+        if not entries:
+            await interaction.followup.send("no log entries found.")
+            return
+
+        formatted = "\n".join(
+            f"[{e.timestamp[:19]}] [{e.severity}] {e.message}" for e in entries
+        )
+
+        if len(formatted) <= 1900:
+            await interaction.followup.send(f"```\n{formatted}\n```")
+        else:
+            buf = io.BytesIO(formatted.encode())
+            await interaction.followup.send(
+                f"{len(entries)} log lines (too long for chat, attached).",
+                file=discord.File(buf, filename="railway_logs.txt"),
+            )
 
     async def _mod_gate(self, interaction: discord.Interaction) -> bool:
         if not await require_configured(interaction, self.bot.db):
