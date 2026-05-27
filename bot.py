@@ -43,6 +43,7 @@ COGS = [
     "cogs.settings",
     "cogs.help",
     "cogs.chimein",
+    "cogs.music",
 ]
 
 
@@ -210,7 +211,8 @@ class TootsiesBot(commands.Bot):
             await self.db.prune_discourse()
             await self.db.prune_command_metrics()
             await self.db.prune_chimein_history()
-            log.info("pruned old audit + discourse + command_metrics + chimein_history")
+            await self.db.prune_music_history()
+            log.info("pruned old audit + discourse + command_metrics + chimein_history + music_history")
         except Exception:
             log.exception("prune failed")
 
@@ -252,6 +254,8 @@ async def _main() -> None:
             await bot.markets.kalshi.stop_series_refresh_loop()
             await close_link_enrich_session()
             await close_markets_session()
+            from utils.apple_music import close_session as close_apple_music_session
+            await close_apple_music_session()
             await bot.db.close()
 
     bot_task = asyncio.create_task(runner())

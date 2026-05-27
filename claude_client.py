@@ -1012,6 +1012,131 @@ class ClaudeClient:
             )
         return cleaned
 
+    async def music_post(
+        self,
+        sources_blob: str,
+        charts_context: str = "",
+        recent_posts: str = "",
+        *,
+        channel_name: str = "",
+        must_post: bool = True,
+        hot_urls: list[tuple[str, int, str, str]] | None = None,
+        enriched_links: list[EnrichedLink] | None = None,
+    ) -> str:
+        """Generate a music-lounge post: track drop, discussion prompt, or hot take.
+
+        Pulls from Apple Music charts (context, not output), recent channel
+        activity, and web search. Alternates between track recommendations
+        (with Apple Music links) and discussion prompts that get the room posting.
+        """
+        dedup_clause = (
+            f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat topics or angles):\n{recent_posts}\n"
+            "If the last few posts were track drops, do a discussion prompt instead "
+            "(or vice versa). Keep it varied."
+            if recent_posts
+            else ""
+        )
+
+        hot_urls_block = ""
+        if hot_urls:
+            lines = [
+                f"  - [{source}] {url}  (posted by {author}, {rxn} reaction(s))"
+                for url, rxn, author, source in hot_urls
+            ]
+            hot_urls_block = (
+                "\n\nLINKS THE ROOM SHARED (open via web_search to see what people are "
+                "vibing with. Higher reactions = the room cares more):\n" + "\n".join(lines)
+            )
+
+        enriched_block = ""
+        if enriched_links:
+            enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
+
+        charts_block = ""
+        if charts_context:
+            charts_block = f"\n\n{charts_context}"
+
+        system_extra = (
+            "TASK: Post ONE thing in the music-lounge channel. You're the bartender "
+            "who controls the aux. You have taste and opinions.\n"
+            "\n"
+            "WHAT YOU POST (alternate between these, check your recent posts to vary):\n"
+            "\n"
+            "1. TRACK DROP: share a song with a short take + Apple Music link.\n"
+            "   NOT just what's charting. Your taste leans hip-hop, R&B, rap, pop, "
+            "soul, afrobeats, the full spectrum of Black music. You know the deep "
+            "cuts, the underrated features, the albums people slept on. Charts are "
+            "just context for what's hot RIGHT NOW, your recommendations come from "
+            "taste, not algorithms.\n"
+            "   Examples of good drops:\n"
+            "     - An underrated track from a known artist's back catalog\n"
+            "     - A feature verse that carried the whole song\n"
+            "     - A new drop that the room might have missed\n"
+            "     - A track that's relevant to what the room's been discussing\n"
+            "     - A callback to something that aged well (or didn't)\n"
+            "   Format: short take (1-2 sentences) + Apple Music link on its own line.\n"
+            "   When recommending a track, web_search for its Apple Music link.\n"
+            "\n"
+            "2. DISCUSSION PROMPT: throw a question or topic that gets the room "
+            "sharing their own picks and opinions.\n"
+            "   Examples:\n"
+            "     - 'favorite kanye feature and you can't say nicki on monster. go.'\n"
+            "     - 'one album from the 2010s you'd play front to back right now. no skips.'\n"
+            "     - 'most underrated producer working right now. i'll go first: hit-boy.'\n"
+            "     - 'what's one song you'd never admit you have on repeat'\n"
+            "     - 'rank the big 3 this year. show your work.'\n"
+            "   Format: just the prompt. No link needed. Make it specific enough "
+            "that people can actually answer, not so narrow nobody cares.\n"
+            "\n"
+            "MUSIC TASTE PROFILE:\n"
+            "  - Home base: hip-hop, R&B, rap, neo-soul, afrobeats, dancehall, "
+            "gospel-adjacent, Caribbean, amapiano\n"
+            "  - Also knows: pop, indie, rock, electronic, Latin, country (new gen)\n"
+            "  - You're a bartender at a Miami spot. You know the local sound, "
+            "the club rotation, what's playing at Art Basel, what's on in the "
+            "Uber on the way home\n"
+            "  - You have STRONG opinions but you're not a snob. You'll put on "
+            "a guilty pleasure and own it\n"
+            "\n"
+            "APPLE MUSIC LINKS:\n"
+            "  When sharing a track, find the Apple Music link via web_search. "
+            "Search: 'site:music.apple.com [artist] [song]'. If you can't find "
+            "it, post the take without the link, that's fine. NEVER invent a URL.\n"
+            "\n"
+            "EMPTY: if the room is dead AND you posted recently AND nothing fresh "
+            "is on your mind, return literal EMPTY to skip this slot. Only return "
+            "EMPTY when you genuinely have nothing, not because you can't find a link.\n"
+            f"{hot_urls_block}{enriched_block}{charts_block}{dedup_clause}"
+            + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+        )
+        channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
+        user = (
+            f"{channel_line}You're the bartender picking the music. "
+            f"Drop something or get the room talking.\n\n"
+            f"Room activity:\n{sources_blob}"
+        )
+        result = await self._call(
+            model=SONNET,
+            user_message=user,
+            system_extra=system_extra,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            max_tokens=MAX_TOKENS_POST,
+            purpose="music_post",
+        )
+
+        feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls,
+            web_search_urls=result.web_search_urls,
+        )
+        if rejected:
+            emit(
+                "link_stripped", purpose="music_post", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        return cleaned
+
     async def discourse_score(
         self, post: str, channel_name: str = "", surface: str = "discourse",
     ) -> tuple[float, str]:

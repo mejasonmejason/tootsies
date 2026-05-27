@@ -79,6 +79,13 @@ DISCOURSE_FALLBACK = [
     "Who's getting Verzuz'd next. I'm taking nominations.",
 ]
 
+MUSIC_FALLBACK = [
+    "What's one song you'd never skip no matter how old it gets.",
+    "Name an album you played front to back this week. No skips.",
+    "Best feature verse this year. I'll wait.",
+    "What's your getting-ready song. Don't lie.",
+]
+
 KITCHEN_CLOSED = [
     "Kitchen's closed. Mod call.",
     "No orders right now. Talk to a mod.",

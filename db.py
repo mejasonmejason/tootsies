@@ -239,6 +239,29 @@ CREATE TABLE IF NOT EXISTS discourse_channel_slots (
     PRIMARY KEY (guild_id, channel_id)
 );
 
+-- Music-lounge feature: per-guild channel + slot tracking + post history.
+CREATE TABLE IF NOT EXISTS music_lounge (
+    guild_id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS music_lounge_slots (
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    posts_today INTEGER NOT NULL DEFAULT 0,
+    last_post_at TIMESTAMPTZ,
+    posts_day DATE,
+    PRIMARY KEY (guild_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS music_history (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    topic_summary TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS music_history_guild_ts_idx ON music_history (guild_id, created_at DESC);
+
 -- Migrate legacy discourse_channel setting (single channel) to discourse_channels.
 -- NOT EXISTS guard: once a guild has ANY row in discourse_channels (from this
 -- migration or from /menu), we never re-seed it, so removing a channel via /menu
@@ -851,6 +874,74 @@ class DB:
             "SELECT guild_id FROM servers WHERE configured = TRUE"
         )
         return [r["guild_id"] for r in rows]
+
+    # ---- music lounge -----------------------------------------------------------
+
+    async def set_music_lounge_channel(self, guild_id: int, channel_id: int) -> None:
+        await self._execute(
+            """
+            INSERT INTO music_lounge (guild_id, channel_id) VALUES ($1, $2)
+            ON CONFLICT (guild_id) DO UPDATE SET channel_id = EXCLUDED.channel_id
+            """,
+            guild_id, channel_id,
+        )
+
+    async def get_music_lounge_channel(self, guild_id: int) -> int | None:
+        row = await self._fetchrow(
+            "SELECT channel_id FROM music_lounge WHERE guild_id = $1", guild_id,
+        )
+        return int(row["channel_id"]) if row else None
+
+    async def record_music_slot(self, guild_id: int, channel_id: int, today: date) -> None:
+        await self._execute(
+            """
+            INSERT INTO music_lounge_slots (guild_id, channel_id, posts_today, posts_day, last_post_at)
+            VALUES ($1, $2, 1, $3, NOW())
+            ON CONFLICT (guild_id, channel_id) DO UPDATE SET
+                posts_today = CASE
+                    WHEN music_lounge_slots.posts_day = EXCLUDED.posts_day
+                        THEN music_lounge_slots.posts_today + 1
+                    ELSE 1
+                END,
+                posts_day = EXCLUDED.posts_day,
+                last_post_at = NOW()
+            """,
+            guild_id, channel_id, today,
+        )
+
+    async def get_music_slot(
+        self, guild_id: int, channel_id: int,
+    ) -> tuple[int, datetime | None, date | None]:
+        row = await self._fetchrow(
+            "SELECT posts_today, last_post_at, posts_day FROM music_lounge_slots "
+            "WHERE guild_id = $1 AND channel_id = $2",
+            guild_id, channel_id,
+        )
+        if not row:
+            return (0, None, None)
+        return (row["posts_today"], row["last_post_at"], row["posts_day"])
+
+    async def add_music_history(self, guild_id: int, summary: str) -> None:
+        await self._execute(
+            "INSERT INTO music_history (guild_id, topic_summary) VALUES ($1, $2)",
+            guild_id, summary,
+        )
+
+    async def recent_music_history(self, guild_id: int, limit: int = 15) -> list[str]:
+        rows = await self._fetch(
+            """
+            SELECT topic_summary FROM music_history
+            WHERE guild_id = $1 AND created_at > NOW() - INTERVAL '72 hours'
+            ORDER BY created_at DESC LIMIT $2
+            """,
+            guild_id, limit,
+        )
+        return [r["topic_summary"] for r in rows]
+
+    async def prune_music_history(self) -> None:
+        await self._execute(
+            "DELETE FROM music_history WHERE created_at < NOW() - INTERVAL '72 hours'"
+        )
 
 
 def _row_to_order(row: Any) -> Order:

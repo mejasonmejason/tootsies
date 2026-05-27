@@ -154,6 +154,7 @@ _SOURCE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Bluesky",    ("bsky.app", "fxbsky.app")),
     ("YouTube",    ("youtube.com", "youtu.be")),
     ("Reddit",     ("reddit.com", "old.reddit.com", "rxddit.com", "redd.it")),
+    ("Apple Music", ("music.apple.com",)),
     ("Spotify",    ("open.spotify.com", "spotify.link")),
     ("SoundCloud", ("soundcloud.com",)),
     ("Twitch",     ("twitch.tv", "clips.twitch.tv")),
