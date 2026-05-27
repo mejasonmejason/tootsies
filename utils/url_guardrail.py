@@ -21,6 +21,7 @@ a real link) cost more than false negatives (letting a near-miss through).
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 # Match http(s)://... URLs in free text. Stops at whitespace, brackets/parens,
 # quotes, and angle brackets. Trailing punctuation is trimmed separately in
@@ -36,7 +37,7 @@ _TRACKING_PARAM_KEYS = ("utm_", "fbclid", "gclid", "igshid", "ref", "si")
 
 def ensure_protocol(url: str) -> str:
     """Prepend https:// to a known URL string if it lacks a protocol."""
-    if not url.startswith(("http://", "https://")):
+    if not urlparse(url).scheme:
         return f"https://{url}"
     return url
 
