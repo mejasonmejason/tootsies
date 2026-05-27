@@ -532,7 +532,7 @@ class ClaudeClient:
                             item_url = item.get("url")
                         if isinstance(item_url, str) and item_url:
                             web_search_urls.append(item_url)
-        text = "".join(text_parts).strip()
+        text = " ".join(text_parts).strip()
 
         # Truncated output preview for the log-monitor / dashboards. The full
         # output is public (it's what the user/channel saw), so logging a
