@@ -24,6 +24,7 @@ from typing import Any
 import aiohttp
 
 from utils.events import emit, emit_error
+from utils.url_guardrail import prefix_bare_urls
 
 log = logging.getLogger(__name__)
 
@@ -123,15 +124,12 @@ class PerplexityClient:
                         sr["url"] for sr in raw_results
                         if isinstance(sr, dict) and isinstance(sr.get("url"), str)
                     ]
-            citation_urls = [
-                u if u.startswith(("http://", "https://")) else f"https://{u}"
-                for u in citation_urls
-            ]
             if citation_urls and text:
-                sources_lines = "\n".join(
+                sources_block = "\n".join(
                     f"  [{i + 1}] {url}" for i, url in enumerate(citation_urls[:10])
                 )
-                text = f"{text}\n\nSOURCES:\n{sources_lines}"
+                sources_block = prefix_bare_urls(sources_block)
+                text = f"{text}\n\nSOURCES:\n{sources_block}"
 
             emit(
                 f"pplx_{purpose}",
