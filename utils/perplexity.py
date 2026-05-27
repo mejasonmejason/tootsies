@@ -123,6 +123,10 @@ class PerplexityClient:
                         sr["url"] for sr in raw_results
                         if isinstance(sr, dict) and isinstance(sr.get("url"), str)
                     ]
+            citation_urls = [
+                u if u.startswith(("http://", "https://")) else f"https://{u}"
+                for u in citation_urls
+            ]
             if citation_urls and text:
                 sources_lines = "\n".join(
                     f"  [{i + 1}] {url}" for i, url in enumerate(citation_urls[:10])

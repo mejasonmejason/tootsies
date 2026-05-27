@@ -29,8 +29,14 @@ import re
 # rather than reinventing per-module. Conservative bracket-stopping handles
 # Discord's common <URL> / (URL) / [URL] wrappers correctly.
 URL_RE = re.compile(r"https?://[^\s<>\"'()\[\]{}]+")
+_BARE_WWW_RE = re.compile(r"(?<![/\w])(www\.[^\s<>\"'()\[\]{}]+)")
 _TRAILING_PUNCT = ".,!?;:'\""
 _TRACKING_PARAM_KEYS = ("utm_", "fbclid", "gclid", "igshid", "ref", "si")
+
+
+def prefix_bare_urls(text: str) -> str:
+    """Prepend https:// to bare www. URLs so Discord auto-links them."""
+    return _BARE_WWW_RE.sub(r"https://\1", text)
 
 
 def _strip_trailing_punct(url: str) -> str:
@@ -149,10 +155,11 @@ def enforce_source_links(
 
     Returns (cleaned_text, rejected, deduped). Empty input lists are fine.
     """
+    text = prefix_bare_urls(text)
     allowlist: list[str] = []
     for src in (feed_urls, web_search_urls, recently_seen_urls, market_urls):
         if src:
             allowlist.extend(src)
     if perplexity_context:
-        allowlist.extend(extract_urls(perplexity_context))
+        allowlist.extend(extract_urls(prefix_bare_urls(perplexity_context)))
     return enforce_allowlist(text, allowlist, recently_seen=recently_seen_urls)

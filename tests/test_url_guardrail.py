@@ -7,6 +7,7 @@ from utils.url_guardrail import (
     enforce_source_links,
     extract_urls,
     normalize,
+    prefix_bare_urls,
 )
 
 # ---- normalize ----------------------------------------------------------------
@@ -309,5 +310,59 @@ def test_source_links_market_urls_none_or_empty_no_change():
     )
     assert cleaned_none == cleaned_empty
     assert rejected_none == rejected_empty == ["https://hallucinated.example/x"]
+
+
+# ---- prefix_bare_urls ---------------------------------------------------------
+
+
+def test_prefix_bare_urls_adds_https():
+    text = "check this www.scrippsnews.com/entertainment/article"
+    assert prefix_bare_urls(text) == (
+        "check this https://www.scrippsnews.com/entertainment/article"
+    )
+
+
+def test_prefix_bare_urls_ignores_already_prefixed():
+    text = "check https://www.example.com/foo"
+    assert prefix_bare_urls(text) == text
+
+
+def test_prefix_bare_urls_multiple():
+    text = "www.a.com/x and www.b.com/y"
+    result = prefix_bare_urls(text)
+    assert "https://www.a.com/x" in result
+    assert "https://www.b.com/y" in result
+
+
+def test_prefix_bare_urls_start_of_text():
+    text = "www.example.com/path"
+    assert prefix_bare_urls(text) == "https://www.example.com/path"
+
+
+# ---- enforce_source_links with bare URLs --------------------------------------
+
+
+def test_source_links_bare_www_url_gets_prefixed_and_allowed():
+    """A bare www URL in the output is prefixed with https:// and matched
+    against the allowlist, so it passes through clickable."""
+    text = "court tossed it. www.scrippsnews.com/article"
+    pplx_context = "SOURCES:\n  [1] https://www.scrippsnews.com/article"
+    cleaned, rejected, _ = enforce_source_links(
+        text, perplexity_context=pplx_context,
+    )
+    assert "https://www.scrippsnews.com/article" in cleaned
+    assert rejected == []
+
+
+def test_source_links_bare_www_in_perplexity_context():
+    """If Perplexity context itself has bare www URLs, they still get
+    extracted and added to the allowlist."""
+    text = "take. https://www.example.com/story"
+    pplx_context = "SOURCES:\n  [1] www.example.com/story"
+    cleaned, rejected, _ = enforce_source_links(
+        text, perplexity_context=pplx_context,
+    )
+    assert "https://www.example.com/story" in cleaned
+    assert rejected == []
 
 

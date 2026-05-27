@@ -150,3 +150,25 @@ async def test_close_session(client: PerplexityClient):
 
 async def test_close_no_session(client: PerplexityClient):
     await client.close()  # should not raise
+
+
+async def test_search_normalizes_bare_citation_urls(client: PerplexityClient):
+    """Citation URLs without a protocol get https:// prepended."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={
+        "choices": [{"message": {"content": "Court tossed it"}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        "citations": ["www.scrippsnews.com/entertainment/article"],
+    })
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = AsyncMock()
+    mock_session.post = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+
+    client._session = mock_session
+    result = await client.search("drake lawsuit", purpose="ask")
+    assert result is not None
+    assert "https://www.scrippsnews.com/entertainment/article" in result
