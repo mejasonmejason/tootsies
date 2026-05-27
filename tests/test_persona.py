@@ -193,7 +193,7 @@ def test_max_tokens_uses_shared_constants_not_magic_numbers() -> None:
         "ask": "MAX_TOKENS_REPLY",
         "recap": "MAX_TOKENS_REPLY",
         "discourse": "MAX_TOKENS_POST",
-        "chimein_post": "MAX_TOKENS_REPLY",
+        "chimein_post": "MAX_TOKENS_POST",
         "deflect": "MAX_TOKENS_DEFLECT",
     }
     for name, constant in expected_constant.items():

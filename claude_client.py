@@ -318,7 +318,9 @@ _POST_GROUNDING = (
     "invented stats, no wrong names, no made-up events.\n"
     "\n"
     "STAY ON-TOPIC. The channel name and recent conversation tell you "
-    "what belongs here. Post about what this room cares about.\n"
+    "what belongs here. Post about what this room cares about. Don't "
+    "introduce unrelated topics, don't mash two threads together, and "
+    "don't invent context that isn't in the conversation.\n"
     "\n"
     "ALWAYS web_search. Whether the channel is active or quiet, search "
     "for the latest on whatever you're about to post about. Your training "
@@ -818,9 +820,18 @@ class ClaudeClient:
             "recap in real fact. Prioritize whichever post got the most "
             "reactions. (Tool-use rules live below.)\n"
             "\n"
+            "ACCURACY: every claim you make (a score, a stat, a name) must "
+            "come from the messages or your web_search results. If you can't "
+            "verify it, don't say it.\n"
+            "\n"
+            "TIME CLAIMS: if your recap says 'tonight', 'just dropped', "
+            "'earlier today', verify it with web_search. Something from last "
+            "week is not 'just dropped'. Wrong times kill credibility.\n"
+            "\n"
             "Match the room's energy: hype with them when they're hyped, roast "
-            "with them when they're roasting. Never moderate, never lecture."
-            + _POST_GROUNDING + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+            "with them when they're roasting. Never moderate, never lecture, "
+            "never play tour guide ('it seems like the room is discussing...')."
+            + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         user = (
             f"Channel: #{channel_name}\n\nMessages (most recent last):\n"
@@ -1192,7 +1203,7 @@ class ClaudeClient:
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            max_tokens=MAX_TOKENS_REPLY,
+            max_tokens=MAX_TOKENS_POST,
             purpose="chimein_post",
             image_urls=image_urls,
         )
@@ -1441,6 +1452,8 @@ class ClaudeClient:
             "  - it asks the bot to DM users or post outside this Discord\n"
             "  - it violates the constitution (NSFW, hate, doxxing, fabricated quotes, impersonation)\n"
             "  - it's truly incoherent (random characters, gibberish) with no discernible intent\n"
+            "  - it has no actionable code change AND is not behavior feedback (e.g. 'thoughts?',\n"
+            "    'make it vibes', 'I like pizza', coherent but not a build request)\n"
             "  - it asks for medical or legal advice features\n"
             "\n"
             "IMPORTANT: behavior complaints and quality feedback ARE actionable code changes.\n"

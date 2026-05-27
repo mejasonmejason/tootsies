@@ -390,6 +390,7 @@ class ChimeIn(commands.Cog):
             guild_id=guild_id, channel_id=channel_id,
             score=score, vibe=vibe, hook=hook[:200],
             mood=str(schedule.mood),
+            quality_score=quality_score, quality_reason=quality_reason,
         )
 
 
