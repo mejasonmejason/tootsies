@@ -361,13 +361,11 @@ _POST_GROUNDING = (
 # /recap was at default 400). New surfaces pick one of these categories;
 # don't pass a bespoke max_tokens.
 
-# Replies and recaps: tweet-length target, ~600 char ceiling (150 tokens).
-# Bumped from 100 -> 150 after live Discord showed responses with markets
-# context (paraphrase + take + cited URL) hitting max_tokens and truncating
-# mid-sentence. Persona still says "aim tweet length" so most replies stay
-# under 200 chars; the extra 50 tokens is headroom for the URL on the rare
-# response that needs one.
-MAX_TOKENS_REPLY = 150
+# Replies and recaps: persona keeps most replies tweet-length. Bumped
+# 100 -> 150 -> 400 after list-style answers ("list all 13 MJ #1s") hit
+# max_tokens mid-list. 400 tokens tops out around 1600 chars, well under
+# Discord's 2000-char limit. Persona guidance still aims for tweet length.
+MAX_TOKENS_REPLY = 400
 
 # Output-to-room posts: same cap as replies (150 tokens). The take targets
 # 80-200 chars, plus a trailing source URL. Matches MAX_TOKENS_REPLY so
