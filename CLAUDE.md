@@ -43,7 +43,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 - `recap.py`, `/recap period:[1h|today]`
 - `discourse.py`, `/discourse category:` (manual posts) + `/discourse mood:` (schedule control) + the mood scheduler background task
 - `order.py`, `/order new|status|retry|cancel`. Pre-flight sanity check, one-at-a-time enforcement, pipeline-red blocking. Mod-only via `_mod_gate`.
-- `music.py`, `/music setup` (channel picker) + `/music drop` (manual post) + scheduled music-lounge posts (track drops, discussion prompts). Sources: Apple Music RSS charts + channel activity. Rides on the existing mood schedule.
+- `music.py`, `/music setup` (channel picker) + `/music drop` (manual post) + scheduled music-lounge posts (track recs with Apple Music links). Sources: feed channels (Twitter/social), Perplexity (music news/trends), channel activity, web_search. Links-only channel. Rides on the existing mood schedule.
 - `admin.py`, `/close`, `/open`, `/undo`
 - `settings.py`, `/menu` interactive wizard
 
@@ -57,7 +57,6 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 - `github.py`, `GitHubClient` for filing issues/PRs via the GitHub API
 - `railway.py`, Railway API for `/undo` rollbacks
 - `healthcheck.py`, aiohttp server at `/health`
-- `apple_music.py`, Apple Music RSS chart fetcher (free, no auth), 4-hour cache, hip-hop/pop/R&B genres
 
 ## Protected paths
 
@@ -105,7 +104,6 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `pplx_chimein` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `link_stripped` | claude_client.py (`discourse`, `ask`) | purpose, reason (`hallucinated` \| `redundant`), count, urls |
 | `market_fetch` | utils/markets.py | source (sgo/polymarket/kalshi), query, ok, duration_ms, cache_hit, result_count, error |
-| `apple_music_fetch` | utils/apple_music.py | genre, ok, duration_ms, result_count, error |
 | `music_fallback` | cogs/music.py | guild_id, reason |
 | `music_scored` | cogs/music.py | guild_id, channel_id, score, reason, must_post, post_preview |
 | `music_dedup` | cogs/music.py | guild_id, channel_id, decision, post_preview |

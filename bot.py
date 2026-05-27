@@ -254,8 +254,6 @@ async def _main() -> None:
             await bot.markets.kalshi.stop_series_refresh_loop()
             await close_link_enrich_session()
             await close_markets_session()
-            from utils.apple_music import close_session as close_apple_music_session
-            await close_apple_music_session()
             await bot.db.close()
 
     bot_task = asyncio.create_task(runner())

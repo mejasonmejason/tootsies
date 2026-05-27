@@ -1,17 +1,19 @@
-"""Music-lounge cog: scheduled track drops + discussion prompts.
+"""Music-lounge cog: scheduled track drops to a links-only channel.
 
-Toots posts to a configured music-lounge channel on a schedule:
-  - Track drops: trending or callback pick + a short take
-  - Discussion prompts: opinion questions that invite the room to share
+Toots posts to a configured music-lounge channel on a schedule. Every post
+is a track recommendation with a take + Apple Music link (links-only channel,
+posts without links get deleted).
 
-Sources: Apple Music RSS charts (free, no auth) + recent messages from
-the music-lounge channel itself (what are people sharing/discussing).
+Sources (same pipeline as discourse, music-focused):
+  - Music-lounge channel itself (what are people sharing/vibing with)
+  - Feed channels (Twitter/social feeds for music news, hot takes, drops)
+  - Perplexity search (current music news, new releases, trending topics)
+  - Claude web_search (finding tracks + Apple Music links at call time)
 
 Schedule rides on the existing mood system (chill/yaps/off) with its own
-slot tracking. Posts fewer than discourse (1/day chill, 2/day yaps) to
-feel like a regular, not a playlist bot.
+slot tracking. Posts fewer than discourse (1/day chill, 2/day yaps).
 
-Setup: `/music channel #music-lounge` (mod-only). No /menu row needed.
+Setup: `/music setup` (mod-only channel picker view).
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -29,7 +31,6 @@ from discord.ext import commands, tasks
 
 from models import MoodMode
 from utils import voice
-from utils.apple_music import format_charts_for_prompt, get_charts_for_music_lounge
 from utils.dedup import is_duplicate_of_recent
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_messages
@@ -37,6 +38,7 @@ from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
 from utils.permissions import can_send_in, is_mod
+from utils.perplexity import build_search_query
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -47,7 +49,6 @@ ET = ZoneInfo("America/New_York")
 CHILL_TIMES = [time(14, 0)]
 YAPS_TIMES = [time(11, 0), time(20, 0)]
 
-_SCHEDULED_CHANNEL_GAP_SECONDS = 15
 _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS = 65.0
 MUSIC_SCORE_THRESHOLD = 0.6
 
@@ -113,8 +114,8 @@ class Music(commands.Cog):
         embed = discord.Embed(
             title="music-lounge setup",
             description=(
-                "pick the channel where i'll drop tracks, discussion prompts, "
-                "and hot takes. saves when you pick."
+                "pick the channel where i'll drop tracks and hot takes. "
+                "saves when you pick."
                 + (f"\n\ncurrently: <#{current_id}>" if current_id else "")
             ),
             color=0x9b59b6,
@@ -123,7 +124,7 @@ class Music(commands.Cog):
 
     @music_group.command(
         name="drop",
-        description="drop a track or discussion prompt right now.",
+        description="drop a track recommendation right now.",
     )
     @track_command("music_drop")
     async def music_drop(self, interaction: discord.Interaction) -> None:
@@ -172,48 +173,77 @@ class Music(commands.Cog):
         me = guild.me
         assert me is not None
 
-        # Gather context in parallel: charts, recent channel messages, music history
-        local_coro = recent_messages(
+        sources: list[str] = []
+        all_feed_msgs: list[discord.Message] = []
+
+        # Pull from feed channels tagged with music-related categories
+        feeds = await self.bot.db.get_feed_channels(guild.id)
+        for feed_channel_id, _cat in feeds[:5]:
+            ch = guild.get_channel(feed_channel_id)
+            if isinstance(ch, discord.TextChannel):
+                msgs = await recent_messages(
+                    ch, me, limit=30, within=timedelta(hours=24), include_bots=True,
+                )
+                if msgs:
+                    sources.append(
+                        f"--- #{ch.name} (feed) ---\n"
+                        f"{format_for_prompt(msgs, include_reactions=True)}"
+                    )
+                    all_feed_msgs.extend(msgs)
+
+        # Recent music-lounge channel messages
+        local = await recent_messages(
             channel, me, limit=50, within=timedelta(hours=24), include_bots=True,
         )
-        charts_coro = get_charts_for_music_lounge()
-        history_coro = self.bot.db.recent_music_history(guild.id, limit=15)
-
-        results = await asyncio.gather(
-            local_coro, charts_coro, history_coro,
-            return_exceptions=True,
-        )
-        local = results[0] if not isinstance(results[0], BaseException) else []
-        charts = results[1] if not isinstance(results[1], BaseException) else {}
-        recent_all: list[str] = results[2] if not isinstance(results[2], BaseException) else []
-
-        sources: list[str] = []
         if local:
             sources.append(
                 f"--- #{channel.name} (recent, last 24h) ---\n"
                 f"{format_for_prompt(local, include_reactions=True)}"
             )
+            all_feed_msgs.extend(local)
 
-        feed_hot_urls = hot_urls(local, limit=8) if local else []
+        feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
-        # Enrich music links from the channel
-        enriched_map = {}
-        if feed_hot_urls:
-            enriched_map = await enrich_batch([u for u, _, _, _ in feed_hot_urls])
+        # Run enrichment, Perplexity, and DB history in parallel
+        coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
+
+        pplx_idx = -1
+        pplx = self.bot.perplexity
+        if pplx:
+            pplx_idx = len(coros)
+            coros.append(pplx.search(
+                build_search_query(
+                    "", surface="discourse",
+                    category="hiphop", channel_name=channel.name,
+                ),
+                purpose="music",
+            ))
+
+        db_idx = len(coros)
+        coros.append(self.bot.db.recent_music_history(guild.id, limit=15))
+
+        raw = await asyncio.gather(*coros, return_exceptions=True)
+        enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
+        pplx_result: str | None = (
+            raw[pplx_idx]  # type: ignore[assignment]
+            if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
+        recent_all: list[str] = (
+            raw[db_idx] if not isinstance(raw[db_idx], BaseException) else []  # type: ignore[assignment]
+        )
+
         enriched = [v for v in enriched_map.values() if v is not None]
-
-        charts_blob = format_charts_for_prompt(charts, limit=10) if charts else ""
         sources_blob = "\n\n".join(sources) if sources else "(quiet channel)"
         recent_blob = "\n".join(f"- {topic}" for topic in recent_all)
 
         line = await self.bot.claude.music_post(
             sources_blob=sources_blob,
-            charts_context=charts_blob,
             recent_posts=recent_blob,
             channel_name=channel.name,
             must_post=must_post,
             hot_urls=feed_hot_urls,
             enriched_links=enriched,
+            perplexity_context=pplx_result,
         )
 
         if not line or line.strip().upper() == "EMPTY":
@@ -336,7 +366,6 @@ class Music(commands.Cog):
             guild.id, channel_id,
         )
 
-        # Fresh channel: consume elapsed slots without posting
         if last_post_at is None:
             for _ in range(expected):
                 await self.bot.db.record_music_slot(guild.id, channel_id, today)

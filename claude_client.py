@@ -1015,37 +1015,33 @@ class ClaudeClient:
     async def music_post(
         self,
         sources_blob: str,
-        charts_context: str = "",
         recent_posts: str = "",
         *,
         channel_name: str = "",
         must_post: bool = True,
         hot_urls: list[tuple[str, int, str, str]] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
-        recent_post_types: str = "",
+        perplexity_context: str | None = None,
     ) -> str:
         """Generate a music-lounge post: always a track + take + Apple Music link.
 
         This is a links-only channel. Every post MUST include an Apple Music link
         or it gets deleted. Discussion prompts are woven into the take, not standalone.
+
+        Sources: feed channels (Twitter/social for music news), Perplexity
+        (current music trends/drops), channel activity (what the room is vibing
+        with), and web_search (finding tracks + Apple Music links at call time).
         """
         dedup_clause = (
             f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat artists, songs, or angles):\n"
             f"{recent_posts}\n"
-            "Pick a DIFFERENT artist and song. Don't just pick a different track "
-            "from the same artist you posted last time."
+            "HARD RULE: pick a DIFFERENT artist than any listed above. Don't "
+            "just pick a different track from the same artist or album. If you "
+            "posted Kendrick last time, don't post Kendrick this time. Cast a "
+            "wider net."
             if recent_posts
             else ""
         )
-
-        rotation_clause = ""
-        if recent_post_types:
-            rotation_clause = (
-                f"\n\nRECENT POST STYLE LOG:\n{recent_post_types}\n"
-                "Vary your approach. If the last few were pure recommendations, "
-                "make this one a take + open question. If the last few had questions, "
-                "just drop a track with a sharp take."
-            )
 
         hot_urls_block = ""
         if hot_urls:
@@ -1054,23 +1050,18 @@ class ClaudeClient:
                 for url, rxn, author, source in hot_urls
             ]
             hot_urls_block = (
-                "\n\nLINKS THE ROOM SHARED (open via web_search to see what people are "
-                "vibing with. Higher reactions = the room cares more):\n" + "\n".join(lines)
+                "\n\nLINKS THE ROOM + FEEDS SHARED (open via web_search to see what "
+                "people and music media are talking about. Higher reactions = the room "
+                "cares more):\n" + "\n".join(lines)
             )
 
         enriched_block = ""
         if enriched_links:
             enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
 
-        charts_block = ""
-        if charts_context:
-            charts_block = (
-                f"\n\n{charts_context}\n"
-                "NOTE: Charts are BACKGROUND context only. They tell you what's "
-                "hot so your taste feels current, but do NOT just recommend "
-                "whatever's #1. Your value is the tracks people AREN'T hearing, "
-                "not the ones everyone already knows."
-            )
+        perplexity_block = ""
+        if perplexity_context:
+            perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
 
         system_extra = (
             "TASK: Post a music recommendation in a LINKS-ONLY channel. Every "
@@ -1099,16 +1090,31 @@ class ClaudeClient:
             "i'll start.'\n"
             "  https://music.apple.com/us/album/gnx/1781917843\n"
             "\n"
-            "WHAT TO RECOMMEND (variety is everything):\n"
+            "WHERE TO FIND WHAT TO RECOMMEND:\n"
+            "  Use web_search to discover tracks. Rotate your search angles "
+            "so you don't land on the same stuff every time:\n"
+            "  - 'new hip-hop releases this week' / 'new R&B songs [month] [year]'\n"
+            "  - 'underrated [genre] albums [year]' / 'best deep cuts [artist]'\n"
+            "  - 'best feature verses this year hip-hop'\n"
+            "  - 'trending afrobeats songs' / 'new amapiano tracks'\n"
+            "  - '[artist from the room's recent posts] best songs'\n"
+            "  - 'songs that sampled [classic track]'\n"
+            "  - Music news: new drops, beefs, collabs, album announcements\n"
+            "  The Perplexity context (if attached) has current music news and "
+            "trends. The feed channels have tweets and social posts about music. "
+            "Use what's happening in music media RIGHT NOW to inform your pick, "
+            "then web_search for the Apple Music link.\n"
+            "\n"
+            "WHAT MAKES A GOOD PICK (variety is everything):\n"
+            "  - NOT just what's #1 on the charts. The room already knows that.\n"
             "  - An underrated track from a known artist's back catalog\n"
             "  - A feature verse that carried the whole song\n"
             "  - A new drop the room might have missed\n"
             "  - Something relevant to what the room's been sharing\n"
             "  - A callback to something that aged well (or didn't)\n"
             "  - A deep cut, a guilty pleasure, a sleeper from 5 years ago\n"
-            "  - A track tied to an open question ('best X, i'll start')\n"
-            "  DO NOT just pick whatever's #1 on the charts. The room already "
-            "knows what's charting. Bring them something they don't have.\n"
+            "  - Something tied to current music news (new beef? post the diss "
+            "track. new collab announced? post their best collab so far)\n"
             "\n"
             "MUSIC TASTE PROFILE:\n"
             "  - Home base: hip-hop, R&B, rap, neo-soul, afrobeats, dancehall, "
@@ -1119,7 +1125,7 @@ class ClaudeClient:
             "  - STRONG opinions, not a snob. You'll put on a guilty pleasure "
             "and own it\n"
             "\n"
-            "FINDING THE LINK:\n"
+            "FINDING THE APPLE MUSIC LINK:\n"
             "  web_search for 'site:music.apple.com [artist] [song title]' to "
             "get the Apple Music URL. If the first search misses, try the "
             "artist name + album name. If you genuinely can't find the Apple "
@@ -1129,7 +1135,7 @@ class ClaudeClient:
             "EMPTY: return literal EMPTY only when you've posted recently AND "
             "nothing fresh is on your mind. Never return EMPTY because you "
             "can't find a link, pick a different track instead.\n"
-            f"{hot_urls_block}{enriched_block}{charts_block}{dedup_clause}{rotation_clause}"
+            f"{hot_urls_block}{enriched_block}{perplexity_block}{dedup_clause}"
             + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
@@ -1151,6 +1157,7 @@ class ClaudeClient:
         cleaned, rejected, deduped = enforce_source_links(
             result.text,
             feed_urls=feed_urls,
+            perplexity_context=perplexity_context,
             web_search_urls=result.web_search_urls,
         )
         if rejected:
