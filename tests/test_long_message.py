@@ -1,8 +1,8 @@
-"""Tests for utils.long_message: truncation + see-more button logic."""
+"""Tests for utils.long_message: truncation and safe sending."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -47,24 +47,18 @@ class TestSendLong:
         await send_long("short msg", channel=channel)
         channel.send.assert_awaited_once_with("short msg")
 
-    @patch("utils.long_message.asyncio")
-    async def test_long_message_attaches_view(self, mock_asyncio: MagicMock) -> None:
+    async def test_long_message_truncated(self) -> None:
         followup = AsyncMock()
-        followup.send.return_value = AsyncMock()
-        text = "a\n" * 1500
+        text = "line\n" * 600
         assert len(text) > DISCORD_MAX
 
         await send_long(text, followup=followup)
-        call_kwargs = followup.send.call_args
-        assert "view" in call_kwargs.kwargs
-        sent_text = call_kwargs.args[0]
+        sent_text = followup.send.call_args.args[0]
         assert len(sent_text) <= DISCORD_MAX
 
-    @patch("utils.long_message.asyncio")
-    async def test_long_reply_attaches_view(self, mock_asyncio: MagicMock) -> None:
+    async def test_long_reply_truncated(self) -> None:
         msg = AsyncMock()
         text = "line\n" * 600
         await send_long(text, reply_to=msg)
-        call_kwargs = msg.reply.call_args
-        assert "view" in call_kwargs.kwargs
-        assert call_kwargs.kwargs["mention_author"] is False
+        sent_text = msg.reply.call_args.args[0]
+        assert len(sent_text) <= DISCORD_MAX
