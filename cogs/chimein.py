@@ -63,6 +63,7 @@ ET = ZoneInfo("America/New_York")
 # Buffer must have at least this many messages before we even score it. Below
 # this, we don't have enough signal to know what the room's talking about.
 BUFFER_MIN_FOR_SCORE = 5
+CHIMEIN_QUALITY_THRESHOLD = 0.6
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
@@ -345,6 +346,26 @@ class ChimeIn(commands.Cog):
             emit(
                 "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
                 decision="dedup_gate", vibe=vibe, score=score,
+            )
+            return
+
+        try:
+            quality_score, quality_reason = await self.bot.claude.discourse_score(
+                line, channel_name=channel.name,
+            )
+        except Exception as exc:
+            emit_error(
+                source="chimein_quality_score", exc=exc, recoverable=True,
+                guild_id=guild_id, channel_id=channel_id,
+            )
+            quality_score, quality_reason = 1.0, "score_failed_pass_through"
+
+        if quality_score < CHIMEIN_QUALITY_THRESHOLD:
+            emit(
+                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                decision="quality_gate", vibe=vibe, score=score,
+                quality_score=quality_score, quality_reason=quality_reason,
+                post_preview=line[:120],
             )
             return
 
