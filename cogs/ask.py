@@ -167,10 +167,8 @@ class Ask(commands.Cog):
         me = message.guild.me
         if me is None or not message.mentions:
             return
-        # Must mention only us, and must be a real mention (not the auto-reply ping).
+        # Must mention us, and must be a real mention (not the auto-reply ping).
         if me not in message.mentions:
-            return
-        if any(u.id != me.id for u in message.mentions):
             return
         # If this is a reply, Discord auto-mentions the original author. We need an *explicit*
         # mention beyond that, so check the raw content for our id.
@@ -186,8 +184,13 @@ class Ask(commands.Cog):
         if not await self.bot.db.is_configured(message.guild.id):
             return  # silent before setup
 
-        # Strip the mention itself to get the actual question.
-        question = re.sub(rf"<@!?{me.id}>", "", message.content).strip()
+        # Strip our mention; replace other user mentions with display names.
+        question = re.sub(rf"<@!?{me.id}>", "", message.content)
+        for u in message.mentions:
+            if u.id != me.id:
+                question = question.replace(f"<@{u.id}>", u.display_name)
+                question = question.replace(f"<@!{u.id}>", u.display_name)
+        question = question.strip()
         if not question:
             return
 
