@@ -218,7 +218,7 @@ class MenuView(discord.ui.View):
             value=(
                 "how chatty i am on auto-pilot (US Eastern).\n"
                 "**chill**: scheduled at 12pm + 7pm ET, chime in up to 10/day\n"
-                "**yaps**: scheduled at 9am, 12pm, 3pm, 6pm, 10pm ET, chime in up to 20/day\n"
+                "**yaps**: scheduled at 9am, 12pm, 3pm, 6pm, 10pm ET, chime in uncapped\n"
                 "**off**: silent on both"
             ),
             inline=False,
@@ -462,7 +462,7 @@ class _MoodSelect(discord.ui.Select):
                 ),
                 discord.SelectOption(
                     label="yaps", value="yaps",
-                    description="5 scheduled posts/day, up to 20 chime-ins/day",
+                    description="5 scheduled posts/day, chime-ins uncapped",
                     default=(current_mood == "yaps"),
                 ),
                 discord.SelectOption(

@@ -4,9 +4,8 @@ No commands of its own. Wires into existing settings:
 
   - Listen channel: the guild's `discourse_channel` (set via /menu).
   - On/off + cadence: the mood schedule. mood=off silences, chill is reserved
-    (10/day, 40min cooldown, 0.8 threshold), yaps is chatty (20/day, 20min
-    cooldown, 0.6 threshold). Mirrors the 2:4 ratio scheduled discourse
-    already uses.
+    (10/day, 40min cooldown, 0.8 threshold), yaps is chatty (uncapped, 20min
+    cooldown, 0.6 threshold).
 
 Algorithm (also documented in docs/ALGORITHMS.md):
   - on_message in the discourse channel appends to a per-channel deque (max 50).
@@ -15,7 +14,7 @@ Algorithm (also documented in docs/ALGORITHMS.md):
       * Buffer has >= BUFFER_MIN_FOR_SCORE new messages since last evaluation
       * Outside cooldown (mood-tuned: 40min chill / 20min yaps)
       * Within hours window (9am to 2am ET)
-      * Under daily cap (mood-tuned: 10 chill / 20 yaps)
+      * Under daily cap (mood-tuned: 10 chill / uncapped yaps)
     -> call Haiku to score (score, vibe, hook)
   - Then gate by:
       * vibe not in {vulnerable, catchup, other}
@@ -87,7 +86,7 @@ class _MoodTuning:
 
     __slots__ = ("threshold", "daily_cap", "cooldown")
 
-    def __init__(self, *, threshold: float, daily_cap: int, cooldown: timedelta) -> None:
+    def __init__(self, *, threshold: float, daily_cap: int | None, cooldown: timedelta) -> None:
         self.threshold = threshold
         self.daily_cap = daily_cap
         self.cooldown = cooldown
@@ -100,7 +99,7 @@ MOOD_TUNING: dict[MoodMode, _MoodTuning] = {
         threshold=0.8, daily_cap=10, cooldown=timedelta(minutes=40),
     ),
     MoodMode.YAPS: _MoodTuning(
-        threshold=0.6, daily_cap=20, cooldown=timedelta(minutes=20),
+        threshold=0.6, daily_cap=None, cooldown=timedelta(minutes=20),
     ),
 }
 
@@ -232,15 +231,16 @@ class ChimeIn(commands.Cog):
             )
             return
 
-        # Daily cap (mood-tuned)
-        count_today = await self.bot.db.chimein_count_today(guild_id, channel_id)
-        if count_today >= tuning.daily_cap:
-            emit(
-                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="daily_cap_gate", count_today=count_today,
-                mood=str(schedule.mood),
-            )
-            return
+        # Daily cap (mood-tuned, None = uncapped)
+        if tuning.daily_cap is not None:
+            count_today = await self.bot.db.chimein_count_today(guild_id, channel_id)
+            if count_today >= tuning.daily_cap:
+                emit(
+                    "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                    decision="daily_cap_gate", count_today=count_today,
+                    mood=str(schedule.mood),
+                )
+                return
 
         # ---- Score the buffer --------------------------------------------------
         key = (guild_id, channel_id)

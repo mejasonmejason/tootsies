@@ -63,7 +63,7 @@ class Help(commands.Cog):
                 "when y'all are debating something good. both ride on the mood "
                 "dial mods set in `/menu`:\n"
                 "  · **chill**: scheduled at 12pm + 7pm ET, chime in up to 10/day\n"
-                "  · **yaps**: scheduled at 10am, 2pm, 6pm, 10pm ET, chime in up to 20/day\n"
+                "  · **yaps**: scheduled at 10am, 2pm, 6pm, 10pm ET, chime in uncapped\n"
                 "  · **off**: silent on both\n"
                 "i won't chime in on catch-ups, vulnerable shares, or weekend "
                 "logistics. only when the room's actually cooking."
