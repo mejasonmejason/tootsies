@@ -259,6 +259,47 @@ async def test_recap_uses_sonnet_with_web_search() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recap_strips_hallucinated_urls() -> None:
+    """Recap goes to Discord like ask/discourse, so it gets the same guardrail."""
+    from claude_client import ClaudeResult
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="room cooked.\nhttps://hallucinated.example/x",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.recap(
+            "general", "msg blob",
+            hot_urls=[("https://real.example/a", 5, "alice", "twitter")],
+        )
+    assert "hallucinated" not in out
+    assert out == "room cooked."
+
+
+@pytest.mark.asyncio
+async def test_recap_keeps_hot_url_when_model_quotes_it() -> None:
+    """A URL the room actually posted should survive the recap guardrail."""
+    from claude_client import ClaudeResult
+
+    client = ClaudeClient(api_key="test")
+    result = ClaudeResult(
+        text="that drop's gonna age.\nhttps://real.example/a",
+        stop_reason="end_turn", input_tokens=10, output_tokens=20,
+        web_search_urls=[],
+    )
+    fake = AsyncMock(return_value=result)
+    with patch.object(client, "_call", fake):
+        out = await client.recap(
+            "general", "msg blob",
+            hot_urls=[("https://real.example/a", 5, "alice", "twitter")],
+        )
+    assert "https://real.example/a" in out
+
+
+@pytest.mark.asyncio
 async def test_discourse_uses_sonnet() -> None:
     """/discourse needs more judgment so it routes to Sonnet, not Haiku."""
     client = ClaudeClient(api_key="test")

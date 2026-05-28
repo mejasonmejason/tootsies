@@ -468,6 +468,28 @@ async def test_verify_live_links_exception_fails_open():
 
 
 @pytest.mark.asyncio
+async def test_verify_live_links_exception_emits_error_event():
+    """Unexpected exceptions should be surfaced via emit_error, not silently swallowed."""
+    text = "take. https://news.example.com/article"
+    with (
+        patch(
+            "utils.link_enrich.verify_url_alive",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+        patch("utils.events.emit_error") as mock_emit_error,
+    ):
+        cleaned, dead = await verify_live_links(text)
+    assert "news.example.com" in cleaned
+    assert dead == []
+    assert mock_emit_error.call_count == 1
+    call_kwargs = mock_emit_error.call_args.kwargs
+    assert call_kwargs["source"] == "verify_live_links"
+    assert isinstance(call_kwargs["exc"], RuntimeError)
+    assert call_kwargs["recoverable"] is True
+    assert call_kwargs["context"]["url_host"] == "news.example.com"
+
+
+@pytest.mark.asyncio
 async def test_verify_live_links_empty_text():
     cleaned, dead = await verify_live_links("")
     assert cleaned == ""

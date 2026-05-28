@@ -857,7 +857,35 @@ class ClaudeClient:
             purpose="recap",
             image_urls=image_urls,
         )
-        return result.text
+
+        feed_urls: list[str] = []
+        if hot_urls:
+            feed_urls.extend(u for u, _, _, _ in hot_urls)
+        if enriched_links:
+            feed_urls.extend(link.url for link in enriched_links if link.url)
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls or None,
+            perplexity_context=perplexity_context,
+            web_search_urls=result.web_search_urls,
+        )
+        if rejected:
+            emit(
+                "link_stripped", purpose="recap", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        if deduped:
+            emit(
+                "link_stripped", purpose="recap", reason="redundant",
+                count=len(deduped), urls=deduped[:5],
+            )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="recap", reason="dead_link",
+                count=len(dead), urls=dead[:5],
+            )
+        return cleaned
 
     async def discourse(
         self,

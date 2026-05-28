@@ -163,6 +163,19 @@ async def verify_live_links(text: str) -> tuple[str, list[str]]:
     )
     dead: list[str] = []
     for url, alive in zip(urls, results, strict=False):
+        if isinstance(alive, BaseException):
+            # Unexpected escape from verify_url_alive (it catches ClientError
+            # + TimeoutError; anything else means a code bug). Fail-open
+            # (keep the URL) but surface the exception so it doesn't ship
+            # silently.
+            from utils.events import emit_error
+            emit_error(
+                source="verify_live_links",
+                exc=alive,
+                recoverable=True,
+                context={"url_host": urlparse(url).hostname or ""},
+            )
+            continue
         if alive is False:
             dead.append(url)
     if not dead:

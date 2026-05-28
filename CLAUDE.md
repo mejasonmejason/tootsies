@@ -131,7 +131,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `pplx_discourse` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `pplx_recap` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `pplx_chimein` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
-| `link_stripped` | claude_client.py (`discourse`, `ask`, `music_post`, `chimein_post`) | purpose, reason (`hallucinated` \| `redundant` \| `dead_link`), count, urls |
+| `link_stripped` | claude_client.py (`discourse`, `ask`, `recap`, `music_post`, `chimein_post`) | purpose, reason (`hallucinated` \| `redundant` \| `dead_link`), count, urls |
 | `market_fetch` | utils/markets.py | source (sgo/polymarket/kalshi), query, ok, duration_ms, cache_hit, result_count, error |
 | `music_fallback` | cogs/music.py | guild_id, reason |
 | `music_scored` | cogs/music.py | guild_id, channel_id, score, reason, must_post, post_preview |

@@ -75,7 +75,7 @@ Known kinds (keep this list in sync with what's emitted):
                          Fires once per reason: a single response can emit
                          hallucinated + redundant + dead_link events if the
                          model wrote multiple kinds of bad URL.
-      purpose (discourse_manual|discourse_scheduled|ask|music_post|chimein_post),
+      purpose (discourse_manual|discourse_scheduled|ask|recap|music_post|chimein_post),
       reason (hallucinated|redundant|dead_link),
       count, urls (capped at 5)
         hallucinated : URL not in any source (feed/Perplexity/web_search).
