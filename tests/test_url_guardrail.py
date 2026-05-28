@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from utils.url_guardrail import (
     enforce_allowlist,
     enforce_source_links,
@@ -9,6 +13,7 @@ from utils.url_guardrail import (
     extract_urls,
     normalize,
     prefix_bare_urls,
+    verify_live_links,
 )
 
 # ---- normalize ----------------------------------------------------------------
@@ -384,3 +389,75 @@ def test_ensure_protocol_already_https():
 
 def test_ensure_protocol_already_http():
     assert ensure_protocol("http://example.com/foo") == "http://example.com/foo"
+
+
+# ---- verify_live_links --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_no_twitter_urls_skips_network():
+    """Non-Twitter URLs short-circuit without calling fxtwitter."""
+    text = "fire take. https://pitchfork.com/news/some-article"
+    with patch(
+        "utils.link_enrich.verify_twitter_alive",
+        AsyncMock(side_effect=AssertionError("should not be called")),
+    ):
+        cleaned, dead = await verify_live_links(text)
+    assert cleaned == text
+    assert dead == []
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_all_alive_leaves_text_unchanged():
+    text = "the post is fire. https://x.com/foo/status/123"
+    with patch("utils.link_enrich.verify_twitter_alive", AsyncMock(return_value=True)):
+        cleaned, dead = await verify_live_links(text)
+    assert cleaned == text
+    assert dead == []
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_strips_confirmed_dead_url():
+    """Confirmed 404 URL is stripped; surrounding prose stays intact."""
+    text = "the post is fire.\nhttps://fxtwitter.com/DiscussingFilm/status/999"
+    with patch("utils.link_enrich.verify_twitter_alive", AsyncMock(return_value=False)):
+        cleaned, dead = await verify_live_links(text)
+    assert "fxtwitter.com" not in cleaned
+    assert cleaned == "the post is fire."
+    assert dead == ["https://fxtwitter.com/DiscussingFilm/status/999"]
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_strips_only_dead_in_mixed_set():
+    text = (
+        "two takes.\nhttps://x.com/a/status/111\nhttps://x.com/b/status/222"
+    )
+
+    async def fake(url: str) -> bool:
+        return "222" not in url  # 222 is dead, 111 is alive
+
+    with patch("utils.link_enrich.verify_twitter_alive", AsyncMock(side_effect=fake)):
+        cleaned, dead = await verify_live_links(text)
+    assert "111" in cleaned
+    assert "222" not in cleaned
+    assert dead == ["https://x.com/b/status/222"]
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_exception_fails_open():
+    """An exception from the verifier must not strip the URL."""
+    text = "take. https://x.com/foo/status/123"
+    with patch(
+        "utils.link_enrich.verify_twitter_alive",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        cleaned, dead = await verify_live_links(text)
+    assert "status/123" in cleaned
+    assert dead == []
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_empty_text():
+    cleaned, dead = await verify_live_links("")
+    assert cleaned == ""
+    assert dead == []

@@ -73,15 +73,18 @@ Known kinds (keep this list in sync with what's emitted):
       response_chars, error (on failure)
   - link_stripped      : guardrail removed a URL from the model's output.
                          Fires once per reason: a single response can emit
-                         both a hallucinated event and a redundant event if
-                         the model wrote both kinds of bad URL.
-      purpose (discourse_manual|discourse_scheduled|ask),
-      reason (hallucinated|redundant),
+                         hallucinated + redundant + dead_link events if the
+                         model wrote multiple kinds of bad URL.
+      purpose (discourse_manual|discourse_scheduled|ask|music_post|chimein_post),
+      reason (hallucinated|redundant|dead_link),
       count, urls (capped at 5)
         hallucinated : URL not in any source (feed/Perplexity/web_search).
         redundant    : URL is real but the user/room just saw it
                        (recently_seen_urls match) so re-posting would be
                        double-embed clutter.
+        dead_link    : URL came from a real source but fxtwitter returned
+                       404 (tweet was deleted between source-fetch and
+                       post-time). Twitter status URLs only.
   - discourse_scored   : post-generation quality gate for discourse posts
       guild_id, channel_id, score, reason, must_post, category,
       user_id (manual only), post_preview (first 120 chars)

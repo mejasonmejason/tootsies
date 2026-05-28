@@ -30,7 +30,7 @@ from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.markets import MarketSnapshot, format_markets_for_prompt
 from utils.perplexity import format_perplexity_for_prompt
-from utils.url_guardrail import enforce_source_links
+from utils.url_guardrail import enforce_source_links, verify_live_links
 
 log = logging.getLogger(__name__)
 
@@ -741,6 +741,12 @@ class ClaudeClient:
                 "link_stripped", purpose="ask", reason="redundant",
                 count=len(deduped), urls=deduped[:5],
             )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="ask", reason="dead_link",
+                count=len(dead), urls=dead[:5],
+            )
         return cleaned
 
     async def recap(
@@ -1052,6 +1058,12 @@ class ClaudeClient:
                 "link_stripped", purpose=purpose, reason="redundant",
                 count=len(deduped), urls=deduped[:5],
             )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose=purpose, reason="dead_link",
+                count=len(dead), urls=dead[:5],
+            )
         return cleaned
 
     async def music_post(
@@ -1261,6 +1273,12 @@ class ClaudeClient:
             emit(
                 "link_stripped", purpose="music_post", reason="hallucinated",
                 count=len(rejected), urls=rejected[:5],
+            )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="music_post", reason="dead_link",
+                count=len(dead), urls=dead[:5],
             )
         return cleaned
 
@@ -1523,6 +1541,12 @@ class ClaudeClient:
             emit(
                 "link_stripped", purpose="chimein_post", reason="redundant",
                 count=len(deduped), urls=deduped[:5],
+            )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="chimein_post", reason="dead_link",
+                count=len(dead), urls=dead[:5],
             )
         return cleaned
 

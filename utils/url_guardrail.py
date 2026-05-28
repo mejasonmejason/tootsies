@@ -20,6 +20,7 @@ a real link) cost more than false negatives (letting a near-miss through).
 
 from __future__ import annotations
 
+import asyncio
 import re
 from urllib.parse import urlparse
 
@@ -131,6 +132,58 @@ def enforce_allowlist(
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip(), rejected, deduped
+
+
+async def verify_live_links(text: str) -> tuple[str, list[str]]:
+    """Second-pass guardrail: drop Twitter status URLs the platform confirms are dead.
+
+    `enforce_source_links` confirms a URL came from a real upstream source
+    (feed / Perplexity citation / web_search) but can't tell that an
+    upstream-sourced tweet was deleted between source-fetch and post-time.
+    Discord then renders the orphan embed as "Sorry, that post doesn't
+    exist :(" under our prose. This pass calls fxtwitter for each Twitter
+    status URL in `text` and strips the ones it confirms are 404.
+
+    Only Twitter status URLs are checked (that's where the broken-embed
+    problem actually lives). Only confirmed 404s are stripped; all other
+    outcomes pass through so a flaky fxtwitter can't nuke real links.
+
+    Returns (cleaned_text, dead_urls).
+    """
+    # Lazy import: link_enrich pulls aiohttp, keep url_guardrail importable
+    # in sync-only test paths that don't need the network.
+    from utils.link_enrich import detect_platform, verify_twitter_alive
+
+    urls = extract_urls(text)
+    twitter_urls = [u for u in urls if detect_platform(u) == "twitter"]
+    if not twitter_urls:
+        return text, []
+    results = await asyncio.gather(
+        *(verify_twitter_alive(u) for u in twitter_urls),
+        return_exceptions=True,
+    )
+    dead: list[str] = []
+    for url, alive in zip(twitter_urls, results, strict=False):
+        if alive is False:
+            dead.append(url)
+    if not dead:
+        return text, []
+
+    dead_norm = {normalize(u) for u in dead}
+
+    def _replace(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        cleaned = _strip_trailing_punct(raw)
+        tail = raw[len(cleaned):]
+        if normalize(cleaned) in dead_norm:
+            return tail
+        return raw
+
+    text = URL_RE.sub(_replace, text)
+    text = "\n".join(ln.rstrip() for ln in text.split("\n"))
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip(), dead
 
 
 def enforce_source_links(

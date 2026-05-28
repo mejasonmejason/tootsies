@@ -23,6 +23,7 @@ from utils.link_enrich import (
     enrich,
     enrich_batch,
     format_enriched_for_prompt,
+    verify_twitter_alive,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -220,6 +221,102 @@ async def test_enrich_twitter_falls_through_when_fxtwitter_returns_bad_code() ->
     assert link is not None
     assert link.author == "@foo"
     assert any("vxtwitter" in u for u in seen)
+
+
+# ---- verify_twitter_alive -------------------------------------------------------
+
+
+class _FakeResp:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    async def __aenter__(self) -> _FakeResp:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        return None
+
+
+class _FakeSession:
+    def __init__(self, status: int | type[BaseException]) -> None:
+        self._status = status
+
+    def get(self, _url: str) -> Any:
+        if isinstance(self._status, type) and issubclass(self._status, BaseException):
+            raise self._status()
+        return _FakeResp(self._status)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_verify_twitter_alive_non_status_url_short_circuits() -> None:
+    """Profile URLs (no /status/<id>) should pass without hitting the network."""
+    with patch(
+        "utils.link_enrich._get_session",
+        AsyncMock(side_effect=AssertionError("should not hit session")),
+    ):
+        assert await verify_twitter_alive("https://x.com/champagnepapi") is True
+
+
+@pytest.mark.asyncio
+async def test_verify_twitter_alive_returns_true_on_200() -> None:
+    with patch(
+        "utils.link_enrich._get_session",
+        AsyncMock(return_value=_FakeSession(200)),
+    ):
+        assert await verify_twitter_alive("https://x.com/foo/status/12345") is True
+
+
+@pytest.mark.asyncio
+async def test_verify_twitter_alive_returns_false_on_404() -> None:
+    """fxtwitter 404 is the only signal that strips the URL downstream."""
+    with patch(
+        "utils.link_enrich._get_session",
+        AsyncMock(return_value=_FakeSession(404)),
+    ):
+        assert await verify_twitter_alive("https://x.com/foo/status/12345") is False
+
+
+@pytest.mark.asyncio
+async def test_verify_twitter_alive_fail_open_on_5xx() -> None:
+    """Server hiccups must not strip real links."""
+    with patch(
+        "utils.link_enrich._get_session",
+        AsyncMock(return_value=_FakeSession(502)),
+    ):
+        assert await verify_twitter_alive("https://x.com/foo/status/12345") is True
+
+
+@pytest.mark.asyncio
+async def test_verify_twitter_alive_fail_open_on_429() -> None:
+    """Rate-limit response is not proof the tweet is dead."""
+    with patch(
+        "utils.link_enrich._get_session",
+        AsyncMock(return_value=_FakeSession(429)),
+    ):
+        assert await verify_twitter_alive("https://x.com/foo/status/12345") is True
+
+
+@pytest.mark.asyncio
+async def test_verify_twitter_alive_fail_open_on_network_error() -> None:
+    import aiohttp
+
+    with patch(
+        "utils.link_enrich._get_session",
+        AsyncMock(return_value=_FakeSession(aiohttp.ClientError)),
+    ):
+        assert await verify_twitter_alive("https://x.com/foo/status/12345") is True
+
+
+@pytest.mark.asyncio
+async def test_verify_twitter_alive_fail_open_on_timeout() -> None:
+    with patch(
+        "utils.link_enrich._get_session",
+        AsyncMock(return_value=_FakeSession(TimeoutError)),
+    ):
+        assert await verify_twitter_alive("https://x.com/foo/status/12345") is True
+
+
+# ---- enrich_tiktok --------------------------------------------------------------
 
 
 @pytest.mark.asyncio

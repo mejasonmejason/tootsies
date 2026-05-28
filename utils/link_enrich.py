@@ -254,6 +254,33 @@ def _build_twitter_from_vxtwitter(url: str, data: dict[str, Any]) -> EnrichedLin
     )
 
 
+async def verify_twitter_alive(url: str) -> bool:
+    """Return False only when fxtwitter confirms a Twitter status is gone.
+
+    Run after the URL guardrail's allowlist pass: a URL from a real source
+    (feed / Perplexity citation / web_search) can still point at a tweet the
+    author deleted between source-fetch and post-time, which makes Discord
+    render the embed as "Sorry, that post doesn't exist :(". A 404 from
+    api.fxtwitter.com/<id> is a reliable dead signal.
+
+    Fail-open on everything else (200, 401/403 protected, 429 rate limit,
+    5xx, network errors, timeouts, non-status URLs). The cost of a false
+    "dead" verdict is a stripped real link; the cost of a false "alive"
+    verdict is the existing broken-embed behavior, so bias toward leaving
+    links in.
+    """
+    m = _TWITTER_STATUS_RE.search(url)
+    if not m:
+        return True
+    status_id = m.group(1)
+    try:
+        sess = await _get_session()
+        async with sess.get(f"https://api.fxtwitter.com/{status_id}") as resp:
+            return resp.status != 404
+    except (aiohttp.ClientError, TimeoutError):
+        return True
+
+
 async def _enrich_tiktok(url: str) -> EnrichedLink | None:
     """tikwm.com JSON wrapper. Free, no auth, handles vm.tiktok short links too.
 
