@@ -16,6 +16,11 @@ import asyncio
 import os
 import sys
 
+# Allow `python scripts/update_order_status.py` from the repo root: without
+# this, sys.path[0] is `scripts/` and the top-level db/models modules don't
+# resolve. The close-on-deploy workflow invokes us this way.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from db import DB
 from models import OrderStatus
 
