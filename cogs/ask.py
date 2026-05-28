@@ -63,7 +63,8 @@ class Ask(commands.Cog):
             return
 
         # Abuse detection before deferring so we can still use send_message (not followup).
-        if abuse_tracker.is_abusive(question):
+        # Haiku classifier, calibrated conservatively, fail-open on errors.
+        if await self.bot.claude.classify_abuse(question):
             count = abuse_tracker.record_violation(guild_id, user_id)
             if abuse_tracker.is_silenced(guild_id, user_id):
                 await interaction.response.send_message(voice.pick(voice.ABUSE_SILENCED), ephemeral=True)
@@ -225,8 +226,10 @@ class Ask(commands.Cog):
             await message.reply(voice.pick(voice.RATE_LIMIT_HIT), mention_author=False)
             return
 
-        # Abuse detection: record violations; canned quip at warning/silence thresholds.
-        if abuse_tracker.is_abusive(question):
+        # Abuse detection: Haiku classifier, fail-open. Mention warnings are
+        # public replies (mods + room see the call-out); silenced users get
+        # complete silence (no reply) at the on_message entry above.
+        if await self.bot.claude.classify_abuse(question):
             count = abuse_tracker.record_violation(message.guild.id, message.author.id)
             if abuse_tracker.is_silenced(message.guild.id, message.author.id):
                 await message.reply(voice.pick(voice.ABUSE_SILENCED), mention_author=False)

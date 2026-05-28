@@ -7,14 +7,13 @@ Thresholds:
   - WARN_AT        : issue a canned warning, skip Claude call
   - ABUSE_THRESHOLD: silence the user entirely, emit abuse_silenced event
 
-Detection uses simple regex patterns targeting explicit sexual harassment and
-self-harm directives. Deliberately narrow to minimize false positives; Claude's
-constitution already handles milder rudeness.
+The detection itself runs through ClaudeClient.classify_abuse (Haiku);
+this module only owns the counting + silenced-set state. Keeps the
+classifier free to evolve without churning the bookkeeping layer.
 """
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 
 from utils.events import emit
@@ -22,26 +21,9 @@ from utils.events import emit
 ABUSE_THRESHOLD = 3
 WARN_AT = 2
 
-_ABUSE_PATTERNS: list[re.Pattern[str]] = [
-    # self-harm directives aimed at the bot
-    re.compile(r"\bkill\s+yourself\b", re.IGNORECASE),
-    re.compile(r"\bkys\b", re.IGNORECASE),
-    # explicit sexual demands / harassment
-    re.compile(r"\b(suck|blow)\s+(my|this)\s+dick\b", re.IGNORECASE),
-    re.compile(r"\btake\s+(this|my)\s+dick\b", re.IGNORECASE),
-    re.compile(r"\bpull\s+your\s+pants\s+down\b", re.IGNORECASE),
-    re.compile(r"\b(fuck|rape)\s+you\b", re.IGNORECASE),
-    re.compile(r"\bmy\s+(slut|whore)\b", re.IGNORECASE),
-]
-
 # {(guild_id, user_id): violation_count}
 _violations: dict[tuple[int, int], int] = defaultdict(int)
 _silenced: set[tuple[int, int]] = set()
-
-
-def is_abusive(text: str) -> bool:
-    """Return True if text matches any hardcoded abuse pattern."""
-    return any(p.search(text) for p in _ABUSE_PATTERNS)
 
 
 def record_violation(guild_id: int, user_id: int) -> int:

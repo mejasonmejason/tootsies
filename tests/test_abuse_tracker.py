@@ -1,4 +1,8 @@
-"""Unit tests for utils.abuse_tracker: detection patterns, violation counting, silencing."""
+"""Unit tests for utils.abuse_tracker: violation counting, silencing, events.
+
+Detection itself lives on ClaudeClient.classify_abuse (Haiku); covered by
+tests/test_claude_client.py. This file only exercises the bookkeeping layer.
+"""
 
 from __future__ import annotations
 
@@ -18,36 +22,6 @@ def reset_tracker() -> Iterator[None]:
     yield
     abuse_tracker._violations.clear()
     abuse_tracker._silenced.clear()
-
-
-# ---- pattern detection -----------------------------------------------------------
-
-
-def test_is_abusive_self_harm() -> None:
-    assert abuse_tracker.is_abusive("kill yourself")
-    assert abuse_tracker.is_abusive("KILL YOURSELF")
-    assert abuse_tracker.is_abusive("kys")
-    assert abuse_tracker.is_abusive("KYS lmao")
-
-
-def test_is_abusive_sexual_harassment() -> None:
-    assert abuse_tracker.is_abusive("take this dick like a good bot")
-    assert abuse_tracker.is_abusive("pull your pants down")
-    assert abuse_tracker.is_abusive("suck my dick")
-    assert abuse_tracker.is_abusive("blow my dick")
-    assert abuse_tracker.is_abusive("fuck you bot")
-    assert abuse_tracker.is_abusive("rape you")
-    assert abuse_tracker.is_abusive("you're my whore")
-    assert abuse_tracker.is_abusive("you're my slut")
-
-
-def test_is_abusive_normal_messages_not_flagged() -> None:
-    assert not abuse_tracker.is_abusive("who won the bulls game")
-    assert not abuse_tracker.is_abusive("is drake done")
-    assert not abuse_tracker.is_abusive("what's good tonight")
-    assert not abuse_tracker.is_abusive("best pizza in miami")
-    assert not abuse_tracker.is_abusive("you're being weird tho")
-    assert not abuse_tracker.is_abusive("damn cro")
 
 
 # ---- violation counting ----------------------------------------------------------
