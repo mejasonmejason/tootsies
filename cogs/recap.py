@@ -83,12 +83,19 @@ class Recap(commands.Cog):
             return
 
         within = _period_to_window(period.value)
+        # Acknowledge the interaction BEFORE the history fetch. Discord expires
+        # unacknowledged interactions after 3s, and recent_messages() can pull up
+        # to 200 messages over the Discord API; in a busy channel that alone can
+        # blow the 3s window, leaving defer() to fail with NotFound (10062). The
+        # fast checks above (rate limit, channel/perms) stay ahead of the defer
+        # and still answer via interaction.response; everything after the defer
+        # uses interaction.followup, which has a 15-minute window.
+        await interaction.response.defer(thinking=True)
         # /recap looks at more history than /ask, up to 200 over the period.
         # include_bots=True: a /recap should summarize EVERYTHING (webhook posts,
         # feed bots, the works), not just human chatter.
         msgs = await recent_messages(channel, me, limit=200, within=within, include_bots=True)
 
-        await interaction.response.defer(thinking=True)
         try:
             if is_channel_dead(msgs):
                 # Distinguish "quip vs. no info", emit a structured diagnostic AND post
