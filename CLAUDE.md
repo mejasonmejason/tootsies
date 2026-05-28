@@ -6,6 +6,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Tootsies is a Discord bot ("Toots"), a hip city-girl bartender persona. Mods can ship new features by typing `/order <feature>` in Discord; Claude Code Action writes the PR, CI runs, Railway redeploys. The bot is live on Railway and auto-deploys on push to `main`.
 
+## Debugging Railway deploys (do this BEFORE asking the user for logs)
+
+The Claude Code on the web environment for this repo has `RAILWAY_API_TOKEN` and `RAILWAY_SERVICE_ID` set. If the user says "deploys are failing" / "Railway is broken" / asks about the live bot, query the Railway GraphQL API directly at `https://backboard.railway.com/graphql/v2` — don't ask them to paste logs.
+
+```bash
+# 1. Find the project + environment ID
+curl -s -X POST https://backboard.railway.com/graphql/v2 \
+  -H "Authorization: Bearer $RAILWAY_API_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"query\":\"query { service(id: \\\"$RAILWAY_SERVICE_ID\\\") { projectId project { environments { edges { node { id name } } } } } }\"}"
+
+# 2. List recent deployments (status + commit, find FAILED ones)
+curl -s -X POST https://backboard.railway.com/graphql/v2 \
+  -H "Authorization: Bearer $RAILWAY_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"query":"query($p: String!, $e: String!, $s: String!) { deployments(first: 10, input: { projectId: $p, environmentId: $e, serviceId: $s }) { edges { node { id status createdAt meta } } } }","variables":{"p":"<projectId>","e":"<envId>","s":"<serviceId>"}}'
+
+# 3. Get build OR runtime logs for a deployment id
+#    buildLogs:      compile/docker stage (FAILED with no imageDigest → build failure)
+#    deploymentLogs: runtime stdout/stderr (FAILED with imageDigest → crash/healthcheck)
+curl -s -X POST https://backboard.railway.com/graphql/v2 \
+  -H "Authorization: Bearer $RAILWAY_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"query":"query($id: String!) { deploymentLogs(deploymentId: $id, limit: 500) { message severity timestamp } }","variables":{"id":"<deploymentId>"}}'
+```
+
+Quick triage: a FAILED deployment whose `meta` has no `imageDigest` died in `buildLogs`; one with an `imageDigest` died at runtime or healthcheck (use `deploymentLogs`).
+
 ## Commands
 
 ```bash
