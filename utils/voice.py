@@ -50,10 +50,10 @@ DUPLICATE_ORDER = [
 ]
 
 ORDER_IN_FLIGHT = [
-    "One ticket at a time. {ref} is still cooking, give it a sec.",
-    "Line's forming. Check `/order status` for what's ahead of you.",
-    "Kitchen's working on one thing. Hold up.",
-    "I'm not a short-order cook. One at a time.",
+    "Kitchen's full. {count} on the rail already, max is {cap}. Wait for one to clear.",
+    "{count}/{cap} cooking. Line's closed til something's done.",
+    "Rail's stacked, {count} deep. Check `/order status` and try again in a bit.",
+    "Hold up, {count} tickets up already. Cap's {cap}.",
 ]
 
 DB_ERROR = [
@@ -91,5 +91,5 @@ def pick(pool: list[str]) -> str:
     return random.choice(pool)
 
 
-def order_in_flight(reference: str) -> str:
-    return random.choice(ORDER_IN_FLIGHT).format(ref=reference)
+def order_in_flight(count: int, cap: int) -> str:
+    return random.choice(ORDER_IN_FLIGHT).format(count=count, cap=cap)
