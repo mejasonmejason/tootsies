@@ -1,7 +1,8 @@
-"""/ask <question> + @Toots mention handler.
+"""/ask <question> + summon handler (@Toots mentions and direct replies to her).
 
-Mentions and /ask share a counter so heavy mention users can't escape the 20/day cap by
-swapping interfaces.
+A direct reply to one of Toots' own messages summons her with no @-mention
+needed; an explicit mention works too. Both share the /ask counter so heavy
+users can't escape the 20/day cap by swapping interfaces.
 """
 
 from __future__ import annotations
@@ -30,6 +31,29 @@ if TYPE_CHECKING:
     from bot import TootsiesBot
 
 log = logging.getLogger(__name__)
+
+
+def _reply_quote(message: discord.Message, me_id: int) -> str | None:
+    """If `message` is a direct reply to one of *our own* messages, return that
+    message's text (possibly empty). Otherwise None.
+
+    A reply to Toots is treated as a "talking to you" signal, no explicit
+    @-mention required, and an even clearer one than a ping buried mid-sentence.
+    We rely on the gateway-resolved referenced message (Discord includes it in
+    the reply payload) rather than fetching, to avoid an API round-trip on every
+    reply in the server. Replies whose target is deleted or uncached resolve to
+    None and fall through to the normal mention gate.
+    """
+    ref = message.reference
+    if ref is None:
+        return None
+    resolved = getattr(ref, "resolved", None)
+    # A live Message has .author; a DeletedReferencedMessage does not, so this
+    # also filters out replies to since-deleted messages.
+    author = getattr(resolved, "author", None)
+    if author is None or getattr(author, "id", None) != me_id:
+        return None
+    return getattr(resolved, "content", "") or ""
 
 
 class Ask(commands.Cog):
@@ -174,7 +198,12 @@ class Ask(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """@Toots mention handler. Shares the /ask rate limit."""
+        """Summon handler. Shares the /ask rate limit.
+
+        Two ways to get Toots to answer:
+          1. Reply directly to one of her own messages (no @ needed).
+          2. Explicitly @-mention her in the body.
+        """
         if message.author.bot:
             return
         if message.guild is None:
@@ -182,21 +211,32 @@ class Ask(commands.Cog):
         if message.mention_everyone:
             return
         me = message.guild.me
-        if me is None or not message.mentions:
+        if me is None:
             return
-        # Must mention us, and must be a real mention (not the auto-reply ping).
-        if me not in message.mentions:
-            return
-        # If this is a reply, Discord auto-mentions the original author. We need an *explicit*
-        # mention beyond that, so check the raw content for our id.
-        if f"<@{me.id}>" not in message.content and f"<@!{me.id}>" not in message.content:
-            return
-        if message.reference is not None:
-            # Strip the auto-added mention prefix Discord injects on replies, then check again.
-            stripped = re.sub(rf"^<@!?{me.id}>\s*", "", message.content, count=1)
-            if me.mention not in stripped and f"<@{me.id}>" not in stripped and f"<@!{me.id}>" not in stripped:
-                # The only mention was the auto-reply prefix, ignore.
+
+        # Path 1: a direct reply to one of Toots' own messages counts as
+        # addressing her, even with no inline mention.
+        reply_quote = _reply_quote(message, me.id)
+        replying_to_toots = reply_quote is not None
+
+        # Path 2: an explicit @-mention. Only enforce the mention gate when this
+        # isn't already a reply to her.
+        if not replying_to_toots:
+            if not message.mentions or me not in message.mentions:
                 return
+            # Must be a real mention in the body (not just the auto-reply ping).
+            if f"<@{me.id}>" not in message.content and f"<@!{me.id}>" not in message.content:
+                return
+            if message.reference is not None:
+                # Reply to someone *else* that auto-pings us: ignore unless there's
+                # an explicit mention beyond the prefix Discord injects.
+                stripped = re.sub(rf"^<@!?{me.id}>\s*", "", message.content, count=1)
+                if (
+                    me.mention not in stripped
+                    and f"<@{me.id}>" not in stripped
+                    and f"<@!{me.id}>" not in stripped
+                ):
+                    return
 
         if not await self.bot.db.is_configured(message.guild.id):
             return  # silent before setup
@@ -210,6 +250,17 @@ class Ask(commands.Cog):
         question = question.strip()
         if not question:
             return
+
+        # When she's been replied to, prepend what *she* said so "that"/"why"
+        # resolves, since her own messages aren't in the channel context we pull
+        # (recent_messages skips bots). Abuse + empty checks still run on the
+        # user's raw text only.
+        prompt_question = question
+        if replying_to_toots and reply_quote:
+            quoted = re.sub(r"<[^>]+>", "", reply_quote)  # drop any cite/html tags
+            quoted = re.sub(r"\s+", " ", quoted).strip()[:300]
+            if quoted:
+                prompt_question = f'[replying to your earlier message: "{quoted}"] {question}'
 
         # Silenced users: completely silent treatment (no reply).
         if await abuse_tracker.is_silenced(self.bot.db, message.guild.id, message.author.id):
@@ -243,7 +294,7 @@ class Ask(commands.Cog):
 
         async with message.channel.typing():
             try:
-                answer = await self._answer(message.channel, me, question)
+                answer = await self._answer(message.channel, me, prompt_question)
             except Exception as exc:
                 log.exception("mention answer failed")
                 emit_error(
