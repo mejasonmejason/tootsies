@@ -221,16 +221,9 @@ class Music(commands.Cog):
 
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
-        # Run enrichment, Perplexity, and DB history in parallel.
-        # Fetch history first so we can rotate the Perplexity genre.
-        recent_all: list[str] = []
-        try:
-            recent_all = await self.bot.db.recent_music_history(guild.id, limit=15)
-        except Exception:
-            log.exception("music history fetch failed; continuing without")
-
         genre = "music" if local else random.choice(_MUSIC_GENRES)
 
+        # Run enrichment, Perplexity, and DB history in parallel.
         coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
 
         pplx_idx = -1
@@ -245,11 +238,17 @@ class Music(commands.Cog):
                 purpose="music",
             ))
 
+        db_idx = len(coros)
+        coros.append(self.bot.db.recent_music_history(guild.id, limit=15))
+
         raw = await asyncio.gather(*coros, return_exceptions=True)
         enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
         pplx_result: str | None = (
             raw[pplx_idx]  # type: ignore[assignment]
             if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
+        )
+        recent_all: list[str] = (
+            raw[db_idx] if not isinstance(raw[db_idx], BaseException) else []  # type: ignore[assignment]
         )
 
         enriched = [v for v in enriched_map.values() if v is not None]
@@ -322,6 +321,7 @@ class Music(commands.Cog):
                 hot_urls=feed_hot_urls,
                 enriched_links=enriched,
                 perplexity_context=pplx_result,
+                genre_hint=genre,
             )
             if line2 and line2.strip().upper() != "EMPTY" and _has_music_link(line2):
                 return line2
@@ -443,14 +443,14 @@ class Music(commands.Cog):
             log.exception("music scheduled compose failed for channel %s", channel_id)
             line = ""
 
-        await self.bot.db.record_music_slot(guild.id, channel_id, today)
-
         if not line or line.strip().upper() == "EMPTY":
+            await self.bot.db.record_music_slot(guild.id, channel_id, today)
             log.info("music slot skipped for guild %d channel %d", guild.id, channel_id)
             return
 
         recent_all = await self.bot.db.recent_music_history(guild.id, limit=15)
         if is_duplicate_of_recent(line, recent_all):
+            await self.bot.db.record_music_slot(guild.id, channel_id, today)
             emit(
                 "music_dedup",
                 guild_id=guild.id, channel_id=channel_id,
@@ -463,6 +463,7 @@ class Music(commands.Cog):
         try:
             await channel.send(line)
             await self.bot.db.add_music_history(guild.id, line[:200])
+            await self.bot.db.record_music_slot(guild.id, channel_id, today)
         except discord.DiscordException:
             log.exception("music scheduled send failed")
 

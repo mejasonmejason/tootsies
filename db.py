@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS music_channels (
     PRIMARY KEY (guild_id, channel_id)
 );
 
-CREATE TABLE IF NOT EXISTS music_lounge_slots (
+CREATE TABLE IF NOT EXISTS music_slots (
     guild_id BIGINT NOT NULL,
     channel_id BIGINT NOT NULL,
     posts_today INTEGER NOT NULL DEFAULT 0,
@@ -896,12 +896,12 @@ class DB:
     async def record_music_slot(self, guild_id: int, channel_id: int, today: date) -> None:
         await self._execute(
             """
-            INSERT INTO music_lounge_slots (guild_id, channel_id, posts_today, posts_day, last_post_at)
+            INSERT INTO music_slots (guild_id, channel_id, posts_today, posts_day, last_post_at)
             VALUES ($1, $2, 1, $3, NOW())
             ON CONFLICT (guild_id, channel_id) DO UPDATE SET
                 posts_today = CASE
-                    WHEN music_lounge_slots.posts_day = EXCLUDED.posts_day
-                        THEN music_lounge_slots.posts_today + 1
+                    WHEN music_slots.posts_day = EXCLUDED.posts_day
+                        THEN music_slots.posts_today + 1
                     ELSE 1
                 END,
                 posts_day = EXCLUDED.posts_day,
@@ -914,7 +914,7 @@ class DB:
         self, guild_id: int, channel_id: int,
     ) -> tuple[int, datetime | None, date | None]:
         row = await self._fetchrow(
-            "SELECT posts_today, last_post_at, posts_day FROM music_lounge_slots "
+            "SELECT posts_today, last_post_at, posts_day FROM music_slots "
             "WHERE guild_id = $1 AND channel_id = $2",
             guild_id, channel_id,
         )
