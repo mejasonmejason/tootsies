@@ -43,11 +43,10 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
+          # Whitelist gh CLI for PR + issue operations. Without this, Claude
+          # only writes the branch and leaves a "Create PR" link in its
+          # comment instead of opening the PR itself, which leaves /order
+          # status stuck in "Prepping" until somebody opens the PR by hand.
+          # See issue #111 for the failure case.
+          claude_args: '--allowed-tools "Bash(gh pr *),Bash(gh issue *)"'
 
