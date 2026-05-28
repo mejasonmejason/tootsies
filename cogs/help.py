@@ -52,7 +52,8 @@ class Help(commands.Cog):
                 "**`/recap period:<last hour | last 24h | today>`**: what'd "
                 "you miss in here.\n"
                 "**`/discourse category:<pop | sports | cinema | hiphop | nba | "
-                "custom>`**: i drop a discussion starter."
+                "custom>`**: i drop a discussion starter.\n"
+                "**`/music`**: i drop a track rec with a link, right now."
             ),
             inline=False,
         )
@@ -81,8 +82,9 @@ class Help(commands.Cog):
                 "**`/order retry <number>`**: try again on something that "
                 "didn't work.\n"
                 "**`/order cancel <number>`**: call it off.\n"
-                "**`/menu`**: set up my channels, mod roles, mood, where to "
-                "pull news from.\n"
+                "**`/menu`**: set up my channels, mod roles, mood, music, "
+                "where to pull news from.\n"
+                "**`/logs`**: pick the channel for order status + errors.\n"
                 "**`/close` / `/open`**: stop or restart taking `/order` "
                 "requests.\n"
                 "**`/undo`**: if a new feature broke me, roll me back to the "
@@ -95,7 +97,7 @@ class Help(commands.Cog):
             value=(
                 "you get **20 of `/ask` + `@Toots` + `/recap` per day each**.\n"
                 "the server gets **20 `/discourse` + `/order` per day total**.\n"
-                "no caps on `/menu` or `/help` or `/close` / `/open` / `/undo`."
+                "no caps on `/menu` / `/logs` / `/help` / `/close` / `/open` / `/undo`."
             ),
             inline=False,
         )
