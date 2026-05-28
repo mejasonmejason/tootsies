@@ -116,6 +116,10 @@ include full message content (data minimization, per the constitution).
 suffix. Typical queries: count of `event=command` per minute, p95 of `duration_ms`
 where `event=claude_api`, sum of `output_tokens` where `purpose=ask` for cost tracking.
 
+## Branching and PR rules
+
+**Never push directly to `main`.** Even for one-line prompt tweaks or typo fixes, always work on a branch and open a PR. The PR doesn't have to wait for human review — you can merge it yourself once CI passes if the change is small and obvious — but the PR exists so the change has a reviewable diff, runs CI, and can be reverted cleanly. Direct pushes to main skip the safety net.
+
 ## Commit and PR conventions
 
 **Always include a `PREVIEW:` section in commit bodies and PR descriptions when the change is user-facing.** The bot's UI is Discord, so screenshots are awkward, render an ASCII/markdown mock of the relevant surface instead. Reviewers shouldn't have to deploy the change to know what it looks like.
