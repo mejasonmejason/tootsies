@@ -1022,15 +1022,15 @@ class ClaudeClient:
         hot_urls: list[tuple[str, int, str, str]] | None = None,
         enriched_links: list[EnrichedLink] | None = None,
         perplexity_context: str | None = None,
+        genre_hint: str = "",
     ) -> str:
-        """Generate a music-lounge post: always a track + take + Apple Music link.
+        """Generate a music-lounge post: always a track + take + music link.
 
-        This is a links-only channel. Every post MUST include an Apple Music link
-        or it gets deleted. Discussion prompts are woven into the take, not standalone.
+        This is a links-only channel. Every post MUST include an Apple Music
+        or Spotify link or it gets deleted.
 
-        Sources: feed channels (Twitter/social for music news), Perplexity
-        (current music trends/drops), channel activity (what the room is vibing
-        with), and web_search (finding tracks + Apple Music links at call time).
+        `genre_hint` rotates each call (hiphop, rnb, pop, afrobeats, neo-soul)
+        so the bot doesn't default to the same genre every time.
         """
         dedup_clause = (
             f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat artists, songs, or angles):\n"
@@ -1062,6 +1062,22 @@ class ClaudeClient:
         perplexity_block = ""
         if perplexity_context:
             perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
+
+        genre_block = ""
+        if genre_hint:
+            genre_label = {
+                "hiphop": "hip-hop / rap",
+                "rnb": "R&B / soul",
+                "pop": "pop / mainstream",
+                "afrobeats": "afrobeats / amapiano / dancehall",
+                "neo-soul": "neo-soul / gospel-adjacent / alternative R&B",
+            }.get(genre_hint, genre_hint)
+            genre_block = (
+                f"\n\nGENRE LEAN THIS POST: {genre_label}. Lean into this genre "
+                "for your pick this time. You don't have to stay strictly in it, "
+                "but it should be the starting point for your search. This rotates "
+                "each post so you naturally cover different sounds."
+            )
 
         system_extra = (
             "TASK: Post a music recommendation in a LINKS-ONLY channel. Every "
@@ -1139,7 +1155,7 @@ class ClaudeClient:
             "EMPTY: return literal EMPTY only when you've posted recently AND "
             "nothing fresh is on your mind. Never return EMPTY because you "
             "can't find a link, pick a different track instead.\n"
-            f"{hot_urls_block}{enriched_block}{perplexity_block}{dedup_clause}"
+            f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{dedup_clause}"
             + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""

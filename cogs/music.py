@@ -56,6 +56,9 @@ MUSIC_SCORE_THRESHOLD = 0.6
 
 _MUSIC_LINK_HOSTS = ("music.apple.com", "open.spotify.com", "spotify.link")
 
+# Rotate Perplexity search category so she doesn't default to hip-hop every time.
+_MUSIC_GENRES = ["hiphop", "rnb", "pop", "afrobeats", "neo-soul"]
+
 
 def _has_music_link(text: str) -> bool:
     """Check if the text contains a valid Apple Music or Spotify link."""
@@ -217,7 +220,18 @@ class Music(commands.Cog):
 
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
-        # Run enrichment, Perplexity, and DB history in parallel
+        # Run enrichment, Perplexity, and DB history in parallel.
+        # Fetch history first so we can rotate the Perplexity genre.
+        recent_all: list[str] = []
+        try:
+            recent_all = await self.bot.db.recent_music_history(guild.id, limit=15)
+        except Exception:
+            log.exception("music history fetch failed; continuing without")
+
+        # Rotate Perplexity search genre based on how many posts exist,
+        # so consecutive calls naturally hit different genres.
+        genre = _MUSIC_GENRES[len(recent_all) % len(_MUSIC_GENRES)]
+
         coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
 
         pplx_idx = -1
@@ -227,22 +241,16 @@ class Music(commands.Cog):
             coros.append(pplx.search(
                 build_search_query(
                     "", surface="discourse",
-                    category="hiphop", channel_name=channel.name,
+                    category=genre, channel_name=channel.name,
                 ),
                 purpose="music",
             ))
-
-        db_idx = len(coros)
-        coros.append(self.bot.db.recent_music_history(guild.id, limit=15))
 
         raw = await asyncio.gather(*coros, return_exceptions=True)
         enriched_map = raw[0] if not isinstance(raw[0], BaseException) else {}
         pplx_result: str | None = (
             raw[pplx_idx]  # type: ignore[assignment]
             if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
-        )
-        recent_all: list[str] = (
-            raw[db_idx] if not isinstance(raw[db_idx], BaseException) else []  # type: ignore[assignment]
         )
 
         enriched = [v for v in enriched_map.values() if v is not None]
@@ -257,6 +265,7 @@ class Music(commands.Cog):
             hot_urls=feed_hot_urls,
             enriched_links=enriched,
             perplexity_context=pplx_result,
+            genre_hint=genre,
         )
 
         if not line or line.strip().upper() == "EMPTY":
@@ -264,8 +273,11 @@ class Music(commands.Cog):
                 "music_fallback",
                 guild_id=guild.id, reason="claude_returned_empty",
             )
+            # Links-only channel: don't post a linkless fallback quip.
+            # Skip the slot on scheduled posts; on manual /music drop,
+            # tell the user nothing came up.
             if must_post:
-                return voice.pick(voice.MUSIC_FALLBACK)
+                return "nothing's hitting right now. try again in a bit."
             return ""
 
         # Quality gate
