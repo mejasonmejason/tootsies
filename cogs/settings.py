@@ -1,11 +1,13 @@
 """/menu, interactive setup AND current-state view, one command.
 
-Layout (5 rows, Discord's hard cap, all selects with auto-save):
-  row 0: bot-logs channel select
+Layout (5 rows, Discord's hard cap, all selects with auto-save).
+Ordered by importance: mod roles gates every admin command, so it
+comes first; feeds are optional, so they come last.
+  row 0: mod roles select
   row 1: discourse channel select
-  row 2: mod roles select
-  row 3: feed channels select
-  row 4: mood select (chill / yaps / off)
+  row 2: bot-logs channel select
+  row 3: mood select (chill / yaps / off)
+  row 4: feed channels select
 
 Every change saves immediately to the DB, no confirm button. The view
 re-renders the summary embed after each change so the mod sees the
@@ -165,20 +167,20 @@ class MenuView(discord.ui.View):
         # works even if the mod didn't touch any dropdown.
         self.selected: dict[str, object] = dict(prefill)
 
-        self.add_item(_BotLogsSelect(
-            self, _safe_channel_default(guild, prefill.get("bot_logs_channel")),
+        self.add_item(_ModRoleSelect(
+            self, _safe_role_defaults(guild, prefill.get("mod_role_ids")),
         ))
         self.add_item(_DiscourseSelect(
             self, _safe_channel_defaults(guild, prefill.get("discourse_channel_ids")),
         ))
-        self.add_item(_ModRoleSelect(
-            self, _safe_role_defaults(guild, prefill.get("mod_role_ids")),
-        ))
-        self.add_item(_FeedSelect(
-            self, _safe_channel_defaults(guild, prefill.get("feed_channel_ids")),
+        self.add_item(_BotLogsSelect(
+            self, _safe_channel_default(guild, prefill.get("bot_logs_channel")),
         ))
         self.add_item(_MoodSelect(
             self, str(self.selected.get("mood", "chill")),
+        ))
+        self.add_item(_FeedSelect(
+            self, _safe_channel_defaults(guild, prefill.get("feed_channel_ids")),
         ))
         self._refresh_select_defaults()
 
@@ -189,11 +191,11 @@ class MenuView(discord.ui.View):
             title="toots' menu",
             description=(
                 "pick from each dropdown. saves as you go.\n\n"
-                "📊 **bot-logs**: where i post order status + errors\n"
-                "💬 **discourse**: where i post + chime in\n"
                 "👮 **mod roles**: who can boss me around\n"
-                "📰 **feeds**: read-only sources (optional)\n"
-                "😎 **mood**: chill / yaps / off"
+                "💬 **discourse**: where i post + chime in\n"
+                "📊 **bot-logs**: where i post order status + errors\n"
+                "😎 **mood**: chill / yaps / off\n"
+                "📰 **feeds**: read-only sources (optional)"
             ),
             color=0x9b59b6,
         )
@@ -352,12 +354,12 @@ class MenuView(discord.ui.View):
             else ", ".join(f"<#{c}>" for c in feeds)
         )
         return (
-            f"**bot-logs:** {f'<#{bot_logs}>' if bot_logs else '_(pick one)_'}\n"
-            f"**discourse:** {discourse_label}\n"
             f"**mod roles:** "
             f"{', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles)) or '_(pick at least one)_'}\n"
-            f"**feeds:** {feeds_label}\n"
-            f"**mood:** {self.selected.get('mood', 'chill')}"
+            f"**discourse:** {discourse_label}\n"
+            f"**bot-logs:** {f'<#{bot_logs}>' if bot_logs else '_(pick one)_'}\n"
+            f"**mood:** {self.selected.get('mood', 'chill')}\n"
+            f"**feeds:** {feeds_label}"
         )
 
 
@@ -372,7 +374,7 @@ class _BotLogsSelect(discord.ui.ChannelSelect):
     ) -> None:
         super().__init__(
             placeholder=self.LABEL,
-            min_values=1, max_values=1, row=0,
+            min_values=1, max_values=1, row=2,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
         )
@@ -412,7 +414,7 @@ class _ModRoleSelect(discord.ui.RoleSelect):
     ) -> None:
         super().__init__(
             placeholder=self.LABEL,
-            min_values=1, max_values=10, row=2,
+            min_values=1, max_values=10, row=0,
             default_values=defaults,
         )
         self.parent_view = parent
@@ -431,7 +433,7 @@ class _FeedSelect(discord.ui.ChannelSelect):
     ) -> None:
         super().__init__(
             placeholder=self.LABEL,
-            min_values=0, max_values=25, row=3,
+            min_values=0, max_values=25, row=4,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
         )
@@ -453,7 +455,7 @@ class _MoodSelect(discord.ui.Select):
     def __init__(self, parent: MenuView, current_mood: str) -> None:
         super().__init__(
             placeholder=f"😎 mood: {current_mood}",
-            min_values=1, max_values=1, row=4,
+            min_values=1, max_values=1, row=3,
             options=[
                 discord.SelectOption(
                     label="chill", value="chill",
