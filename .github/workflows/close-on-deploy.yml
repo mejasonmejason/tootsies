@@ -1,11 +1,23 @@
-name: Close order issue after deploy
+name: Close order issue on merge
 
+# Closes the order issue as soon as its fix lands on main. We deliberately do
+# NOT poll Railway for deploy success here: Railway is configured to "wait for
+# CI" before deploying, so a job that blocks on the deploy reaching SUCCESS
+# deadlocks (Railway waits for the check-suite, the check-suite waits for the
+# deploy). This job just closes the issue and exits in seconds, so it never
+# gates the deploy.
+#
+# Served-signal semantics: a closed issue now means "fix merged to main"
+# (deploy assumed to follow), not "deploy confirmed". The lazy /order status
+# reconciler reads the closed state to flip orders to SERVED. Deploy failures
+# are surfaced separately via the deploy_event / Railway logs, not by leaving
+# the order open.
 on:
   push:
     branches: [main]
 
 jobs:
-  close-on-deploy:
+  close-on-merge:
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -26,54 +38,12 @@ jobs:
             echo "found=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for Railway deploy
-        if: steps.extract.outputs.found == 'true'
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
-        run: |
-          if [ -z "$RAILWAY_TOKEN" ] || [ -z "$RAILWAY_SERVICE_ID" ]; then
-            echo "::warning::RAILWAY_TOKEN or RAILWAY_SERVICE_ID not set, skipping deploy check."
-            exit 0
-          fi
-
-          echo "Waiting for Railway deploy to succeed..."
-          QUERY='query($serviceId: String!) {
-            deployments(input: { serviceId: $serviceId }, first: 1) {
-              edges { node { id status createdAt } }
-            }
-          }'
-
-          for i in $(seq 1 30); do
-            RESPONSE=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \
-              -H "Authorization: Bearer $RAILWAY_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"query\": \"$(echo $QUERY | tr '\n' ' ')\", \"variables\": {\"serviceId\": \"$RAILWAY_SERVICE_ID\"}}")
-
-            STATUS=$(echo "$RESPONSE" | jq -r '.data.deployments.edges[0].node.status // "UNKNOWN"')
-            echo "Attempt $i/30: deploy status = $STATUS"
-
-            if [ "$STATUS" = "SUCCESS" ]; then
-              echo "Deploy succeeded!"
-              exit 0
-            elif [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
-              echo "::error::Deploy failed with status: $STATUS"
-              exit 1
-            fi
-
-            sleep 20
-          done
-
-          echo "::error::Timed out waiting for Railway deploy (10 min)"
-          exit 1
-        id: deploy
-
       - name: Close the order issue
-        if: steps.extract.outputs.found == 'true' && steps.deploy.outcome == 'success'
+        if: steps.extract.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ steps.extract.outputs.issue }}
         run: |
           gh issue close "$ISSUE" \
             --repo "${{ github.repository }}" \
-            --comment "Deployed to Railway. Order served."
+            --comment "Merged to main — deploying to Railway. Order served."

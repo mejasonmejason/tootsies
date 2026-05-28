@@ -33,7 +33,7 @@ Quick triage: a FAILED deployment whose `meta` has no `imageDigest` died in `bui
 
 ## Order status reconciliation
 
-`/order status` lazy-reconciles in-flight orders against GitHub on every invocation: for any non-terminal row with an `issue_number`, it fetches the issue and flips the row to SERVED if the issue is closed. The close-on-deploy workflow only closes the issue on successful Railway deploy, so a closed issue is a reliable served signal. This replaces the previous out-of-band `scripts/update_order_status.py` flow, which broke whenever the GitHub Actions runner couldn't reach Railway's Postgres host.
+`/order status` lazy-reconciles in-flight orders against GitHub on every invocation: for any non-terminal row with an `issue_number`, it fetches the issue and flips the row to SERVED if the issue is closed. The `close-on-deploy.yml` workflow closes the issue as soon as the fix merges to `main` (deploy assumed to follow), so a closed issue is the served signal. It deliberately does **not** poll Railway for deploy success: Railway is configured to "wait for CI", so a CI job that blocks on the deploy reaching SUCCESS deadlocks (Railway waits for the check-suite, the check-suite waits for the deploy — this is exactly what stranded #125/#127/#126). Deploy failures are surfaced via `deploy_event` / Railway logs, not by holding the order open. This replaces the previous out-of-band `scripts/update_order_status.py` flow, which broke whenever the GitHub Actions runner couldn't reach Railway's Postgres host.
 
 ## Commands
 
