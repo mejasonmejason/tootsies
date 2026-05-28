@@ -229,7 +229,7 @@ class Music(commands.Cog):
         except Exception:
             log.exception("music history fetch failed; continuing without")
 
-        genre = random.choice(_MUSIC_GENRES)
+        genre = "music" if local else random.choice(_MUSIC_GENRES)
 
         coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
 
