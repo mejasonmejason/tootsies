@@ -126,6 +126,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `discourse_fallback` | cogs/discourse.py | guild_id, user_id, category, source_count, recent_topic_count, reason |
 | `discourse_scored` | cogs/discourse.py | guild_id, channel_id, score, reason, must_post, category, user_id, post_preview |
 | `discourse_dedup` | cogs/discourse.py | guild_id, channel_id, decision (`similarity_gate`), post_preview |
+| `discourse_skipped` | cogs/discourse.py | guild_id, channel_id, reason (`rate_limited`/`compose_error`/`empty`) |
 | `link_enrich` | utils/link_enrich.py | platform, url_host, ok, duration_ms, cache_hit |
 | `pplx_ask` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `pplx_discourse` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |

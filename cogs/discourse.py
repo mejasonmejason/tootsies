@@ -421,15 +421,19 @@ class Discourse(commands.Cog):
         guild: discord.Guild,
         channel: discord.TextChannel | discord.Thread,
         channel_id: int,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """Compose, honoring a single retry-after on RateLimitError.
 
         Scheduled posts have no user waiting, so when Anthropic tells us
         "wait N seconds", it's strictly better to wait and post late than
         to skip the slot entirely. One retry only, capped at 65s.
+
+        Returns (line, skip_reason). skip_reason is None on success and
+        "rate_limited" when the slot is dropped after a persistent 429; the
+        caller emits a structured `discourse_skipped` event off it.
         """
         try:
-            return await self._compose(guild, channel, must_post=False)
+            return await self._compose(guild, channel, must_post=False), None
         except anthropic.RateLimitError as exc:
             retry_after = _parse_retry_after_seconds(exc)
             if retry_after is None:
@@ -441,7 +445,7 @@ class Discourse(commands.Cog):
                     source="discourse_scheduled", exc=exc, recoverable=True,
                     guild_id=guild.id, channel_id=channel_id,
                 )
-                return ""
+                return "", "rate_limited"
             wait = min(retry_after, _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS)
             log.info(
                 "scheduled compose 429 for channel %s, retrying in %.1fs (anthropic retry-after)",
@@ -449,7 +453,7 @@ class Discourse(commands.Cog):
             )
             await asyncio.sleep(wait)
             try:
-                return await self._compose(guild, channel, must_post=False)
+                return await self._compose(guild, channel, must_post=False), None
             except anthropic.RateLimitError as exc2:
                 log.info(
                     "scheduled compose still 429 after %.1fs retry for channel %s",
@@ -460,7 +464,7 @@ class Discourse(commands.Cog):
                     guild_id=guild.id, channel_id=channel_id,
                     retried=True, retry_after_seconds=wait,
                 )
-                return ""
+                return "", "rate_limited"
 
     async def _maybe_post_to_channel(
         self,
@@ -493,18 +497,31 @@ class Discourse(commands.Cog):
             return
 
         try:
-            line = await self._compose_with_retry(guild, channel, channel_id)
-        except Exception:
+            line, skip_reason = await self._compose_with_retry(guild, channel, channel_id)
+        except Exception as exc:
             log.exception("scheduled post compose failed for channel %s", channel_id)
-            line = ""
+            emit_error(
+                source="discourse_scheduled", exc=exc, recoverable=False,
+                guild_id=guild.id, channel_id=channel_id,
+            )
+            line, skip_reason = "", "compose_error"
 
         await self.bot.db.record_channel_slot(guild.id, channel_id, today)
         await self.bot.db.record_schedule_post(guild.id, today)
 
         if not line or line.strip().upper() == "EMPTY":
+            # Every dropped scheduled slot emits one structured event so the
+            # log-monitor routine can see it (a 429 / compose crash / empty
+            # generation used to vanish with only a plain log line). reason:
+            # rate_limited | compose_error | empty.
+            reason = skip_reason or "empty"
+            emit(
+                "discourse_skipped",
+                guild_id=guild.id, channel_id=channel_id, reason=reason,
+            )
             log.info(
-                "scheduled slot skipped for guild %d channel %d, nothing fresh",
-                guild.id, channel_id,
+                "scheduled slot skipped for guild %d channel %d (reason=%s)",
+                guild.id, channel_id, reason,
             )
             return
 
