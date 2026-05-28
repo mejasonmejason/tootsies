@@ -1,19 +1,20 @@
-"""Music-lounge cog: scheduled track drops to a links-only channel.
+"""Music-lounge cog: scheduled track drops to links-only channels.
 
-Toots posts to a configured music-lounge channel on a schedule. Every post
-is a track recommendation with a take + Apple Music link (links-only channel,
-posts without links get deleted).
+Toots posts to configured music channels on a schedule. Every post
+is a track recommendation with a take + Apple Music/Spotify link
+(links-only channels, posts without links get deleted).
 
 Sources (same pipeline as discourse, music-focused):
-  - Music-lounge channel itself (what are people sharing/vibing with)
+  - Music channel itself (what are people sharing/vibing with)
   - Feed channels (Twitter/social feeds for music news, hot takes, drops)
   - Perplexity search (current music news, new releases, trending topics)
-  - Claude web_search (finding tracks + Apple Music links at call time)
+  - Claude web_search (finding tracks + music platform links at call time)
 
 Schedule rides on the existing mood system (chill/yaps/off) with its own
 slot tracking. Posts fewer than discourse (1/day chill, 2/day yaps).
+Supports multiple channels (each gets independent slot tracking).
 
-Setup: `/music setup` (mod-only channel picker view).
+Setup: `/music setup` (mod-only multi-channel picker view).
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ ET = ZoneInfo("America/New_York")
 CHILL_TIMES = [time(14, 0)]
 YAPS_TIMES = [time(11, 0), time(20, 0)]
 
+_SCHEDULED_CHANNEL_GAP_SECONDS = 15
 _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS = 65.0
 MUSIC_SCORE_THRESHOLD = 0.6
 
@@ -91,7 +93,7 @@ class Music(commands.Cog):
 
     @music_group.command(
         name="setup",
-        description="pick the music-lounge channel (mods only).",
+        description="pick the music channels (mods only).",
     )
     @track_command("music_setup")
     async def music_setup(self, interaction: discord.Interaction) -> None:
@@ -110,21 +112,24 @@ class Music(commands.Cog):
             )
             return
 
-        current_id = await self.bot.db.get_music_lounge_channel(guild.id)
+        current_ids = await self.bot.db.get_music_channels(guild.id)
         defaults: list[discord.SelectDefaultValue] = []
-        if current_id:
-            ch = guild.get_channel(current_id)
+        for cid in current_ids:
+            ch = guild.get_channel(cid)
             if isinstance(ch, discord.TextChannel):
                 defaults.append(discord.SelectDefaultValue(
                     id=ch.id, type=discord.SelectDefaultValueType.channel,
                 ))
         view = _MusicSetupView(self.bot, guild, member.id, defaults)
+        current_label = (
+            ", ".join(f"<#{cid}>" for cid in current_ids) if current_ids else "none"
+        )
         embed = discord.Embed(
             title="music-lounge setup",
             description=(
-                "pick the channel where i'll drop tracks and hot takes. "
+                "pick the channels where i'll drop tracks and hot takes. "
                 "saves when you pick."
-                + (f"\n\ncurrently: <#{current_id}>" if current_id else "")
+                f"\n\ncurrently: {current_label}"
             ),
             color=0x9b59b6,
         )
@@ -199,7 +204,7 @@ class Music(commands.Cog):
                     )
                     all_feed_msgs.extend(msgs)
 
-        # Recent music-lounge channel messages
+        # Recent music channel messages
         local = await recent_messages(
             channel, me, limit=50, within=timedelta(hours=24), include_bots=True,
         )
@@ -317,8 +322,6 @@ class Music(commands.Cog):
             if not must_post:
                 log.info("music post still missing link after retry, skipping slot")
                 return ""
-            # Manual /music drop: return the best attempt even without a link
-            # rather than showing nothing. The user invoked it explicitly.
             return line2 if line2 and line2.strip().upper() != "EMPTY" else line
 
         return line
@@ -355,11 +358,14 @@ class Music(commands.Cog):
         if guild is None:
             return
 
-        channel_id = await self.bot.db.get_music_lounge_channel(guild_id)
-        if channel_id is None:
+        channel_ids = await self.bot.db.get_music_channels(guild_id)
+        if not channel_ids:
             return
 
-        await self._maybe_post_to_channel(guild, channel_id, expected, today_et)
+        for i, channel_id in enumerate(channel_ids):
+            if i > 0:
+                await asyncio.sleep(_SCHEDULED_CHANNEL_GAP_SECONDS)
+            await self._maybe_post_to_channel(guild, channel_id, expected, today_et)
 
     async def _compose_with_retry(
         self,
@@ -470,8 +476,8 @@ class _MusicChannelSelect(discord.ui.ChannelSelect):
         self, parent: _MusicSetupView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="pick the music-lounge channel",
-            min_values=1, max_values=1, row=0,
+            placeholder="pick music channels",
+            min_values=1, max_values=25, row=0,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
         )
@@ -481,21 +487,25 @@ class _MusicChannelSelect(discord.ui.ChannelSelect):
         if interaction.user.id != self.parent_view.actor_id:
             await interaction.response.send_message("not your menu.", ephemeral=True)
             return
-        channel = self.values[0]
+        channel_ids = [c.id for c in self.values]
         guild_id = self.parent_view.guild.id
-        await self.parent_view.bot.db.set_music_lounge_channel(guild_id, channel.id)
+        await self.parent_view.bot.db.set_music_channels(guild_id, channel_ids)
         await self.parent_view.bot.db.audit(
-            guild_id, interaction.user.id, "music_channel_set",
-            after={"channel_id": channel.id},
+            guild_id, interaction.user.id, "music_channels_set",
+            after={"channel_ids": channel_ids},
         )
+        label = ", ".join(f"<#{cid}>" for cid in channel_ids)
         embed = discord.Embed(
             title="locked in.",
-            description=f"i'll be dropping tracks in <#{channel.id}>.",
+            description=f"i'll be dropping tracks in {label}.",
             color=0x2ecc71,
         )
-        self.default_values = [discord.SelectDefaultValue(
-            id=channel.id, type=discord.SelectDefaultValueType.channel,
-        )]
+        self.default_values = [
+            discord.SelectDefaultValue(
+                id=cid, type=discord.SelectDefaultValueType.channel,
+            )
+            for cid in channel_ids
+        ]
         await interaction.response.edit_message(embed=embed, view=self.parent_view)
 
 

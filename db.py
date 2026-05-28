@@ -239,10 +239,11 @@ CREATE TABLE IF NOT EXISTS discourse_channel_slots (
     PRIMARY KEY (guild_id, channel_id)
 );
 
--- Music-lounge feature: per-guild channel + slot tracking + post history.
-CREATE TABLE IF NOT EXISTS music_lounge (
-    guild_id BIGINT PRIMARY KEY,
-    channel_id BIGINT NOT NULL
+-- Music-lounge feature: per-guild channels + slot tracking + post history.
+CREATE TABLE IF NOT EXISTS music_channels (
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    PRIMARY KEY (guild_id, channel_id)
 );
 
 CREATE TABLE IF NOT EXISTS music_lounge_slots (
@@ -875,22 +876,22 @@ class DB:
         )
         return [r["guild_id"] for r in rows]
 
-    # ---- music lounge -----------------------------------------------------------
+    # ---- music channels ---------------------------------------------------------
 
-    async def set_music_lounge_channel(self, guild_id: int, channel_id: int) -> None:
-        await self._execute(
-            """
-            INSERT INTO music_lounge (guild_id, channel_id) VALUES ($1, $2)
-            ON CONFLICT (guild_id) DO UPDATE SET channel_id = EXCLUDED.channel_id
-            """,
-            guild_id, channel_id,
+    async def get_music_channels(self, guild_id: int) -> list[int]:
+        rows = await self._fetch(
+            "SELECT channel_id FROM music_channels WHERE guild_id = $1", guild_id,
         )
+        return [r["channel_id"] for r in rows]
 
-    async def get_music_lounge_channel(self, guild_id: int) -> int | None:
-        row = await self._fetchrow(
-            "SELECT channel_id FROM music_lounge WHERE guild_id = $1", guild_id,
-        )
-        return int(row["channel_id"]) if row else None
+    async def set_music_channels(self, guild_id: int, channel_ids: list[int]) -> None:
+        async with self._pool().acquire() as conn, conn.transaction():
+            await conn.execute("DELETE FROM music_channels WHERE guild_id = $1", guild_id)
+            if channel_ids:
+                await conn.executemany(
+                    "INSERT INTO music_channels (guild_id, channel_id) VALUES ($1, $2)",
+                    [(guild_id, cid) for cid in channel_ids],
+                )
 
     async def record_music_slot(self, guild_id: int, channel_id: int, today: date) -> None:
         await self._execute(
