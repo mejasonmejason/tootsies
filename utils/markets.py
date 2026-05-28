@@ -870,6 +870,7 @@ class KalshiClient:
         only after the retry fails do we return None to signal "skip
         filtering entirely" (safer than partial pruning).
         """
+        start = time.monotonic()
         tickers: set[str] = set()
         cursor = ""
         # Defensive cap on pagination loop. With ~5K open events at 200/page
@@ -894,9 +895,22 @@ class KalshiClient:
                     "kalshi open-events pagination failed after retry; "
                     "skipping filter (had %d series so far)", len(tickers),
                 )
+                # Emit a structured event so this hourly degradation is visible
+                # to the log-monitor routine (it used to leave only a WARNING,
+                # invisible to dashboards). result_count = pages walked so far.
+                _emit_fetch(
+                    source="kalshi", query="open_events", ok=False,
+                    start=start, result_count=len(tickers),
+                    error="pagination_failed",
+                )
                 return None
             events = data.get("events") or []
             if not isinstance(events, list):
+                _emit_fetch(
+                    source="kalshi", query="open_events", ok=False,
+                    start=start, result_count=len(tickers),
+                    error="bad_events_shape",
+                )
                 return None
             for event in events:
                 if not isinstance(event, dict):
