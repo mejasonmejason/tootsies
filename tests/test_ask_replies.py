@@ -7,14 +7,19 @@ just duck-typed stand-ins for Message / MessageReference / author.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
+
+import discord
 
 from cogs.ask import _reply_quote
 
 ME = 999  # Toots' user id
 
 
-def _msg(reference: object) -> SimpleNamespace:
-    return SimpleNamespace(reference=reference)
+def _msg(reference: object) -> discord.Message:
+    # _reply_quote only duck-types (getattr) off the message; cast so the call
+    # sites type-check against the real discord.Message signature.
+    return cast(discord.Message, SimpleNamespace(reference=reference))
 
 
 def _ref(resolved: object) -> SimpleNamespace:
