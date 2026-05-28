@@ -27,9 +27,8 @@ def test_voice_pools_are_nonempty() -> None:
             assert line.strip()
 
 
-def test_order_in_flight_formats_reference() -> None:
-    line = voice.order_in_flight("#42")
-    # At least one of the variants includes {ref}; if we hit one without it that's still a string.
+def test_order_in_flight_formats_count_and_cap() -> None:
+    line = voice.order_in_flight(3, 3)
     assert isinstance(line, str) and line.strip()
 
 

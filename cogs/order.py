@@ -26,6 +26,7 @@ from utils.permissions import is_mod
 from utils.rate_limits import check_cooldown, check_server_limit, consume_server
 
 ORDER_CONTEXT_MSG_LIMIT = 100
+MAX_IN_FLIGHT_ORDERS = 3
 
 if TYPE_CHECKING:
     from bot import TootsiesBot
@@ -60,12 +61,15 @@ class Order(commands.GroupCog, name="order"):  # type: ignore[call-arg]
             await interaction.response.send_message(voice.pick(voice.PIPELINE_RED), ephemeral=True)
             return
 
-        # One-at-a-time: refuse if anything is in flight.
+        # Cap concurrent orders: refuse only when the kitchen is full. Lets mods
+        # queue up multiple features without hammering claude-code-action with
+        # unbounded parallelism (conflicting PRs, racing deploys).
         in_flight = await self.bot.db.in_flight_orders(guild_id)
-        if in_flight:
-            current = in_flight[0]
-            ref = f"#{current.issue_number}" if current.issue_number else f"order {current.id}"
-            await interaction.response.send_message(voice.order_in_flight(ref), ephemeral=True)
+        if len(in_flight) >= MAX_IN_FLIGHT_ORDERS:
+            await interaction.response.send_message(
+                voice.order_in_flight(len(in_flight), MAX_IN_FLIGHT_ORDERS),
+                ephemeral=True,
+            )
             return
 
         # Duplicate / cooldown / rate-limit checks all need DB; bundle them up.
