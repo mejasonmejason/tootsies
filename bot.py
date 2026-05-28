@@ -77,22 +77,9 @@ class TootsiesBot(commands.Bot):
             await self.load_extension(cog)
             log.info("loaded %s", cog)
         # Kalshi has no free-text search API, so discovery rides on a top-N
-        # series index. Do a blocking initial refresh (with timeout) BEFORE
-        # the bot starts taking traffic so the first queries don't hit an
-        # empty cache. The hourly background loop kicks in after.
-        try:
-            await asyncio.wait_for(
-                self.markets.kalshi.refresh_series_index(),
-                timeout=15.0,
-            )
-            log.info("kalshi series index warm")
-        except (TimeoutError, Exception) as exc:
-            # Refresh slow or failed; bot still starts but Kalshi discovery
-            # is disabled until the background loop catches up.
-            log.warning(
-                "initial kalshi series refresh slow/failed (%s); "
-                "background loop will retry", type(exc).__name__,
-            )
+        # series index. The background loop refreshes it hourly and kicks
+        # off an immediate fetch on start — don't block setup_hook here, or
+        # boot can outrun Railway's healthcheck window when Kalshi is slow.
         await self.markets.kalshi.start_series_refresh_loop()
 
     async def on_ready(self) -> None:
