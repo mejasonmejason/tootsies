@@ -7,6 +7,8 @@ window) and defer() raises NotFound. We assert defer() happens before the fetch.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -64,8 +66,12 @@ async def test_recap_defers_before_history_fetch(monkeypatch) -> None:
 
     period = app_commands.Choice(name="last hour", value="1h")
 
+    # discord.py types Command.callback without the cog `self` param, but at
+    # runtime it's the unbound function and needs the cog passed explicitly.
+    # Cast to a plain callable so mypy accepts the (cog, interaction, period) call.
+    callback = cast(Callable[..., Awaitable[None]], type(cog).recap.callback)
     with pytest.raises(_StopAfterFetch):
-        await type(cog).recap.callback(cog, interaction, period)
+        await callback(cog, interaction, period)
 
     assert order == ["defer", "fetch"], (
         "interaction must be acknowledged (defer) before the history fetch; "
