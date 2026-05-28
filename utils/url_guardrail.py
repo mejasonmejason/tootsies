@@ -20,6 +20,7 @@ a real link) cost more than false negatives (letting a near-miss through).
 
 from __future__ import annotations
 
+import asyncio
 import re
 from urllib.parse import urlparse
 
@@ -131,6 +132,70 @@ def enforce_allowlist(
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip(), rejected, deduped
+
+
+async def verify_live_links(text: str) -> tuple[str, list[str]]:
+    """Second-pass guardrail: drop URLs the host confirms are dead.
+
+    `enforce_source_links` confirms a URL came from a real upstream source
+    (feed / Perplexity citation / web_search) but can't tell that the page
+    was deleted between source-fetch and post-time. Discord then renders
+    the orphan embed as "Sorry, that post doesn't exist :(" or "page
+    unavailable" under the prose. This pass checks every URL in `text`
+    (Twitter via fxtwitter, everything else via HEAD with redirect
+    following) and strips only the ones the host confirms are 404 or 410.
+
+    All other outcomes (200, redirects, 401/403, 405, 429, 5xx, network
+    errors, timeouts) pass through so a flaky host can't nuke real links.
+
+    Returns (cleaned_text, dead_urls).
+    """
+    # Lazy import: link_enrich pulls aiohttp, keep url_guardrail importable
+    # in sync-only test paths that don't need the network.
+    from utils.link_enrich import verify_url_alive
+
+    urls = extract_urls(text)
+    if not urls:
+        return text, []
+    results = await asyncio.gather(
+        *(verify_url_alive(u) for u in urls),
+        return_exceptions=True,
+    )
+    dead: list[str] = []
+    for url, alive in zip(urls, results, strict=False):
+        if isinstance(alive, BaseException):
+            # Unexpected escape from verify_url_alive (it catches ClientError
+            # + TimeoutError; anything else means a code bug). Fail-open
+            # (keep the URL) but surface the exception so it doesn't ship
+            # silently.
+            from utils.events import emit_error
+            emit_error(
+                source="verify_live_links",
+                exc=alive,
+                recoverable=True,
+                context={"url_host": urlparse(url).hostname or ""},
+            )
+            continue
+        if alive is False:
+            dead.append(url)
+    if not dead:
+        return text, []
+
+    dead_norm = {normalize(u) for u in dead}
+
+    def _replace(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        cleaned = _strip_trailing_punct(raw)
+        tail = raw[len(cleaned):]
+        if normalize(cleaned) in dead_norm:
+            return tail
+        return raw
+
+    text = URL_RE.sub(_replace, text)
+    text = "\n".join(ln.rstrip() for ln in text.split("\n"))
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip(), dead
 
 
 def enforce_source_links(

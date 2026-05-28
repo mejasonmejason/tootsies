@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from utils.url_guardrail import (
     enforce_allowlist,
     enforce_source_links,
@@ -9,6 +13,7 @@ from utils.url_guardrail import (
     extract_urls,
     normalize,
     prefix_bare_urls,
+    verify_live_links,
 )
 
 # ---- normalize ----------------------------------------------------------------
@@ -384,3 +389,108 @@ def test_ensure_protocol_already_https():
 
 def test_ensure_protocol_already_http():
     assert ensure_protocol("http://example.com/foo") == "http://example.com/foo"
+
+
+# ---- verify_live_links --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_no_urls_skips_network():
+    """Text with no URLs short-circuits without calling the verifier."""
+    text = "fire take with no link in it at all"
+    with patch(
+        "utils.link_enrich.verify_url_alive",
+        AsyncMock(side_effect=AssertionError("should not be called")),
+    ):
+        cleaned, dead = await verify_live_links(text)
+    assert cleaned == text
+    assert dead == []
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_strips_dead_non_twitter_url():
+    """The generalized verifier also catches dead Pitchfork / news URLs."""
+    text = "take.\nhttps://pitchfork.com/news/retired-article"
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(return_value=False)):
+        cleaned, dead = await verify_live_links(text)
+    assert "pitchfork" not in cleaned
+    assert cleaned == "take."
+    assert dead == ["https://pitchfork.com/news/retired-article"]
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_all_alive_leaves_text_unchanged():
+    text = "the post is fire. https://x.com/foo/status/123"
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(return_value=True)):
+        cleaned, dead = await verify_live_links(text)
+    assert cleaned == text
+    assert dead == []
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_strips_confirmed_dead_url():
+    """Confirmed 404 URL is stripped; surrounding prose stays intact."""
+    text = "the post is fire.\nhttps://fxtwitter.com/DiscussingFilm/status/999"
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(return_value=False)):
+        cleaned, dead = await verify_live_links(text)
+    assert "fxtwitter.com" not in cleaned
+    assert cleaned == "the post is fire."
+    assert dead == ["https://fxtwitter.com/DiscussingFilm/status/999"]
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_strips_only_dead_in_mixed_set():
+    text = (
+        "two takes.\nhttps://x.com/a/status/111\nhttps://x.com/b/status/222"
+    )
+
+    async def fake(url: str) -> bool:
+        return "222" not in url  # 222 is dead, 111 is alive
+
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(side_effect=fake)):
+        cleaned, dead = await verify_live_links(text)
+    assert "111" in cleaned
+    assert "222" not in cleaned
+    assert dead == ["https://x.com/b/status/222"]
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_exception_fails_open():
+    """An exception from the verifier must not strip the URL."""
+    text = "take. https://x.com/foo/status/123"
+    with patch(
+        "utils.link_enrich.verify_url_alive",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        cleaned, dead = await verify_live_links(text)
+    assert "status/123" in cleaned
+    assert dead == []
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_exception_emits_error_event():
+    """Unexpected exceptions should be surfaced via emit_error, not silently swallowed."""
+    text = "take. https://news.example.com/article"
+    with (
+        patch(
+            "utils.link_enrich.verify_url_alive",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+        patch("utils.events.emit_error") as mock_emit_error,
+    ):
+        cleaned, dead = await verify_live_links(text)
+    assert "news.example.com" in cleaned
+    assert dead == []
+    assert mock_emit_error.call_count == 1
+    call_kwargs = mock_emit_error.call_args.kwargs
+    assert call_kwargs["source"] == "verify_live_links"
+    assert isinstance(call_kwargs["exc"], RuntimeError)
+    assert call_kwargs["recoverable"] is True
+    assert call_kwargs["context"]["url_host"] == "news.example.com"
+
+
+@pytest.mark.asyncio
+async def test_verify_live_links_empty_text():
+    cleaned, dead = await verify_live_links("")
+    assert cleaned == ""
+    assert dead == []

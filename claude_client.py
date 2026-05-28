@@ -30,7 +30,7 @@ from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.markets import MarketSnapshot, format_markets_for_prompt
 from utils.perplexity import format_perplexity_for_prompt
-from utils.url_guardrail import enforce_source_links
+from utils.url_guardrail import enforce_source_links, verify_live_links
 
 log = logging.getLogger(__name__)
 
@@ -767,6 +767,12 @@ class ClaudeClient:
                 "link_stripped", purpose="ask", reason="redundant",
                 count=len(deduped), urls=deduped[:5],
             )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="ask", reason="dead_link",
+                count=len(dead), urls=dead[:5],
+            )
         return cleaned
 
     async def recap(
@@ -877,7 +883,35 @@ class ClaudeClient:
             purpose="recap",
             image_urls=image_urls,
         )
-        return result.text
+
+        feed_urls: list[str] = []
+        if hot_urls:
+            feed_urls.extend(u for u, _, _, _ in hot_urls)
+        if enriched_links:
+            feed_urls.extend(link.url for link in enriched_links if link.url)
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls or None,
+            perplexity_context=perplexity_context,
+            web_search_urls=result.web_search_urls,
+        )
+        if rejected:
+            emit(
+                "link_stripped", purpose="recap", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        if deduped:
+            emit(
+                "link_stripped", purpose="recap", reason="redundant",
+                count=len(deduped), urls=deduped[:5],
+            )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="recap", reason="dead_link",
+                count=len(dead), urls=dead[:5],
+            )
+        return cleaned
 
     async def discourse(
         self,
@@ -1078,6 +1112,12 @@ class ClaudeClient:
             emit(
                 "link_stripped", purpose=purpose, reason="redundant",
                 count=len(deduped), urls=deduped[:5],
+            )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose=purpose, reason="dead_link",
+                count=len(dead), urls=dead[:5],
             )
         return cleaned
 
@@ -1289,6 +1329,12 @@ class ClaudeClient:
             emit(
                 "link_stripped", purpose="music_post", reason="hallucinated",
                 count=len(rejected), urls=rejected[:5],
+            )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="music_post", reason="dead_link",
+                count=len(dead), urls=dead[:5],
             )
         return cleaned
 
@@ -1552,6 +1598,12 @@ class ClaudeClient:
             emit(
                 "link_stripped", purpose="chimein_post", reason="redundant",
                 count=len(deduped), urls=deduped[:5],
+            )
+        cleaned, dead = await verify_live_links(cleaned)
+        if dead:
+            emit(
+                "link_stripped", purpose="chimein_post", reason="dead_link",
+                count=len(dead), urls=dead[:5],
             )
         return cleaned
 
