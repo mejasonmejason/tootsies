@@ -45,6 +45,7 @@ COGS = [
     "cogs.chimein",
     "cogs.music",
     "cogs.ignore",
+    "cogs.logs",
 ]
 
 

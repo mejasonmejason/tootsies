@@ -2,13 +2,14 @@
 
 Layout (5 rows, Discord's hard cap, all selects with auto-save).
 Ordered by importance: mod roles gates every admin command, so it
-comes first. Feeds and bot-logs (the read/write plumbing channels)
-are grouped together at the bottom, with bot-logs last.
+comes first. The two "where toots posts" pickers (discourse + music)
+sit next to each other, then the vibe knob, then read-only feeds.
+Logs channel lives outside this menu, set via `/logs`.
   row 0: mod roles select
   row 1: discourse channel select
-  row 2: mood select (chill / yaps / off)
-  row 3: feed channels select
-  row 4: bot-logs channel select
+  row 2: music channel select
+  row 3: mood select (chill / yaps / off)
+  row 4: feed channels select
 
 Every change saves immediately to the DB, no confirm button. The view
 re-renders the summary embed after each change so the mod sees the
@@ -42,17 +43,17 @@ log = logging.getLogger(__name__)
 
 async def _load_initial_state(bot: TootsiesBot, guild: discord.Guild) -> dict[str, object]:
     """Load saved settings from the DB. Empty selects if nothing saved yet."""
-    saved_settings = await bot.db.all_settings(guild.id)
     saved_mod_roles = await bot.db.get_mod_roles(guild.id)
     saved_discourse_channels = await bot.db.get_discourse_channels(guild.id)
+    saved_music_channels = await bot.db.get_music_channels(guild.id)
     saved_feed_channels = await bot.db.get_feed_channels(guild.id)
     saved_schedule = await bot.db.get_schedule(guild.id)
 
     state: dict[str, object] = {}
-    if "bot_logs_channel" in saved_settings:
-        state["bot_logs_channel"] = int(saved_settings["bot_logs_channel"])
     if saved_discourse_channels:
         state["discourse_channel_ids"] = saved_discourse_channels
+    if saved_music_channels:
+        state["music_channel_ids"] = list(saved_music_channels)
     if saved_mod_roles:
         state["mod_role_ids"] = list(saved_mod_roles)
     if saved_feed_channels:
@@ -101,20 +102,6 @@ class Settings(commands.Cog):
 
 
 # ---- view -----------------------------------------------------------------------
-
-
-def _safe_channel_default(
-    guild: discord.Guild, channel_id: object,
-) -> list[discord.SelectDefaultValue]:
-    """Return a default_values entry for a channel ID, only if it still exists."""
-    if not isinstance(channel_id, int):
-        return []
-    ch = guild.get_channel(channel_id)
-    if not isinstance(ch, discord.TextChannel):
-        return []
-    return [
-        discord.SelectDefaultValue(id=ch.id, type=discord.SelectDefaultValueType.channel),
-    ]
 
 
 def _safe_channel_defaults(
@@ -174,8 +161,8 @@ class MenuView(discord.ui.View):
         self.add_item(_DiscourseSelect(
             self, _safe_channel_defaults(guild, prefill.get("discourse_channel_ids")),
         ))
-        self.add_item(_BotLogsSelect(
-            self, _safe_channel_default(guild, prefill.get("bot_logs_channel")),
+        self.add_item(_MusicSelect(
+            self, _safe_channel_defaults(guild, prefill.get("music_channel_ids")),
         ))
         self.add_item(_MoodSelect(
             self, str(self.selected.get("mood", "chill")),
@@ -194,9 +181,10 @@ class MenuView(discord.ui.View):
                 "pick from each dropdown. saves as you go.\n\n"
                 "👮 **mod roles**: who can boss me around\n"
                 "💬 **discourse**: where i post + chime in\n"
+                "🎧 **music**: where i drop tracks (optional)\n"
                 "😎 **mood**: chill / yaps / off\n"
-                "📰 **feeds**: read-only sources (optional)\n"
-                "📊 **bot-logs**: where i post order status + errors"
+                "📰 **feeds**: read-only sources (optional)\n\n"
+                "set the logs channel with `/logs`."
             ),
             color=0x9b59b6,
         )
@@ -216,13 +204,12 @@ class MenuView(discord.ui.View):
         dropdowns to their construction-time defaults, visually clearing
         whatever the user just picked."""
         for child in self.children:
-            if isinstance(child, _BotLogsSelect):
-                cid = self.selected.get("bot_logs_channel")
-                child.default_values = _safe_channel_default(self.guild, cid)
-                ch = self.guild.get_channel(int(cid)) if isinstance(cid, int) else None
+            if isinstance(child, _MusicSelect):
+                ids = self.selected.get("music_channel_ids")
+                child.default_values = _safe_channel_defaults(self.guild, ids)
                 child.placeholder = (
-                    f"{child.LABEL}: #{ch.name}"
-                    if isinstance(ch, discord.TextChannel) else child.LABEL
+                    f"{child.LABEL}: {len(ids)} picked"
+                    if isinstance(ids, list) and ids else child.LABEL
                 )
             elif isinstance(child, _DiscourseSelect):
                 ids = self.selected.get("discourse_channel_ids")
@@ -282,7 +269,7 @@ class MenuView(discord.ui.View):
             # so a re-select will retry the write.
 
         # Mark configured once required settings are all present. Idempotent.
-        required = ("bot_logs_channel", "discourse_channel_ids", "mod_role_ids")
+        required = ("discourse_channel_ids", "mod_role_ids")
         if all(self.selected.get(k) for k in required):
             try:
                 await self.bot.db.mark_configured(guild_id)
@@ -304,14 +291,14 @@ class MenuView(discord.ui.View):
     async def _persist_key(self, guild_id: int, key: str) -> None:
         """Route a single just-set value to its storage backend."""
         val = self.selected.get(key)
-        if key == "bot_logs_channel":
-            if val:
-                await self.bot.db.set_setting(
-                    guild_id, key, int(cast("int", val)), self.actor_id,
-                )
-        elif key == "discourse_channel_ids":
+        if key == "discourse_channel_ids":
             if isinstance(val, list):
                 await self.bot.db.set_discourse_channels(
+                    guild_id, [int(c) for c in val],
+                )
+        elif key == "music_channel_ids":
+            if isinstance(val, list):
+                await self.bot.db.set_music_channels(
                     guild_id, [int(c) for c in val],
                 )
         elif key == "mod_role_ids":
@@ -331,7 +318,7 @@ class MenuView(discord.ui.View):
 
     def _state_embed(self) -> discord.Embed:
         """Live state embed shown after each autosave."""
-        required = ("bot_logs_channel", "discourse_channel_ids", "mod_role_ids")
+        required = ("discourse_channel_ids", "mod_role_ids")
         ready = all(self.selected.get(k) for k in required)
         title = "locked in. bar's open." if ready else "saving as you pick."
         color = 0x2ecc71 if ready else 0x9b59b6
@@ -342,11 +329,15 @@ class MenuView(discord.ui.View):
         )
 
     def _summary(self) -> str:
-        bot_logs = self.selected.get("bot_logs_channel")
         discourse_ids = cast("list[int]", self.selected.get("discourse_channel_ids") or [])
         discourse_label = (
             "_(pick at least one)_" if not discourse_ids
             else ", ".join(f"<#{c}>" for c in discourse_ids)
+        )
+        music_ids = cast("list[int]", self.selected.get("music_channel_ids") or [])
+        music_label = (
+            "_(none)_" if not music_ids
+            else ", ".join(f"<#{c}>" for c in music_ids)
         )
         mod_roles = self.selected.get("mod_role_ids") or []
         feeds = cast("list[int]", self.selected.get("feed_channel_ids") or [])
@@ -358,33 +349,35 @@ class MenuView(discord.ui.View):
             f"**mod roles:** "
             f"{', '.join(f'<@&{r}>' for r in cast('list[int]', mod_roles)) or '_(pick at least one)_'}\n"
             f"**discourse:** {discourse_label}\n"
+            f"**music:** {music_label}\n"
             f"**mood:** {self.selected.get('mood', 'chill')}\n"
-            f"**feeds:** {feeds_label}\n"
-            f"**bot-logs:** {f'<#{bot_logs}>' if bot_logs else '_(pick one)_'}"
+            f"**feeds:** {feeds_label}"
         )
 
 
 # ---- selects (each takes one row) -------------------------------------------------
 
 
-class _BotLogsSelect(discord.ui.ChannelSelect):
-    LABEL = "📊 bot-logs channel"
+class _MusicSelect(discord.ui.ChannelSelect):
+    LABEL = "🎧 music channels (optional)"
 
     def __init__(
         self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
             placeholder=self.LABEL,
-            min_values=1, max_values=1, row=4,
+            min_values=0, max_values=25, row=2,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
         )
         self.parent_view = parent
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        self.parent_view.selected["bot_logs_channel"] = self.values[0].id
-        self.placeholder = f"{self.LABEL}: #{self.values[0].name}"
-        await self.parent_view.autosave(interaction, "bot_logs_channel")
+        self.parent_view.selected["music_channel_ids"] = [c.id for c in self.values]
+        self.placeholder = (
+            f"{self.LABEL}: {len(self.values)} picked" if self.values else self.LABEL
+        )
+        await self.parent_view.autosave(interaction, "music_channel_ids")
 
 
 class _DiscourseSelect(discord.ui.ChannelSelect):
@@ -434,7 +427,7 @@ class _FeedSelect(discord.ui.ChannelSelect):
     ) -> None:
         super().__init__(
             placeholder=self.LABEL,
-            min_values=0, max_values=25, row=3,
+            min_values=0, max_values=25, row=4,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
         )
@@ -456,7 +449,7 @@ class _MoodSelect(discord.ui.Select):
     def __init__(self, parent: MenuView, current_mood: str) -> None:
         super().__init__(
             placeholder=f"😎 mood: {current_mood}",
-            min_values=1, max_values=1, row=2,
+            min_values=1, max_values=1, row=3,
             options=[
                 discord.SelectOption(
                     label="chill", value="chill",
