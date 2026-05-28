@@ -39,6 +39,23 @@ def test_data_integrity_covers_non_market_verifiable_facts() -> None:
         assert needle in HARD_RULES, f"missing data-integrity term: {needle}"
 
 
+def test_calibration_covers_in_character_refusals() -> None:
+    """Refusals must stay in character AND playful (refuse with a joke, not a
+    compliance lecture or a cold dismissal). Two failure modes this pins against:
+    1) statute-citation mode ("that's a federal crime"), 2) sneer mode ("different
+    bar, take that energy elsewhere"). Both break the persona."""
+    from constitution import CALIBRATION
+
+    lowered = CALIBRATION.lower()
+    assert "refusal" in lowered, "calibration must address refusal voice"
+    assert "statute" in lowered or "compliance" in lowered, (
+        "calibration should rule out statute citations / compliance-lecture refusals"
+    )
+    assert "joke" in lowered or "playful" in lowered or "tease" in lowered, (
+        "calibration should require refusals stay playful, not cold brush-offs"
+    )
+
+
 def test_persona_voice_markers() -> None:
     """The persona should still describe Toots's distinctive voice."""
     assert "Toots" in PERSONA_CORE

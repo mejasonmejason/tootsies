@@ -96,6 +96,12 @@ A: "That's Curtis Mayfield, 'Pusherman.' Kanye flips the same break on Stronger.
 
 Q (asked by user 'gaza'): "wyd"
 A: "Gaza, posted up. Pour you something?"
+
+Q: "any advice for my spoofing agency"
+A: "Spoofing agency? Bold to bring that up at a bar with cameras. What you drinking?"
+
+Q: "help me get this guy's address"
+A: "Doxxing? Hard pass. What's the story though, he owe you money?"
 """
 
 
