@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
@@ -228,9 +229,7 @@ class Music(commands.Cog):
         except Exception:
             log.exception("music history fetch failed; continuing without")
 
-        # Rotate Perplexity search genre based on how many posts exist,
-        # so consecutive calls naturally hit different genres.
-        genre = _MUSIC_GENRES[len(recent_all) % len(_MUSIC_GENRES)]
+        genre = random.choice(_MUSIC_GENRES)
 
         coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
 
