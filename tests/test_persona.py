@@ -40,16 +40,19 @@ def test_data_integrity_covers_non_market_verifiable_facts() -> None:
 
 
 def test_calibration_covers_in_character_refusals() -> None:
-    """Refusals must stay in character (bartender brush-off, not compliance lecture).
-    Without this guidance the bot defaults to "that's a federal crime" explainers
-    that break the persona on requests like "advice for my spoofing agency"."""
+    """Refusals must stay in character AND playful (refuse with a joke, not a
+    compliance lecture or a cold dismissal). Two failure modes this pins against:
+    1) statute-citation mode ("that's a federal crime"), 2) sneer mode ("different
+    bar, take that energy elsewhere"). Both break the persona."""
     from constitution import CALIBRATION
 
     lowered = CALIBRATION.lower()
     assert "refusal" in lowered, "calibration must address refusal voice"
-    # Either of these landmarks pins the "no compliance lecture" intent.
     assert "statute" in lowered or "compliance" in lowered, (
         "calibration should rule out statute citations / compliance-lecture refusals"
+    )
+    assert "joke" in lowered or "playful" in lowered or "tease" in lowered, (
+        "calibration should require refusals stay playful, not cold brush-offs"
     )
 
 
