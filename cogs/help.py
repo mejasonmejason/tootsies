@@ -32,74 +32,26 @@ class Help(commands.Cog):
         embed = discord.Embed(
             title="hey, i'm toots",
             description=(
-                "chicago kid, miami based, bartender at tootsies. music is the "
-                "core (sample-spotter), bulls fan, A24 girlie. i answer "
-                "questions, recap the chat, start fights when it's dead, and "
-                "chime in when the room's cooking. mods can teach me new "
-                "tricks just by asking."
+                "chicago kid, miami based, bartender at tootsies. music head, "
+                "bulls fan, A24 girlie. mods can teach me new tricks via "
+                "`/order`.\n\n"
+                "🗣️ **everyone**\n"
+                "`/ask <q>` or `@Toots <q>`: ask me anything\n"
+                "`/recap period:`: what'd you miss\n"
+                "`/discourse category:`: drop a starter\n"
+                "`/music`: a track rec, right now\n\n"
+                "👮 **mods only**\n"
+                "`/order new|status|retry|cancel`: ship new features\n"
+                "`/menu`: channels, roles, mood\n"
+                "`/logs`: order status + errors channel\n"
+                "`/close` `/open`: pause/resume orders\n"
+                "`/undo`: roll me back\n\n"
+                "🍸 **on my own**: scheduled posts + chime-ins ride the "
+                "`/menu` mood (chill / yaps / off).\n\n"
+                "📏 **caps**: 20/day each for `/ask` + `@Toots` + `/recap`. "
+                "server gets 20/day total of `/discourse` + `/order`."
             ),
             color=0x9b59b6,
-        )
-        embed.add_field(
-            name="🗣️  everyone",
-            value=(
-                "**`/ask <question>`**: ask me anything. takes, recs, scores, "
-                "whatever. i read the room and check the web.\n"
-                "  *ex:* `/ask who are you` → *bartender at tootsies. pour you something?*\n"
-                "**`@Toots <question>`**: same thing, no slash. "
-                "*ayo @Toots what's the move tonight* works.\n"
-                "  *ex:* `@Toots wyd` → *gaza, posted up. pour you something?*\n"
-                "**`/recap period:<last hour | last 24h | today>`**: what'd "
-                "you miss in here.\n"
-                "**`/discourse category:<pop | sports | cinema | hiphop | nba | "
-                "custom>`**: i drop a discussion starter.\n"
-                "**`/music`**: i drop a track rec with a link, right now."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="🍸  on my own (no command, runs in the background)",
-            value=(
-                "**scheduled posts** in the discourse channel and **chime-ins** "
-                "when y'all are debating something good. both ride on the mood "
-                "dial mods set in `/menu`:\n"
-                "  · **chill**: scheduled at 12pm + 7pm ET, chime in up to 3/day\n"
-                "  · **yaps**: scheduled at 10am, 2pm, 6pm, 10pm ET, chime in up to 6/day\n"
-                "  · **off**: silent on both\n"
-                "i won't chime in on catch-ups, vulnerable shares, or weekend "
-                "logistics. only when the room's actually cooking."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="👮  mods only",
-            value=(
-                "**`/order new <feature>`**: tell me a new thing you want me "
-                "to do. i'll build it. one at a time, takes a few minutes.\n"
-                "  *ex:* `/order new add a /weather command` → i file an "
-                "issue, claude writes the PR, CI + railway deploy. ~5 min.\n"
-                "**`/order status`**: see what i'm working on.\n"
-                "**`/order retry <number>`**: try again on something that "
-                "didn't work.\n"
-                "**`/order cancel <number>`**: call it off.\n"
-                "**`/menu`**: set up my channels, mod roles, mood, music, "
-                "where to pull news from.\n"
-                "**`/logs`**: pick the channel for order status + errors.\n"
-                "**`/close` / `/open`**: stop or restart taking `/order` "
-                "requests.\n"
-                "**`/undo`**: if a new feature broke me, roll me back to the "
-                "version before."
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="📏  daily caps",
-            value=(
-                "you get **20 of `/ask` + `@Toots` + `/recap` per day each**.\n"
-                "the server gets **20 `/discourse` + `/order` per day total**.\n"
-                "no caps on `/menu` / `/logs` / `/help` / `/close` / `/open` / `/undo`."
-            ),
-            inline=False,
         )
         embed.set_footer(text="if i'm broken, ping a mod.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
