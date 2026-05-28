@@ -135,35 +135,34 @@ def enforce_allowlist(
 
 
 async def verify_live_links(text: str) -> tuple[str, list[str]]:
-    """Second-pass guardrail: drop Twitter status URLs the platform confirms are dead.
+    """Second-pass guardrail: drop URLs the host confirms are dead.
 
     `enforce_source_links` confirms a URL came from a real upstream source
-    (feed / Perplexity citation / web_search) but can't tell that an
-    upstream-sourced tweet was deleted between source-fetch and post-time.
-    Discord then renders the orphan embed as "Sorry, that post doesn't
-    exist :(" under our prose. This pass calls fxtwitter for each Twitter
-    status URL in `text` and strips the ones it confirms are 404.
+    (feed / Perplexity citation / web_search) but can't tell that the page
+    was deleted between source-fetch and post-time. Discord then renders
+    the orphan embed as "Sorry, that post doesn't exist :(" or "page
+    unavailable" under the prose. This pass checks every URL in `text`
+    (Twitter via fxtwitter, everything else via HEAD with redirect
+    following) and strips only the ones the host confirms are 404 or 410.
 
-    Only Twitter status URLs are checked (that's where the broken-embed
-    problem actually lives). Only confirmed 404s are stripped; all other
-    outcomes pass through so a flaky fxtwitter can't nuke real links.
+    All other outcomes (200, redirects, 401/403, 405, 429, 5xx, network
+    errors, timeouts) pass through so a flaky host can't nuke real links.
 
     Returns (cleaned_text, dead_urls).
     """
     # Lazy import: link_enrich pulls aiohttp, keep url_guardrail importable
     # in sync-only test paths that don't need the network.
-    from utils.link_enrich import detect_platform, verify_twitter_alive
+    from utils.link_enrich import verify_url_alive
 
     urls = extract_urls(text)
-    twitter_urls = [u for u in urls if detect_platform(u) == "twitter"]
-    if not twitter_urls:
+    if not urls:
         return text, []
     results = await asyncio.gather(
-        *(verify_twitter_alive(u) for u in twitter_urls),
+        *(verify_url_alive(u) for u in urls),
         return_exceptions=True,
     )
     dead: list[str] = []
-    for url, alive in zip(twitter_urls, results, strict=False):
+    for url, alive in zip(urls, results, strict=False):
         if alive is False:
             dead.append(url)
     if not dead:

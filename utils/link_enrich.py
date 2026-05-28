@@ -257,17 +257,12 @@ def _build_twitter_from_vxtwitter(url: str, data: dict[str, Any]) -> EnrichedLin
 async def verify_twitter_alive(url: str) -> bool:
     """Return False only when fxtwitter confirms a Twitter status is gone.
 
-    Run after the URL guardrail's allowlist pass: a URL from a real source
-    (feed / Perplexity citation / web_search) can still point at a tweet the
-    author deleted between source-fetch and post-time, which makes Discord
-    render the embed as "Sorry, that post doesn't exist :(". A 404 from
-    api.fxtwitter.com/<id> is a reliable dead signal.
+    Used by `verify_url_alive` for Twitter status URLs specifically because
+    HEAD-ing x.com is unreliable (Cloudflare 403s non-browser clients), and
+    fxtwitter gives us a clean JSON 404 signal instead.
 
     Fail-open on everything else (200, 401/403 protected, 429 rate limit,
-    5xx, network errors, timeouts, non-status URLs). The cost of a false
-    "dead" verdict is a stripped real link; the cost of a false "alive"
-    verdict is the existing broken-embed behavior, so bias toward leaving
-    links in.
+    5xx, network errors, timeouts, non-status URLs).
     """
     m = _TWITTER_STATUS_RE.search(url)
     if not m:
@@ -277,6 +272,37 @@ async def verify_twitter_alive(url: str) -> bool:
         sess = await _get_session()
         async with sess.get(f"https://api.fxtwitter.com/{status_id}") as resp:
             return resp.status != 404
+    except (aiohttp.ClientError, TimeoutError):
+        return True
+
+
+async def verify_url_alive(url: str) -> bool:
+    """Return False only on a confirmed 404/410. Fail-open everywhere else.
+
+    Generic dead-link check for any URL the model emits. A URL from a real
+    source (feed / Perplexity citation / web_search) can still point at a
+    page that was deleted between source-fetch and post-time; Discord then
+    renders a broken embed under the prose. This catches the deleted case
+    without stripping real links on flaky hosts.
+
+    Routing:
+      - Twitter status URLs: delegate to fxtwitter (more reliable than
+        HEAD-ing x.com under Cloudflare).
+      - Everything else: HEAD with redirect-following. Strip on 404 or 410
+        only; treat 405 (HEAD not allowed), 403 (bot-blocked), 429
+        (rate-limited), 5xx, and network errors as alive.
+
+    Soft-404s (200 with a "page not found" body, e.g. YouTube deleted
+    videos) aren't caught here. Adding platform-specific signals for those
+    is a follow-up; this pass handles the common case where the server
+    returns an honest 4xx.
+    """
+    if detect_platform(url) == "twitter":
+        return await verify_twitter_alive(url)
+    try:
+        sess = await _get_session()
+        async with sess.head(url, allow_redirects=True) as resp:
+            return resp.status not in (404, 410)
     except (aiohttp.ClientError, TimeoutError):
         return True
 

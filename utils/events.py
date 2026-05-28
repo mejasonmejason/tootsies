@@ -82,9 +82,10 @@ Known kinds (keep this list in sync with what's emitted):
         redundant    : URL is real but the user/room just saw it
                        (recently_seen_urls match) so re-posting would be
                        double-embed clutter.
-        dead_link    : URL came from a real source but fxtwitter returned
-                       404 (tweet was deleted between source-fetch and
-                       post-time). Twitter status URLs only.
+        dead_link    : URL came from a real source but the host returned
+                       404/410 (page was deleted between source-fetch and
+                       post-time). Twitter status URLs check fxtwitter;
+                       all other URLs are HEAD-checked.
   - discourse_scored   : post-generation quality gate for discourse posts
       guild_id, channel_id, score, reason, must_post, category,
       user_id (manual only), post_preview (first 120 chars)

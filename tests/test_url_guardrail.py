@@ -395,11 +395,11 @@ def test_ensure_protocol_already_http():
 
 
 @pytest.mark.asyncio
-async def test_verify_live_links_no_twitter_urls_skips_network():
-    """Non-Twitter URLs short-circuit without calling fxtwitter."""
-    text = "fire take. https://pitchfork.com/news/some-article"
+async def test_verify_live_links_no_urls_skips_network():
+    """Text with no URLs short-circuits without calling the verifier."""
+    text = "fire take with no link in it at all"
     with patch(
-        "utils.link_enrich.verify_twitter_alive",
+        "utils.link_enrich.verify_url_alive",
         AsyncMock(side_effect=AssertionError("should not be called")),
     ):
         cleaned, dead = await verify_live_links(text)
@@ -408,9 +408,20 @@ async def test_verify_live_links_no_twitter_urls_skips_network():
 
 
 @pytest.mark.asyncio
+async def test_verify_live_links_strips_dead_non_twitter_url():
+    """The generalized verifier also catches dead Pitchfork / news URLs."""
+    text = "take.\nhttps://pitchfork.com/news/retired-article"
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(return_value=False)):
+        cleaned, dead = await verify_live_links(text)
+    assert "pitchfork" not in cleaned
+    assert cleaned == "take."
+    assert dead == ["https://pitchfork.com/news/retired-article"]
+
+
+@pytest.mark.asyncio
 async def test_verify_live_links_all_alive_leaves_text_unchanged():
     text = "the post is fire. https://x.com/foo/status/123"
-    with patch("utils.link_enrich.verify_twitter_alive", AsyncMock(return_value=True)):
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(return_value=True)):
         cleaned, dead = await verify_live_links(text)
     assert cleaned == text
     assert dead == []
@@ -420,7 +431,7 @@ async def test_verify_live_links_all_alive_leaves_text_unchanged():
 async def test_verify_live_links_strips_confirmed_dead_url():
     """Confirmed 404 URL is stripped; surrounding prose stays intact."""
     text = "the post is fire.\nhttps://fxtwitter.com/DiscussingFilm/status/999"
-    with patch("utils.link_enrich.verify_twitter_alive", AsyncMock(return_value=False)):
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(return_value=False)):
         cleaned, dead = await verify_live_links(text)
     assert "fxtwitter.com" not in cleaned
     assert cleaned == "the post is fire."
@@ -436,7 +447,7 @@ async def test_verify_live_links_strips_only_dead_in_mixed_set():
     async def fake(url: str) -> bool:
         return "222" not in url  # 222 is dead, 111 is alive
 
-    with patch("utils.link_enrich.verify_twitter_alive", AsyncMock(side_effect=fake)):
+    with patch("utils.link_enrich.verify_url_alive", AsyncMock(side_effect=fake)):
         cleaned, dead = await verify_live_links(text)
     assert "111" in cleaned
     assert "222" not in cleaned
@@ -448,7 +459,7 @@ async def test_verify_live_links_exception_fails_open():
     """An exception from the verifier must not strip the URL."""
     text = "take. https://x.com/foo/status/123"
     with patch(
-        "utils.link_enrich.verify_twitter_alive",
+        "utils.link_enrich.verify_url_alive",
         AsyncMock(side_effect=RuntimeError("boom")),
     ):
         cleaned, dead = await verify_live_links(text)
