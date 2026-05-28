@@ -55,6 +55,12 @@ Known kinds (keep this list in sync with what's emitted):
       can_read_history, total_messages
   - discourse_fallback : /discourse fell back to the canned fallback quip
       guild_id, user_id, category, source_count, recent_topic_count, reason
+  - discourse_skipped  : a scheduled discourse slot was dropped (no post sent)
+      guild_id, channel_id, reason (rate_limited | compose_error | empty)
+        rate_limited  : 429 persisted through the single retry (also emits an
+                        `error` event with the exception detail).
+        compose_error : compose raised a non-429 exception (also emits `error`).
+        empty         : model returned blank / "EMPTY", nothing fresh to post.
   - chimein_evaluated  : chime-in considered a channel buffer and decided
       decision (mood_off_gate | hours_gate | cooldown_gate | daily_cap_gate |
                 vibe_gate | threshold_gate | empty_generation),

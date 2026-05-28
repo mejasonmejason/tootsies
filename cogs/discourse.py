@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
@@ -58,6 +59,13 @@ YAPS_TIMES = [time(9, 0), time(12, 0), time(15, 0), time(18, 0), time(22, 0)]
 # Each compose burns ~10K input tokens on sonnet-4-6 and the org TPM ceiling
 # is 30K/min, so bursting >3 channels in <60s reliably trips 429.
 _SCHEDULED_CHANNEL_GAP_SECONDS = 15
+
+# Random delay before a guild's scheduled dispatch starts. The music cog rides
+# the same mood schedule and fires on the same top-of-hour tick; without jitter,
+# discourse + music hit the shared Sonnet TPM ceiling at the same instant and
+# trip a 429 (issue #123). Scheduled posts have no user waiting, so spreading
+# the burst across a 30s window is free.
+_SCHEDULED_JITTER_MAX_SECONDS = 30.0
 
 # Upper bound on how long we'll honor a retry-after on a scheduled compose
 # 429. TPM rolling windows max out at 60s; 65 gives a small cushion without
@@ -409,6 +417,10 @@ class Discourse(commands.Cog):
         if not channel_ids:
             return
 
+        # Decorrelate this guild's dispatch from the music cog's same-tick post
+        # so they don't collide on the shared Sonnet TPM ceiling (issue #123).
+        await asyncio.sleep(random.uniform(0, _SCHEDULED_JITTER_MAX_SECONDS))
+
         for i, channel_id in enumerate(channel_ids):
             if i > 0:
                 await asyncio.sleep(_SCHEDULED_CHANNEL_GAP_SECONDS)
@@ -421,15 +433,19 @@ class Discourse(commands.Cog):
         guild: discord.Guild,
         channel: discord.TextChannel | discord.Thread,
         channel_id: int,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """Compose, honoring a single retry-after on RateLimitError.
 
         Scheduled posts have no user waiting, so when Anthropic tells us
         "wait N seconds", it's strictly better to wait and post late than
         to skip the slot entirely. One retry only, capped at 65s.
+
+        Returns (line, skip_reason). skip_reason is None on success and
+        "rate_limited" when the slot is dropped after a persistent 429; the
+        caller emits a structured `discourse_skipped` event off it.
         """
         try:
-            return await self._compose(guild, channel, must_post=False)
+            return await self._compose(guild, channel, must_post=False), None
         except anthropic.RateLimitError as exc:
             retry_after = _parse_retry_after_seconds(exc)
             if retry_after is None:
@@ -441,7 +457,7 @@ class Discourse(commands.Cog):
                     source="discourse_scheduled", exc=exc, recoverable=True,
                     guild_id=guild.id, channel_id=channel_id,
                 )
-                return ""
+                return "", "rate_limited"
             wait = min(retry_after, _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS)
             log.info(
                 "scheduled compose 429 for channel %s, retrying in %.1fs (anthropic retry-after)",
@@ -449,7 +465,7 @@ class Discourse(commands.Cog):
             )
             await asyncio.sleep(wait)
             try:
-                return await self._compose(guild, channel, must_post=False)
+                return await self._compose(guild, channel, must_post=False), None
             except anthropic.RateLimitError as exc2:
                 log.info(
                     "scheduled compose still 429 after %.1fs retry for channel %s",
@@ -460,7 +476,7 @@ class Discourse(commands.Cog):
                     guild_id=guild.id, channel_id=channel_id,
                     retried=True, retry_after_seconds=wait,
                 )
-                return ""
+                return "", "rate_limited"
 
     async def _maybe_post_to_channel(
         self,
@@ -493,18 +509,31 @@ class Discourse(commands.Cog):
             return
 
         try:
-            line = await self._compose_with_retry(guild, channel, channel_id)
-        except Exception:
+            line, skip_reason = await self._compose_with_retry(guild, channel, channel_id)
+        except Exception as exc:
             log.exception("scheduled post compose failed for channel %s", channel_id)
-            line = ""
+            emit_error(
+                source="discourse_scheduled", exc=exc, recoverable=False,
+                guild_id=guild.id, channel_id=channel_id,
+            )
+            line, skip_reason = "", "compose_error"
 
         await self.bot.db.record_channel_slot(guild.id, channel_id, today)
         await self.bot.db.record_schedule_post(guild.id, today)
 
         if not line or line.strip().upper() == "EMPTY":
+            # Every dropped scheduled slot emits one structured event so the
+            # log-monitor routine can see it (a 429 / compose crash / empty
+            # generation used to vanish with only a plain log line). reason:
+            # rate_limited | compose_error | empty.
+            reason = skip_reason or "empty"
+            emit(
+                "discourse_skipped",
+                guild_id=guild.id, channel_id=channel_id, reason=reason,
+            )
             log.info(
-                "scheduled slot skipped for guild %d channel %d, nothing fresh",
-                guild.id, channel_id,
+                "scheduled slot skipped for guild %d channel %d (reason=%s)",
+                guild.id, channel_id, reason,
             )
             return
 
