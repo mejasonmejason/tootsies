@@ -14,7 +14,7 @@ Schedule rides on the existing mood system (chill/yaps/off) with its own
 slot tracking. Posts fewer than discourse (1/day chill, 2/day yaps).
 Supports multiple channels (each gets independent slot tracking).
 
-Setup: `/music setup` (mod-only multi-channel picker view).
+Setup: pick the music channels in `/menu` (mod-only).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from utils.feeds import format_for_prompt, hot_urls, recent_messages
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.metrics import track_command
-from utils.permissions import can_send_in, is_mod
+from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
 
 if TYPE_CHECKING:
@@ -91,64 +91,12 @@ class Music(commands.Cog):
 
     # ---- /music ----------------------------------------------------------------
 
-    music_group = app_commands.Group(
-        name="music", description="music-lounge features",
-    )
-
-    @music_group.command(
-        name="setup",
-        description="pick the music channels (mods only).",
-    )
-    @track_command("music_setup")
-    async def music_setup(self, interaction: discord.Interaction) -> None:
-        if not await require_configured(interaction, self.bot.db):
-            return
-        member = interaction.user
-        guild = interaction.guild
-        if guild is None or not isinstance(member, discord.Member):
-            await interaction.response.send_message(
-                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
-            )
-            return
-        if not await is_mod(self.bot.db, member):
-            await interaction.response.send_message(
-                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
-            )
-            return
-
-        current_ids = await self.bot.db.get_music_channels(guild.id)
-        defaults: list[discord.SelectDefaultValue] = []
-        for cid in current_ids:
-            ch = guild.get_channel(cid)
-            if isinstance(ch, discord.TextChannel):
-                defaults.append(discord.SelectDefaultValue(
-                    id=ch.id, type=discord.SelectDefaultValueType.channel,
-                ))
-        view = _MusicSetupView(self.bot, guild, member.id, defaults)
-        current_label = (
-            ", ".join(f"<#{cid}>" for cid in current_ids) if current_ids else "none"
-        )
-        embed = discord.Embed(
-            title="music-lounge setup",
-            description=(
-                "pick the channels where i'll drop tracks and hot takes. "
-                "saves when you pick.\n\n"
-                "**schedule** (rides on `/menu` mood, US Eastern):\n"
-                "- **chill**: 1 post/day at 2pm\n"
-                "- **yaps**: 2 posts/day at 11am + 8pm\n"
-                "- **off**: silent\n\n"
-                f"currently: {current_label}"
-            ),
-            color=0x9b59b6,
-        )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-    @music_group.command(
-        name="drop",
+    @app_commands.command(
+        name="music",
         description="drop a track recommendation right now.",
     )
-    @track_command("music_drop")
-    async def music_drop(self, interaction: discord.Interaction) -> None:
+    @track_command("music")
+    async def music(self, interaction: discord.Interaction) -> None:
         if not await require_configured(interaction, self.bot.db):
             return
         assert interaction.guild_id is not None
@@ -169,7 +117,7 @@ class Music(commands.Cog):
         except Exception as exc:
             log.exception("music compose failed")
             emit_error(
-                source="music_drop", exc=exc, recoverable=False,
+                source="music", exc=exc, recoverable=False,
                 guild_id=interaction.guild_id, user_id=interaction.user.id,
             )
             await interaction.followup.send(voice.pick(voice.DB_ERROR))
@@ -276,7 +224,7 @@ class Music(commands.Cog):
                 guild_id=guild.id, reason="claude_returned_empty",
             )
             # Links-only channel: don't post a linkless fallback quip.
-            # Skip the slot on scheduled posts; on manual /music drop,
+            # Skip the slot on scheduled posts; on manual /music,
             # tell the user nothing came up.
             if must_post:
                 return "nothing's hitting right now. try again in a bit."
@@ -470,59 +418,6 @@ class Music(commands.Cog):
             await self.bot.db.record_music_slot(guild.id, channel_id, today)
         except discord.DiscordException:
             log.exception("music scheduled send failed")
-
-
-class _MusicSetupView(discord.ui.View):
-    def __init__(
-        self,
-        bot: TootsiesBot,
-        guild: discord.Guild,
-        actor_id: int,
-        defaults: list[discord.SelectDefaultValue],
-    ) -> None:
-        super().__init__(timeout=300)
-        self.bot = bot
-        self.guild = guild
-        self.actor_id = actor_id
-        self.add_item(_MusicChannelSelect(self, defaults))
-
-
-class _MusicChannelSelect(discord.ui.ChannelSelect):
-    def __init__(
-        self, parent: _MusicSetupView, defaults: list[discord.SelectDefaultValue],
-    ) -> None:
-        super().__init__(
-            placeholder="pick music channels",
-            min_values=1, max_values=25, row=0,
-            channel_types=[discord.ChannelType.text],
-            default_values=defaults,
-        )
-        self.parent_view = parent
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        if interaction.user.id != self.parent_view.actor_id:
-            await interaction.response.send_message("not your menu.", ephemeral=True)
-            return
-        channel_ids = [c.id for c in self.values]
-        guild_id = self.parent_view.guild.id
-        await self.parent_view.bot.db.set_music_channels(guild_id, channel_ids)
-        await self.parent_view.bot.db.audit(
-            guild_id, interaction.user.id, "music_channels_set",
-            after={"channel_ids": channel_ids},
-        )
-        label = ", ".join(f"<#{cid}>" for cid in channel_ids)
-        embed = discord.Embed(
-            title="locked in.",
-            description=f"i'll be dropping tracks in {label}.",
-            color=0x2ecc71,
-        )
-        self.default_values = [
-            discord.SelectDefaultValue(
-                id=cid, type=discord.SelectDefaultValueType.channel,
-            )
-            for cid in channel_ids
-        ]
-        await interaction.response.edit_message(embed=embed, view=self.parent_view)
 
 
 async def setup(bot: commands.Bot) -> None:
