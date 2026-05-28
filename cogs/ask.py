@@ -48,7 +48,7 @@ class Ask(commands.Cog):
         assert guild_id is not None
 
         # Silenced users get a short ephemeral brush-off; no Claude call, no rate-limit hit.
-        if abuse_tracker.is_silenced(guild_id, user_id):
+        if await abuse_tracker.is_silenced(self.bot.db, guild_id, user_id):
             await interaction.response.send_message(voice.pick(voice.ABUSE_SILENCED), ephemeral=True)
             return
 
@@ -65,8 +65,8 @@ class Ask(commands.Cog):
         # Abuse detection before deferring so we can still use send_message (not followup).
         # Haiku classifier, calibrated conservatively, fail-open on errors.
         if await self.bot.claude.classify_abuse(question):
-            count = abuse_tracker.record_violation(guild_id, user_id)
-            if abuse_tracker.is_silenced(guild_id, user_id):
+            count = await abuse_tracker.record_violation(self.bot.db, guild_id, user_id)
+            if count >= abuse_tracker.ABUSE_THRESHOLD:
                 await interaction.response.send_message(voice.pick(voice.ABUSE_SILENCED), ephemeral=True)
                 return
             if count >= abuse_tracker.WARN_AT:
@@ -212,7 +212,7 @@ class Ask(commands.Cog):
             return
 
         # Silenced users: completely silent treatment (no reply).
-        if abuse_tracker.is_silenced(message.guild.id, message.author.id):
+        if await abuse_tracker.is_silenced(self.bot.db, message.guild.id, message.author.id):
             return
 
         try:
@@ -230,8 +230,10 @@ class Ask(commands.Cog):
         # public replies (mods + room see the call-out); silenced users get
         # complete silence (no reply) at the on_message entry above.
         if await self.bot.claude.classify_abuse(question):
-            count = abuse_tracker.record_violation(message.guild.id, message.author.id)
-            if abuse_tracker.is_silenced(message.guild.id, message.author.id):
+            count = await abuse_tracker.record_violation(
+                self.bot.db, message.guild.id, message.author.id,
+            )
+            if count >= abuse_tracker.ABUSE_THRESHOLD:
                 await message.reply(voice.pick(voice.ABUSE_SILENCED), mention_author=False)
                 return
             if count >= abuse_tracker.WARN_AT:

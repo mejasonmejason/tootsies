@@ -263,6 +263,20 @@ CREATE TABLE IF NOT EXISTS music_history (
 );
 CREATE INDEX IF NOT EXISTS music_history_guild_ts_idx ON music_history (guild_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS abuse_violations (
+    guild_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    violations INTEGER NOT NULL DEFAULT 0,
+    last_violation_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    silenced_at TIMESTAMPTZ,
+    lifted_at TIMESTAMPTZ,
+    lifted_by BIGINT,
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS abuse_silenced_idx
+    ON abuse_violations (guild_id)
+    WHERE silenced_at IS NOT NULL AND lifted_at IS NULL;
+
 -- Migrate legacy discourse_channel setting (single channel) to discourse_channels.
 -- NOT EXISTS guard: once a guild has ANY row in discourse_channels (from this
 -- migration or from /menu), we never re-seed it, so removing a channel via /menu
@@ -943,6 +957,144 @@ class DB:
         await self._execute(
             "DELETE FROM music_history WHERE created_at < NOW() - INTERVAL '72 hours'"
         )
+
+    # ---- abuse violations + silencing ------------------------------------
+
+    async def record_abuse_violation(
+        self, guild_id: int, user_id: int, silence_threshold: int,
+    ) -> tuple[int, bool]:
+        """Increment violation count. Silence at threshold if not already.
+
+        Returns (new_count, just_silenced) where just_silenced is True only
+        on the exact call that crosses the threshold (so the cog can emit
+        the silenced event + send the canned quip exactly once).
+
+        A previously-lifted user starts over: lifted_at + silenced_at are
+        cleared on each new violation cycle.
+        """
+        row = await self._fetchrow(
+            """
+            INSERT INTO abuse_violations
+                (guild_id, user_id, violations, last_violation_at)
+            VALUES ($1, $2, 1, NOW())
+            ON CONFLICT (guild_id, user_id) DO UPDATE
+                SET violations = abuse_violations.violations + 1,
+                    last_violation_at = NOW()
+            RETURNING violations, silenced_at, lifted_at
+            """,
+            guild_id, user_id,
+        )
+        count = row["violations"]
+        already_silenced = row["silenced_at"] is not None and row["lifted_at"] is None
+        just_silenced = False
+        if count >= silence_threshold and not already_silenced:
+            await self._execute(
+                """
+                UPDATE abuse_violations
+                SET silenced_at = NOW(), lifted_at = NULL, lifted_by = NULL
+                WHERE guild_id = $1 AND user_id = $2
+                """,
+                guild_id, user_id,
+            )
+            just_silenced = True
+        return count, just_silenced
+
+    async def is_user_silenced(self, guild_id: int, user_id: int) -> bool:
+        val = await self._fetchval(
+            """
+            SELECT 1 FROM abuse_violations
+            WHERE guild_id = $1 AND user_id = $2
+              AND silenced_at IS NOT NULL AND lifted_at IS NULL
+            """,
+            guild_id, user_id,
+        )
+        return val is not None
+
+    async def lift_silence(self, guild_id: int, user_id: int, lifted_by: int) -> bool:
+        """Mod-triggered un-silence. Returns True if user was actually silenced."""
+        row = await self._fetchrow(
+            """
+            UPDATE abuse_violations
+            SET lifted_at = NOW(), lifted_by = $3,
+                violations = 0
+            WHERE guild_id = $1 AND user_id = $2
+              AND silenced_at IS NOT NULL AND lifted_at IS NULL
+            RETURNING user_id
+            """,
+            guild_id, user_id, lifted_by,
+        )
+        return row is not None
+
+    async def list_silenced(
+        self, guild_id: int,
+    ) -> list[tuple[int, int, Any]]:
+        """All currently-silenced users in a guild as (user_id, violations, silenced_at)."""
+        rows = await self._fetch(
+            """
+            SELECT user_id, violations, silenced_at
+            FROM abuse_violations
+            WHERE guild_id = $1
+              AND silenced_at IS NOT NULL AND lifted_at IS NULL
+            ORDER BY silenced_at DESC
+            """,
+            guild_id,
+        )
+        return [(r["user_id"], r["violations"], r["silenced_at"]) for r in rows]
+
+    async def manually_silence_user(
+        self, guild_id: int, user_id: int, silence_threshold: int,
+    ) -> bool:
+        """Mod-triggered silence via /ignore add. Upserts the row and marks
+        silenced_at NOW(). Bumps violations to the threshold so the row also
+        shows up in /ignore violations. Returns True if state changed
+        (False if already actively silenced)."""
+        row = await self._fetchrow(
+            """
+            INSERT INTO abuse_violations
+                (guild_id, user_id, violations, last_violation_at, silenced_at)
+            VALUES ($1, $2, $3, NOW(), NOW())
+            ON CONFLICT (guild_id, user_id) DO UPDATE
+                SET violations = GREATEST(abuse_violations.violations, $3),
+                    silenced_at = COALESCE(
+                        CASE WHEN abuse_violations.lifted_at IS NULL
+                             THEN abuse_violations.silenced_at
+                             ELSE NULL END,
+                        NOW()
+                    ),
+                    lifted_at = NULL,
+                    lifted_by = NULL,
+                    last_violation_at = NOW()
+            RETURNING (xmax = 0) AS inserted, silenced_at
+            """,
+            guild_id, user_id, silence_threshold,
+        )
+        return row is not None
+
+    async def list_abuse_violations(
+        self, guild_id: int, min_count: int = 1, limit: int = 50,
+    ) -> list[tuple[int, int, Any, Any]]:
+        """All users with at least `min_count` violations (silenced or not).
+
+        Returns (user_id, violations, last_violation_at, silenced_at).
+        silenced_at is None for users below the silence threshold or who
+        have been lifted (violations was reset to 0 on lift, so a lifted
+        user won't appear here unless they reoffend).
+        """
+        rows = await self._fetch(
+            """
+            SELECT user_id, violations, last_violation_at, silenced_at
+            FROM abuse_violations
+            WHERE guild_id = $1 AND violations >= $2
+              AND lifted_at IS NULL
+            ORDER BY violations DESC, last_violation_at DESC
+            LIMIT $3
+            """,
+            guild_id, min_count, limit,
+        )
+        return [
+            (r["user_id"], r["violations"], r["last_violation_at"], r["silenced_at"])
+            for r in rows
+        ]
 
 
 def _row_to_order(row: Any) -> Order:

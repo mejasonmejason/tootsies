@@ -1,59 +1,41 @@
-"""In-memory per-session abuse tracker for user silencing.
+"""Per-guild abuse counting + silencing, persisted in Postgres.
 
-After ABUSE_THRESHOLD violations from a (guild_id, user_id) pair, Toots
-stops responding to that user for the rest of the bot session (resets on restart).
+State lives in the `abuse_violations` table (see db.py). Survives Railway
+deploys, which is the point: a user silenced at 11pm should still be
+silenced at midnight after main redeploys.
+
+Detection itself runs through ClaudeClient.classify_abuse (Haiku). This
+module is the bookkeeping layer that calls into db.DB.
 
 Thresholds:
-  - WARN_AT        : issue a canned warning, skip Claude call
-  - ABUSE_THRESHOLD: silence the user entirely, emit abuse_silenced event
-
-The detection itself runs through ClaudeClient.classify_abuse (Haiku);
-this module only owns the counting + silenced-set state. Keeps the
-classifier free to evolve without churning the bookkeeping layer.
+  - WARN_AT        : canned warning quip, no Claude call for the answer
+  - ABUSE_THRESHOLD: user marked silenced; mod-only `/silence lift` unlocks
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from utils.events import emit
+
+if TYPE_CHECKING:
+    from db import DB
 
 ABUSE_THRESHOLD = 3
 WARN_AT = 2
 
-# {(guild_id, user_id): violation_count}
-_violations: dict[tuple[int, int], int] = defaultdict(int)
-_silenced: set[tuple[int, int]] = set()
 
-
-def record_violation(guild_id: int, user_id: int) -> int:
-    """Increment violation count; silence user at ABUSE_THRESHOLD. Returns new count."""
-    key = (guild_id, user_id)
-    _violations[key] += 1
-    count = _violations[key]
-    if count == ABUSE_THRESHOLD:
-        # Emit exactly once when crossing the threshold.
-        _silenced.add(key)
+async def record_violation(db: DB, guild_id: int, user_id: int) -> int:
+    """Increment violation count; silence at ABUSE_THRESHOLD. Returns new count."""
+    count, just_silenced = await db.record_abuse_violation(
+        guild_id, user_id, ABUSE_THRESHOLD,
+    )
+    if just_silenced:
         emit("abuse_silenced", guild_id=guild_id, user_id=user_id, violations=count)
-    elif count > ABUSE_THRESHOLD:
-        _silenced.add(key)  # keep silenced if somehow called again
     elif count == WARN_AT:
         emit("abuse_warned", guild_id=guild_id, user_id=user_id, violations=count)
     return count
 
 
-def is_silenced(guild_id: int, user_id: int) -> bool:
-    """Return True if this user has been silenced due to repeated abuse."""
-    return (guild_id, user_id) in _silenced
-
-
-def get_violations(guild_id: int, user_id: int) -> int:
-    """Current violation count for (guild_id, user_id)."""
-    return _violations[(guild_id, user_id)]
-
-
-def _reset(guild_id: int, user_id: int) -> None:
-    """Remove a user's violation state. Used in tests."""
-    key = (guild_id, user_id)
-    _violations.pop(key, None)
-    _silenced.discard(key)
+async def is_silenced(db: DB, guild_id: int, user_id: int) -> bool:
+    return await db.is_user_silenced(guild_id, user_id)
