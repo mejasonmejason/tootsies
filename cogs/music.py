@@ -132,8 +132,12 @@ class Music(commands.Cog):
             title="music-lounge setup",
             description=(
                 "pick the channels where i'll drop tracks and hot takes. "
-                "saves when you pick."
-                f"\n\ncurrently: {current_label}"
+                "saves when you pick.\n\n"
+                "**schedule** (rides on `/menu` mood, US Eastern):\n"
+                "- **chill**: 1 post/day at 2pm\n"
+                "- **yaps**: 2 posts/day at 11am + 8pm\n"
+                "- **off**: silent\n\n"
+                f"currently: {current_label}"
             ),
             color=0x9b59b6,
         )
