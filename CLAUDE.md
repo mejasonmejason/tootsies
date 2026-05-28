@@ -43,6 +43,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 - `recap.py`, `/recap period:[1h|today]`
 - `discourse.py`, `/discourse category:` (manual posts) + `/discourse mood:` (schedule control) + the mood scheduler background task
 - `order.py`, `/order new|status|retry|cancel`. Pre-flight sanity check, one-at-a-time enforcement, pipeline-red blocking. Mod-only via `_mod_gate`.
+- `music.py`, `/music setup` (channel picker) + `/music drop` (manual post) + scheduled music-lounge posts (track recs with Apple Music links). Sources: feed channels (Twitter/social), Perplexity (music news/trends), channel activity, web_search. Links-only channel. Rides on the existing mood schedule.
 - `admin.py`, `/close`, `/open`, `/undo`
 - `settings.py`, `/menu` interactive wizard
 
@@ -103,6 +104,9 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `pplx_chimein` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `link_stripped` | claude_client.py (`discourse`, `ask`) | purpose, reason (`hallucinated` \| `redundant`), count, urls |
 | `market_fetch` | utils/markets.py | source (sgo/polymarket/kalshi), query, ok, duration_ms, cache_hit, result_count, error |
+| `music_fallback` | cogs/music.py | guild_id, reason |
+| `music_scored` | cogs/music.py | guild_id, channel_id, score, reason, must_post, post_preview |
+| `music_dedup` | cogs/music.py | guild_id, channel_id, decision, post_preview |
 
 **Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to
 the table above + the events.py docstring. Use snake_case for kinds and fields. Don't

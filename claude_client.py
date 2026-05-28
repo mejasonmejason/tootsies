@@ -1045,6 +1045,190 @@ class ClaudeClient:
             )
         return cleaned
 
+    async def music_post(
+        self,
+        sources_blob: str,
+        recent_posts: str = "",
+        *,
+        channel_name: str = "",
+        must_post: bool = True,
+        hot_urls: list[tuple[str, int, str, str]] | None = None,
+        enriched_links: list[EnrichedLink] | None = None,
+        perplexity_context: str | None = None,
+        genre_hint: str = "",
+    ) -> str:
+        """Generate a music-lounge post: always a track + take + music link.
+
+        This is a links-only channel. Every post MUST include an Apple Music
+        or Spotify link or it gets deleted.
+
+        `genre_hint` rotates each call (hiphop, rnb, pop, afrobeats, neo-soul)
+        so the bot doesn't default to the same genre every time.
+        """
+        dedup_clause = (
+            f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat artists, songs, or angles):\n"
+            f"{recent_posts}\n"
+            "HARD RULE: pick a DIFFERENT artist than any listed above. Don't "
+            "just pick a different track from the same artist or album. If you "
+            "posted Kendrick last time, don't post Kendrick this time. Cast a "
+            "wider net."
+            if recent_posts
+            else ""
+        )
+
+        hot_urls_block = ""
+        if hot_urls:
+            lines = [
+                f"  - [{source}] {url}  (posted by {author}, {rxn} reaction(s))"
+                for url, rxn, author, source in hot_urls
+            ]
+            hot_urls_block = (
+                "\n\nLINKS THE ROOM + FEEDS SHARED (open via web_search to see what "
+                "people and music media are talking about. Higher reactions = the room "
+                "cares more):\n" + "\n".join(lines)
+            )
+
+        enriched_block = ""
+        if enriched_links:
+            enriched_block = "\n\n" + format_enriched_for_prompt(enriched_links)
+
+        perplexity_block = ""
+        if perplexity_context:
+            perplexity_block = "\n\n" + format_perplexity_for_prompt(perplexity_context)
+
+        genre_block = ""
+        if genre_hint:
+            genre_label = {
+                "hiphop": "hip-hop / rap",
+                "rnb": "R&B / soul",
+                "pop": "pop / mainstream",
+                "afrobeats": "afrobeats / amapiano / dancehall",
+                "neo-soul": "neo-soul / gospel-adjacent / alternative R&B",
+            }.get(genre_hint, genre_hint)
+            genre_block = (
+                f"\n\nGENRE LEAN THIS POST: {genre_label}. Lean into this genre "
+                "for your pick this time. You don't have to stay strictly in it, "
+                "but it should be the starting point for your search. This rotates "
+                "each post so you naturally cover different sounds."
+            )
+
+        system_extra = (
+            "TASK: Post a music recommendation in a LINKS-ONLY channel. Every "
+            "post MUST end with an Apple Music or Spotify link or it gets "
+            "deleted by mods.\n"
+            "\n"
+            "FORMAT (non-negotiable):\n"
+            "  1. A short take on the track (1-2 sentences, your voice)\n"
+            "  2. Optionally weave in a question that gets the room posting "
+            "their own links back\n"
+            "  3. An Apple Music or Spotify link on its own line at the end. "
+            "Prefer Apple Music (music.apple.com). Spotify (open.spotify.com) "
+            "is also fine.\n"
+            "\n"
+            "FRAMING: You're a bartender, not a listener at home. You don't "
+            "'listen to' or 'have on repeat' tracks. You PLAY them in the bar. "
+            "Frame it as the DJ / aux / bar rotation:\n"
+            "  GOOD: 'been playing this all week', 'this one's been on the "
+            "rotation', 'put this on last night and the whole bar locked in'\n"
+            "  BAD: 'been listening to this', 'had this on repeat', 'i've "
+            "been vibing with this'\n"
+            "\n"
+            "EXAMPLES OF GOOD POSTS:\n"
+            "  'been playing bunce road blues all week. that tems verse over "
+            "cole and future is something else. what's the most underrated "
+            "feature you've heard this year.'\n"
+            "  https://music.apple.com/us/album/bunce-road-blues/1875080726\n"
+            "\n"
+            "  'put 712pm on last night and the whole bar locked in. future "
+            "really found the pocket on this one.'\n"
+            "  https://music.apple.com/au/album/712pm/1621803882\n"
+            "\n"
+            "  'ctrl is still in the rotation seven years later. the weekend "
+            "hits different at 1am.'\n"
+            "  https://music.apple.com/us/album/the-weekend/1440913475\n"
+            "\n"
+            "  'best album you'd play front to back on a slow night. i'll "
+            "start.'\n"
+            "  https://music.apple.com/us/album/gnx/1781917843\n"
+            "\n"
+            "WHERE TO FIND WHAT TO RECOMMEND:\n"
+            "  Use web_search to discover tracks. Rotate your search angles "
+            "so you don't land on the same stuff every time:\n"
+            "  - 'new hip-hop releases this week' / 'new R&B songs [month] [year]'\n"
+            "  - 'underrated [genre] albums [year]' / 'best deep cuts [artist]'\n"
+            "  - 'best feature verses this year hip-hop'\n"
+            "  - 'trending afrobeats songs' / 'new amapiano tracks'\n"
+            "  - '[artist from the room's recent posts] best songs'\n"
+            "  - 'songs that sampled [classic track]'\n"
+            "  - Music news: new drops, beefs, collabs, album announcements\n"
+            "  The Perplexity context (if attached) has current music news and "
+            "trends. The feed channels have tweets and social posts about music. "
+            "Use what's happening in music media RIGHT NOW to inform your pick, "
+            "then web_search for the Apple Music link.\n"
+            "\n"
+            "WHAT MAKES A GOOD PICK (variety is everything):\n"
+            "  - NOT just what's #1 on the charts. The room already knows that.\n"
+            "  - An underrated track from a known artist's back catalog\n"
+            "  - A feature verse that carried the whole song\n"
+            "  - A new drop the room might have missed\n"
+            "  - Something relevant to what the room's been sharing\n"
+            "  - A callback to something that aged well (or didn't)\n"
+            "  - A deep cut, a guilty pleasure, a sleeper from 5 years ago\n"
+            "  - Something tied to current music news (new beef? post the diss "
+            "track. new collab announced? post their best collab so far)\n"
+            "\n"
+            "MUSIC TASTE PROFILE:\n"
+            "  - Home base: hip-hop, R&B, rap, neo-soul, afrobeats, dancehall, "
+            "gospel-adjacent, Caribbean, amapiano\n"
+            "  - Also knows: pop, indie, rock, electronic, Latin, country (new gen)\n"
+            "  - Miami bartender. You know the club rotation, what's playing at "
+            "Art Basel, what's on in the Uber on the way home\n"
+            "  - STRONG opinions, not a snob. You'll put on a guilty pleasure "
+            "and own it\n"
+            "\n"
+            "FINDING THE LINK:\n"
+            "  web_search for 'site:music.apple.com [artist] [song title]' to "
+            "get the Apple Music URL. If Apple Music doesn't have it, try "
+            "'site:open.spotify.com [artist] [song title]'. If neither search "
+            "works, try artist + album name. If you genuinely can't find a "
+            "music link after searching, pick a different track you CAN find. "
+            "A post without a link WILL be deleted. NEVER invent a URL.\n"
+            "\n"
+            "EMPTY: return literal EMPTY only when you've posted recently AND "
+            "nothing fresh is on your mind. Never return EMPTY because you "
+            "can't find a link, pick a different track instead.\n"
+            f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{dedup_clause}"
+            + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
+        )
+        channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
+        user = (
+            f"{channel_line}You're the bartender picking the music. "
+            f"Drop a track with a take.\n\n"
+            f"Room activity:\n{sources_blob}"
+        )
+        result = await self._call(
+            model=SONNET,
+            user_message=user,
+            system_extra=system_extra,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            max_tokens=MAX_TOKENS_POST,
+            purpose="music_post",
+        )
+
+        feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
+        cleaned, rejected, deduped = enforce_source_links(
+            result.text,
+            feed_urls=feed_urls,
+            perplexity_context=perplexity_context,
+            web_search_urls=result.web_search_urls,
+        )
+        if rejected:
+            emit(
+                "link_stripped", purpose="music_post", reason="hallucinated",
+                count=len(rejected), urls=rejected[:5],
+            )
+        return cleaned
+
     async def discourse_score(
         self, post: str, channel_name: str = "", surface: str = "discourse",
     ) -> tuple[float, str]:
