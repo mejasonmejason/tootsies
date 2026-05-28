@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
@@ -58,6 +59,13 @@ YAPS_TIMES = [time(9, 0), time(12, 0), time(15, 0), time(18, 0), time(22, 0)]
 # Each compose burns ~10K input tokens on sonnet-4-6 and the org TPM ceiling
 # is 30K/min, so bursting >3 channels in <60s reliably trips 429.
 _SCHEDULED_CHANNEL_GAP_SECONDS = 15
+
+# Random delay before a guild's scheduled dispatch starts. The music cog rides
+# the same mood schedule and fires on the same top-of-hour tick; without jitter,
+# discourse + music hit the shared Sonnet TPM ceiling at the same instant and
+# trip a 429 (issue #123). Scheduled posts have no user waiting, so spreading
+# the burst across a 30s window is free.
+_SCHEDULED_JITTER_MAX_SECONDS = 30.0
 
 # Upper bound on how long we'll honor a retry-after on a scheduled compose
 # 429. TPM rolling windows max out at 60s; 65 gives a small cushion without
@@ -408,6 +416,10 @@ class Discourse(commands.Cog):
         channel_ids = await self.bot.db.get_discourse_channels(guild_id)
         if not channel_ids:
             return
+
+        # Decorrelate this guild's dispatch from the music cog's same-tick post
+        # so they don't collide on the shared Sonnet TPM ceiling (issue #123).
+        await asyncio.sleep(random.uniform(0, _SCHEDULED_JITTER_MAX_SECONDS))
 
         for i, channel_id in enumerate(channel_ids):
             if i > 0:

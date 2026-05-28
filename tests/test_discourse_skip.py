@@ -1,20 +1,26 @@
-"""Regression tests for scheduled discourse slot visibility (issue #123).
+"""Regression tests for the scheduled discourse poster (issue #123).
 
-A scheduled slot that gets dropped (persistent 429, compose crash, or an empty
-generation) used to vanish with only a plain log line, invisible to the
-log-monitor routine. Each drop must now emit one structured `discourse_skipped`
-event with a reason the monitor can query on.
+Two behaviors:
+  - dropped slots (persistent 429, compose crash, empty generation) used to
+    vanish with only a plain log line; each drop must now emit one structured
+    `discourse_skipped` event the log-monitor routine can query.
+  - the per-guild dispatch is jittered up to 30s so discourse + the music cog
+    (same mood schedule, same tick) don't collide on the shared Sonnet TPM
+    ceiling and trip a 429.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import discord
 import pytest
 
 import cogs.discourse as discourse_mod
+from models import MoodMode
 
 
 def _make_cog() -> discourse_mod.Discourse:
@@ -69,3 +75,33 @@ async def test_dropped_slot_emits_discourse_skipped(
     assert skipped[0].kwargs["reason"] == expected_reason
     assert skipped[0].kwargs["guild_id"] == 111
     assert skipped[0].kwargs["channel_id"] == 222
+
+
+@pytest.mark.asyncio
+async def test_scheduled_dispatch_is_jittered() -> None:
+    """The dispatch waits a bounded random offset (<=30s) before posting, so it
+    doesn't collide with the music cog on the same tick (issue #123)."""
+    cog = _make_cog()
+    guild, _channel = _make_guild_channel()
+    bot = cast(Any, cog.bot)
+    bot.get_guild = MagicMock(return_value=guild)
+    bot.db.get_schedule = AsyncMock(return_value=MagicMock(mood=MoodMode.CHILL))
+    bot.db.get_discourse_channels = AsyncMock(return_value=[222])
+
+    now_et = datetime(2026, 5, 28, 19, 0, tzinfo=ZoneInfo("America/New_York"))
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    with (
+        patch.object(discourse_mod.asyncio, "sleep", side_effect=fake_sleep),
+        patch.object(cog, "_maybe_post_to_channel", AsyncMock()) as post_mock,
+    ):
+        await cog._maybe_scheduled_post(111, now_et)
+
+    # One channel => the only sleep is the jitter (no inter-channel gap), and it
+    # must be within [0, 30].
+    assert len(sleeps) == 1
+    assert 0.0 <= sleeps[0] <= discourse_mod._SCHEDULED_JITTER_MAX_SECONDS
+    post_mock.assert_awaited_once()
