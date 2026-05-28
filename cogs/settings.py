@@ -180,50 +180,23 @@ class MenuView(discord.ui.View):
         self.add_item(_MoodSelect(
             self, str(self.selected.get("mood", "chill")),
         ))
+        self._refresh_select_defaults()
 
     # ---- embed -----------------------------------------------------------------
 
     def help_embed(self) -> discord.Embed:
-        e = discord.Embed(
+        return discord.Embed(
             title="toots' menu",
             description=(
-                "every change saves the moment you pick it. re-run `/menu` "
-                "anytime to see current state or change anything. close this "
-                "message to dismiss."
+                "pick from each dropdown. saves as you go.\n\n"
+                "📊 **bot-logs**: where i post order status + errors\n"
+                "💬 **discourse**: where i post + chime in\n"
+                "👮 **mod roles**: who can boss me around\n"
+                "📰 **feeds**: read-only sources (optional)\n"
+                "😎 **mood**: chill / yaps / off"
             ),
             color=0x9b59b6,
         )
-        e.add_field(
-            name="📊  bot-logs channel",
-            value="where i narrate `/order` status (🟡 → 🍳 → ✅) + post mod-only error notices.",
-            inline=False,
-        )
-        e.add_field(
-            name="💬  discourse channels",
-            value="where my scheduled posts land + the channels i chime in on when the room's cooking.",
-            inline=False,
-        )
-        e.add_field(
-            name="👮  mod roles",
-            value="who can run `/order`, `/close`, `/open`, `/undo`, `/menu`.",
-            inline=False,
-        )
-        e.add_field(
-            name="📰  feed channels",
-            value="read-only sources i pull from for `/discourse` (X feeds, news, alerts). optional.",
-            inline=False,
-        )
-        e.add_field(
-            name="😎  mood",
-            value=(
-                "how chatty i am on auto-pilot (US Eastern).\n"
-                "**chill**: scheduled at 12pm + 7pm ET, chime in up to 5/day\n"
-                "**yaps**: scheduled at 9am, 12pm, 3pm, 6pm, 10pm ET, chime in up to 10/day\n"
-                "**off**: silent on both"
-            ),
-            inline=False,
-        )
-        return e
 
     async def _check_actor(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.actor_id:
@@ -241,20 +214,33 @@ class MenuView(discord.ui.View):
         whatever the user just picked."""
         for child in self.children:
             if isinstance(child, _BotLogsSelect):
-                child.default_values = _safe_channel_default(
-                    self.guild, self.selected.get("bot_logs_channel"),
+                cid = self.selected.get("bot_logs_channel")
+                child.default_values = _safe_channel_default(self.guild, cid)
+                ch = self.guild.get_channel(int(cid)) if isinstance(cid, int) else None
+                child.placeholder = (
+                    f"{child.LABEL}: #{ch.name}"
+                    if isinstance(ch, discord.TextChannel) else child.LABEL
                 )
             elif isinstance(child, _DiscourseSelect):
-                child.default_values = _safe_channel_defaults(
-                    self.guild, self.selected.get("discourse_channel_ids"),
+                ids = self.selected.get("discourse_channel_ids")
+                child.default_values = _safe_channel_defaults(self.guild, ids)
+                child.placeholder = (
+                    f"{child.LABEL}: {len(ids)} picked"
+                    if isinstance(ids, list) and ids else child.LABEL
                 )
             elif isinstance(child, _ModRoleSelect):
-                child.default_values = _safe_role_defaults(
-                    self.guild, self.selected.get("mod_role_ids"),
+                ids = self.selected.get("mod_role_ids")
+                child.default_values = _safe_role_defaults(self.guild, ids)
+                child.placeholder = (
+                    f"{child.LABEL}: {len(ids)} picked"
+                    if isinstance(ids, list) and ids else child.LABEL
                 )
             elif isinstance(child, _FeedSelect):
-                child.default_values = _safe_channel_defaults(
-                    self.guild, self.selected.get("feed_channel_ids"),
+                ids = self.selected.get("feed_channel_ids")
+                child.default_values = _safe_channel_defaults(self.guild, ids)
+                child.placeholder = (
+                    f"{child.LABEL}: {len(ids)} picked"
+                    if isinstance(ids, list) and ids else child.LABEL
                 )
             elif isinstance(child, _MoodSelect):
                 # StringSelect uses per-option .default booleans, not
@@ -379,11 +365,13 @@ class MenuView(discord.ui.View):
 
 
 class _BotLogsSelect(discord.ui.ChannelSelect):
+    LABEL = "📊 bot-logs channel"
+
     def __init__(
         self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="📊 bot-logs channel",
+            placeholder=self.LABEL,
             min_values=1, max_values=1, row=0,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
@@ -392,15 +380,18 @@ class _BotLogsSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["bot_logs_channel"] = self.values[0].id
+        self.placeholder = f"{self.LABEL}: #{self.values[0].name}"
         await self.parent_view.autosave(interaction, "bot_logs_channel")
 
 
 class _DiscourseSelect(discord.ui.ChannelSelect):
+    LABEL = "💬 discourse channels"
+
     def __init__(
         self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="💬 discourse channels",
+            placeholder=self.LABEL,
             min_values=1, max_values=25, row=1,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
@@ -409,15 +400,18 @@ class _DiscourseSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["discourse_channel_ids"] = [c.id for c in self.values]
+        self.placeholder = f"{self.LABEL}: {len(self.values)} picked"
         await self.parent_view.autosave(interaction, "discourse_channel_ids")
 
 
 class _ModRoleSelect(discord.ui.RoleSelect):
+    LABEL = "👮 mod roles"
+
     def __init__(
         self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="👮 mod roles",
+            placeholder=self.LABEL,
             min_values=1, max_values=10, row=2,
             default_values=defaults,
         )
@@ -425,15 +419,18 @@ class _ModRoleSelect(discord.ui.RoleSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["mod_role_ids"] = [r.id for r in self.values]
+        self.placeholder = f"{self.LABEL}: {len(self.values)} picked"
         await self.parent_view.autosave(interaction, "mod_role_ids")
 
 
 class _FeedSelect(discord.ui.ChannelSelect):
+    LABEL = "📰 feed channels (optional)"
+
     def __init__(
         self, parent: MenuView, defaults: list[discord.SelectDefaultValue],
     ) -> None:
         super().__init__(
-            placeholder="📰 feed channels (optional)",
+            placeholder=self.LABEL,
             min_values=0, max_values=25, row=3,
             channel_types=[discord.ChannelType.text],
             default_values=defaults,
@@ -442,6 +439,9 @@ class _FeedSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         self.parent_view.selected["feed_channel_ids"] = [c.id for c in self.values]
+        self.placeholder = (
+            f"{self.LABEL}: {len(self.values)} picked" if self.values else self.LABEL
+        )
         await self.parent_view.autosave(interaction, "feed_channel_ids")
 
 
