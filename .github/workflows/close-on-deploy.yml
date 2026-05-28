@@ -1,25 +1,23 @@
-name: Close order issue after deploy
+name: Close order issue on merge
 
-# Runs AFTER the `ci` workflow finishes, NOT inside the push check-suite.
-# Railway is configured to "wait for CI" before deploying, so a job that sits
-# in the push suite waiting for the Railway deploy to succeed deadlocks: Railway
-# won't deploy until CI is green, and that job won't go green until the deploy
-# succeeds. Triggering on `workflow_run` moves this out of the gating suite — CI
-# goes green on its own, Railway deploys, and only then does this job poll for
-# the deploy result and close the order issue. The poll is non-fatal so it can
-# never block the pipeline again.
+# Closes the order issue as soon as its fix lands on main. We deliberately do
+# NOT poll Railway for deploy success here: Railway is configured to "wait for
+# CI" before deploying, so a job that blocks on the deploy reaching SUCCESS
+# deadlocks (Railway waits for the check-suite, the check-suite waits for the
+# deploy). This job just closes the issue and exits in seconds, so it never
+# gates the deploy.
+#
+# Served-signal semantics: a closed issue now means "fix merged to main"
+# (deploy assumed to follow), not "deploy confirmed". The lazy /order status
+# reconciler reads the closed state to flip orders to SERVED. Deploy failures
+# are surfaced separately via the deploy_event / Railway logs, not by leaving
+# the order open.
 on:
-  workflow_run:
-    workflows: ["ci"]
-    types: [completed]
+  push:
+    branches: [main]
 
 jobs:
-  close-on-deploy:
-    # Only for successful CI runs that landed on main (i.e. a real merge/push).
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+  close-on-merge:
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -28,7 +26,7 @@ jobs:
       - name: Extract issue number from merge commit
         id: extract
         env:
-          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           # Look for "Part of #123" or "Fixes #123" in the merge commit message
           ISSUE=$(echo "$COMMIT_MSG" | grep -ioP '(?:part of|fixes|closes|resolves)\s+#\K[0-9]+' | head -1)
@@ -40,63 +38,12 @@ jobs:
             echo "found=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for Railway deploy
-        if: steps.extract.outputs.found == 'true'
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
-        run: |
-          if [ -z "$RAILWAY_TOKEN" ] || [ -z "$RAILWAY_SERVICE_ID" ]; then
-            echo "::warning::RAILWAY_TOKEN or RAILWAY_SERVICE_ID not set, skipping deploy check."
-            echo "deployed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Waiting for Railway deploy to succeed..."
-          QUERY='query($serviceId: String!) {
-            deployments(input: { serviceId: $serviceId }, first: 1) {
-              edges { node { id status createdAt } }
-            }
-          }'
-
-          for i in $(seq 1 30); do
-            RESPONSE=$(curl -s -X POST https://backboard.railway.com/graphql/v2 \
-              -H "Authorization: Bearer $RAILWAY_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"query\": \"$(echo $QUERY | tr '\n' ' ')\", \"variables\": {\"serviceId\": \"$RAILWAY_SERVICE_ID\"}}")
-
-            STATUS=$(echo "$RESPONSE" | jq -r '.data.deployments.edges[0].node.status // "UNKNOWN"')
-            echo "Attempt $i/30: deploy status = $STATUS"
-
-            if [ "$STATUS" = "SUCCESS" ]; then
-              echo "Deploy succeeded!"
-              echo "deployed=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            elif [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CRASHED" ]; then
-              echo "::warning::Deploy ended with status: $STATUS — leaving order issue open."
-              echo "deployed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            elif [ "$STATUS" = "SKIPPED" ] || [ "$STATUS" = "REMOVED" ]; then
-              echo "::warning::Latest deploy is $STATUS (superseded) — leaving order issue open."
-              echo "deployed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            sleep 20
-          done
-
-          # Non-fatal: never fail the run, so this job can't gate the pipeline.
-          echo "::warning::Timed out waiting for Railway deploy (10 min) — leaving order issue open."
-          echo "deployed=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        id: deploy
-
       - name: Close the order issue
-        if: steps.extract.outputs.found == 'true' && steps.deploy.outputs.deployed == 'true'
+        if: steps.extract.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ steps.extract.outputs.issue }}
         run: |
           gh issue close "$ISSUE" \
             --repo "${{ github.repository }}" \
-            --comment "Deployed to Railway. Order served."
+            --comment "Merged to main — deploying to Railway. Order served."
