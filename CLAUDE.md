@@ -132,6 +132,8 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `music_fallback` | cogs/music.py | guild_id, reason |
 | `music_scored` | cogs/music.py | guild_id, channel_id, score, reason, must_post, post_preview |
 | `music_dedup` | cogs/music.py | guild_id, channel_id, decision, post_preview |
+| `abuse_warned` | utils/abuse_tracker.py | guild_id, user_id, violations |
+| `abuse_silenced` | utils/abuse_tracker.py | guild_id, user_id, violations |
 
 **Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to
 the table above + the events.py docstring. Use snake_case for kinds and fields. Don't
