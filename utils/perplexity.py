@@ -179,6 +179,35 @@ _CATEGORY_QUERIES: dict[str, str] = {
         "r/hiphopheads, Complex, Pitchfork, Genius, YouTube new releases, "
         "and TikTok trending sounds. " + _SOURCES
     ),
+    "rnb": (
+        "What's happening in R&B and soul music right now? New releases, "
+        "comeback albums, collaborations, viral covers, underrated drops, "
+        "Grammy buzz. Check Twitter/X, r/rnb, r/hiphopheads, Complex, "
+        "Pitchfork, Genius, Apple Music editorial, and TikTok trending "
+        "sounds. " + _SOURCES
+    ),
+    "afrobeats": (
+        "What's happening in afrobeats, amapiano, and dancehall right now? "
+        "New releases, crossover hits, festival lineups, viral moments, "
+        "collaborations with Western artists. Check Twitter/X, Apple Music "
+        "Africa charts, Audiomack trending, Complex, OkayAfrica, and "
+        "TikTok trending sounds. " + _SOURCES
+    ),
+    "neo-soul": (
+        "What's happening in neo-soul, alternative R&B, and gospel-adjacent "
+        "music right now? New releases, underground drops, indie artists "
+        "breaking through, live session videos, sample-heavy production. "
+        "Check Twitter/X, Bandcamp trending, r/rnb, Pitchfork, COLORS "
+        "sessions, and NPR Tiny Desk. " + _SOURCES
+    ),
+    "music": (
+        "What's the biggest music news right now across hip hop, R&B, pop, "
+        "afrobeats, and Latin? New album drops, surprise releases, beefs, "
+        "chart milestones, viral moments, tour announcements, producer "
+        "drama, sample discoveries. Check Twitter/X, r/hiphopheads, "
+        "Complex, Pitchfork, Genius, Apple Music editorial, and TikTok "
+        "trending sounds. " + _SOURCES
+    ),
     "pop": (
         "What's trending in pop culture right now? Celebrity news, viral "
         "moments, music drops, TV premieres, social media drama, memes, "
