@@ -15,7 +15,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from utils import bot_logs, voice
+from utils import abuse_tracker, bot_logs, voice
 from utils.events import emit_error
 from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
@@ -47,6 +47,11 @@ class Ask(commands.Cog):
         user_id = interaction.user.id
         assert guild_id is not None
 
+        # Silenced users get a short ephemeral brush-off; no Claude call, no rate-limit hit.
+        if await abuse_tracker.is_silenced(self.bot.db, guild_id, user_id):
+            await interaction.response.send_message(voice.pick(voice.ABUSE_SILENCED), ephemeral=True)
+            return
+
         # Rate limit check first, fail fast before doing work.
         try:
             allowed, _, _ = await check_user_limit(self.bot.db, user_id, guild_id, "ask")
@@ -56,6 +61,18 @@ class Ask(commands.Cog):
         if not allowed:
             await interaction.response.send_message(voice.pick(voice.RATE_LIMIT_HIT), ephemeral=True)
             return
+
+        # Abuse detection before deferring so we can still use send_message (not followup).
+        # Haiku classifier, calibrated conservatively, fail-open on errors.
+        if await self.bot.claude.classify_abuse(question):
+            count = await abuse_tracker.record_violation(self.bot.db, guild_id, user_id)
+            if count >= abuse_tracker.ABUSE_THRESHOLD:
+                await interaction.response.send_message(voice.pick(voice.ABUSE_SILENCED), ephemeral=True)
+                return
+            if count >= abuse_tracker.WARN_AT:
+                await interaction.response.send_message(voice.pick(voice.ABUSE_WARNING), ephemeral=True)
+                return
+            # First violation: let Claude handle it via the constitution; fall through.
 
         await interaction.response.defer(thinking=True)
         me = interaction.guild.me if interaction.guild else None
@@ -194,6 +211,10 @@ class Ask(commands.Cog):
         if not question:
             return
 
+        # Silenced users: completely silent treatment (no reply).
+        if await abuse_tracker.is_silenced(self.bot.db, message.guild.id, message.author.id):
+            return
+
         try:
             allowed, _, _ = await check_user_limit(
                 self.bot.db, message.author.id, message.guild.id, "ask"
@@ -204,6 +225,21 @@ class Ask(commands.Cog):
         if not allowed:
             await message.reply(voice.pick(voice.RATE_LIMIT_HIT), mention_author=False)
             return
+
+        # Abuse detection: Haiku classifier, fail-open. Mention warnings are
+        # public replies (mods + room see the call-out); silenced users get
+        # complete silence (no reply) at the on_message entry above.
+        if await self.bot.claude.classify_abuse(question):
+            count = await abuse_tracker.record_violation(
+                self.bot.db, message.guild.id, message.author.id,
+            )
+            if count >= abuse_tracker.ABUSE_THRESHOLD:
+                await message.reply(voice.pick(voice.ABUSE_SILENCED), mention_author=False)
+                return
+            if count >= abuse_tracker.WARN_AT:
+                await message.reply(voice.pick(voice.ABUSE_WARNING), mention_author=False)
+                return
+            # First violation: let Claude handle via the constitution; fall through.
 
         async with message.channel.typing():
             try:

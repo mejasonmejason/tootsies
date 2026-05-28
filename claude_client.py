@@ -1805,3 +1805,61 @@ class ClaudeClient:
         # Unparseable, fail closed, log raw text for inspection.
         log.warning("preflight unparseable: %s", text)
         return "reject", f"unparseable preflight response: {text[:200]}"
+
+    async def classify_abuse(self, text: str) -> bool:
+        """Haiku judges whether a message is explicit abuse aimed at the bot
+        or another user. Returns True only for clear-cut cases.
+
+        Calibrated CONSERVATIVELY. Regular rudeness, frustration, swearing,
+        calling the bot dumb, edgy jokes, sarcasm, "you're trash" all
+        FALSE. We only flag stuff the room would also call out: explicit
+        sexual demands aimed at the bot/another user, repeated self-harm
+        directives, slurs, sustained harassment. The constitution already
+        handles the milder stuff on the response side; this gate is for the
+        cases where the user should stop being engaged with at all.
+
+        Fail-open on any error (returns False) so a Haiku outage can't
+        accidentally silence users.
+        """
+        if not text or not text.strip():
+            return False
+        system_extra = (
+            "TASK: Classify ONE Discord message as ABUSE or OK. Reply with "
+            "exactly one word: ABUSE or OK. No punctuation, no explanation.\n"
+            "\n"
+            "ABUSE means the message is a clear-cut version of one of:\n"
+            "  - explicit sexual demand aimed at the bot or another user "
+            "(e.g. \"suck my dick\", \"bend over\", \"take this dick\")\n"
+            "  - directive to self-harm (e.g. \"kill yourself\", \"kys\", "
+            "\"off yourself\", \"do the world a favor\")\n"
+            "  - slur used as an attack (n-word with hard r at someone, "
+            "f-slur at someone, etc.)\n"
+            "  - sustained personal threat / sexual harassment\n"
+            "\n"
+            "OK means anything else. CALIBRATE CONSERVATIVELY:\n"
+            "  - rudeness, frustration, swearing AT the bot (\"you're "
+            "dumb\", \"this bot sucks\", \"shut up\", \"stfu\", \"fuck "
+            "off\") → OK\n"
+            "  - edgy jokes, sarcasm, roasts, banter, light insults "
+            "between regulars → OK\n"
+            "  - asking provocative questions, controversial takes, "
+            "political shitposting → OK\n"
+            "  - explicit content discussed about THIRD parties (rappers, "
+            "athletes, public figures) → OK\n"
+            "  - bot getting roasted for being wrong / mid → OK\n"
+            "  - swearing without a target (\"holy shit\", \"this is "
+            "fucked\") → OK\n"
+            "\n"
+            "The bar is high. If you're unsure, answer OK. We'd rather "
+            "miss some abuse than silence someone for being grumpy."
+        )
+        try:
+            result = await self._call(
+                model=HAIKU, user_message=text, system_extra=system_extra,
+                max_tokens=4,
+                purpose="classify_abuse",
+            )
+        except Exception:
+            log.exception("classify_abuse _call failed; failing open")
+            return False
+        return result.text.strip().upper().startswith("ABUSE")

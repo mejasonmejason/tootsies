@@ -88,6 +88,10 @@ Known kinds (keep this list in sync with what's emitted):
   - market_fetch       : sports/prediction-market enricher call (utils/markets.py)
       source (sgo|polymarket|kalshi), query, ok, duration_ms,
       cache_hit, result_count, error (on failure)
+  - abuse_warned       : user hit WARN_AT violations in a session (utils/abuse_tracker.py)
+      guild_id, user_id, violations
+  - abuse_silenced     : user hit ABUSE_THRESHOLD and is silenced for the session
+      guild_id, user_id, violations
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.

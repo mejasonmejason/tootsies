@@ -443,6 +443,48 @@ async def test_deflect_uses_haiku_with_low_max_tokens() -> None:
 
 
 @pytest.mark.asyncio
+async def test_classify_abuse_uses_haiku_with_tiny_budget() -> None:
+    """Abuse classifier is a binary judge: Haiku with a 4-token cap."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="ABUSE"))
+    with patch.object(client, "_call", fake):
+        out = await client.classify_abuse("kill yourself bot")
+    assert out is True
+    kwargs = fake.call_args.kwargs
+    assert kwargs["model"] == HAIKU
+    assert kwargs["max_tokens"] == 4
+    assert kwargs["purpose"] == "classify_abuse"
+
+
+@pytest.mark.asyncio
+async def test_classify_abuse_returns_false_on_ok_label() -> None:
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="OK"))
+    with patch.object(client, "_call", fake):
+        assert await client.classify_abuse("you're dumb bot") is False
+
+
+@pytest.mark.asyncio
+async def test_classify_abuse_fails_open_on_exception() -> None:
+    """A Haiku outage can't accidentally silence users (fail-open returns False)."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(side_effect=RuntimeError("haiku down"))
+    with patch.object(client, "_call", fake):
+        assert await client.classify_abuse("anything") is False
+
+
+@pytest.mark.asyncio
+async def test_classify_abuse_empty_returns_false_without_api_call() -> None:
+    """Don't burn a Haiku call on empty/whitespace text."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock()
+    with patch.object(client, "_call", fake):
+        assert await client.classify_abuse("") is False
+        assert await client.classify_abuse("   ") is False
+    fake.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_preflight_uses_sonnet() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="ALLOW: ok"))

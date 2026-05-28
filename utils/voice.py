@@ -85,6 +85,18 @@ KITCHEN_CLOSED = [
     "We're not taking orders. Ask a mod why.",
 ]
 
+ABUSE_WARNING = [
+    "that's your warning. one more like that and I'm out.",
+    "heads up. you've got one left before I stop engaging.",
+    "keep it clean. next one and we're done.",
+]
+
+ABUSE_SILENCED = [
+    "bar's closed for you. we're done.",
+    "cut off. not engaging.",
+    "done. take it somewhere else.",
+]
+
 
 def pick(pool: list[str]) -> str:
     """Random variant from a pool."""
