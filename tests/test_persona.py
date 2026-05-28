@@ -39,6 +39,20 @@ def test_data_integrity_covers_non_market_verifiable_facts() -> None:
         assert needle in HARD_RULES, f"missing data-integrity term: {needle}"
 
 
+def test_calibration_covers_in_character_refusals() -> None:
+    """Refusals must stay in character (bartender brush-off, not compliance lecture).
+    Without this guidance the bot defaults to "that's a federal crime" explainers
+    that break the persona on requests like "advice for my spoofing agency"."""
+    from constitution import CALIBRATION
+
+    lowered = CALIBRATION.lower()
+    assert "refusal" in lowered, "calibration must address refusal voice"
+    # Either of these landmarks pins the "no compliance lecture" intent.
+    assert "statute" in lowered or "compliance" in lowered, (
+        "calibration should rule out statute citations / compliance-lecture refusals"
+    )
+
+
 def test_persona_voice_markers() -> None:
     """The persona should still describe Toots's distinctive voice."""
     assert "Toots" in PERSONA_CORE
