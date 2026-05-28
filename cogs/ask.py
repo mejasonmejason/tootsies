@@ -18,7 +18,7 @@ from discord.ext import commands
 
 from utils import abuse_tracker, bot_logs, voice
 from utils.events import emit_error
-from utils.feeds import format_for_prompt, recent_image_urls, recent_messages
+from utils.feeds import _strip_html, format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.markets import MarketSnapshot
@@ -257,8 +257,9 @@ class Ask(commands.Cog):
         # user's raw text only.
         prompt_question = question
         if replying_to_toots and reply_quote:
-            quoted = re.sub(r"<[^>]+>", "", reply_quote)  # drop any cite/html tags
-            quoted = re.sub(r"\s+", " ", quoted).strip()[:300]
+            # _strip_html drops cite/html tags AND unescapes entities, matching
+            # how channel context is cleaned elsewhere.
+            quoted = re.sub(r"\s+", " ", _strip_html(reply_quote)).strip()[:300]
             if quoted:
                 prompt_question = f'[replying to your earlier message: "{quoted}"] {question}'
 
