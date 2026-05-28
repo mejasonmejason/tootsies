@@ -311,6 +311,15 @@ _POST_GROUNDING = (
     "  BAD narrates the room and hands out assignments like an editor. "
     "GOOD is a person IN the room with an opinion.\n"
     "\n"
+    "  BAD: 'freddie gibbs drops RBT tonight and nobody in here is talking "
+    "about it.'\n"
+    "  GOOD: 'freddie gibbs drops RBT tonight. three tracks, no features, "
+    "just straight rap.'\n"
+    "  BAD manufactures importance by narrating silence ('nobody's talking "
+    "about it', 'this is criminally slept on'). That's curator mode and "
+    "it's usually not even true. Cut it. GOOD just says the thing and "
+    "trusts it to land.\n"
+    "\n"
     "ACCURACY IS NON-NEGOTIABLE. Every claim you make (a score, a stat, "
     "a name, a matchup, a song, an event) must come from the conversation "
     "or your web_search results. If you can't verify it, don't say it. "
@@ -346,6 +355,11 @@ _POST_GROUNDING = (
     "'just dropped'. A finale that aired 5 days ago is not 'tonight'. "
     "Wrong times go out public and kill credibility. When in doubt, "
     "include the actual date.\n"
+    "TENSE: web_search the release/event date and check it against now "
+    "before you pick a tense. A thing that hasn't happened yet DROPS / IS "
+    "DROPPING / COMES tonight, it has not 'dropped'. 'dropped tonight' for "
+    "an album still hours away is a tell that you didn't check. Future = "
+    "drops/dropping, already out = dropped.\n"
     "\n"
     "IMAGES + REACTIONS: when vision blocks are attached, look at them. "
     "If the picture matters (who's in it, the meme, the screenshot), "
@@ -404,6 +418,7 @@ class ClaudeClient:
         tools: list[dict[str, Any]] | None = None,
         purpose: str = "unknown",
         image_urls: list[str] | None = None,
+        thinking_enabled: bool = False,
     ) -> ClaudeResult:
         # System prompt is a list with a cache_control marker on the persona block so
         # repeat calls hit the prompt cache (the persona is ~1k tokens and stable).
@@ -439,6 +454,16 @@ class ClaudeClient:
         }
         if tools:
             kwargs["tools"] = tools
+        if thinking_enabled:
+            # Adaptive thinking keeps inter-tool-call reasoning in thinking
+            # blocks (which _call drops) instead of leaking into text blocks
+            # that ship to Discord. Thinking tokens count toward max_tokens,
+            # so floor it at 4096 to give medium effort room — visible output
+            # is still bounded by the persona prompt's tweet-length rule.
+            kwargs["thinking"] = {"type": "adaptive"}
+            kwargs["output_config"] = {"effort": "medium"}
+            if max_tokens < 4096:
+                kwargs["max_tokens"] = 4096
 
         start = time.monotonic()
         ok = True
@@ -711,6 +736,7 @@ class ClaudeClient:
             tools=tools,
             purpose="ask",
             image_urls=image_urls,
+            thinking_enabled=use_web,
         )
 
         # URL guardrail: strip hallucinated URLs and dedup URLs already
@@ -1058,6 +1084,7 @@ class ClaudeClient:
             max_tokens=MAX_TOKENS_POST,
             purpose="discourse_manual" if must_post else "discourse_scheduled",
             image_urls=image_urls,
+            thinking_enabled=True,
         )
 
         # URL guardrail: strip hallucinated URLs and dedup URLs already
@@ -1288,6 +1315,7 @@ class ClaudeClient:
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             max_tokens=MAX_TOKENS_POST,
             purpose="music_post",
+            thinking_enabled=True,
         )
 
         feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
@@ -1542,6 +1570,7 @@ class ClaudeClient:
             max_tokens=MAX_TOKENS_POST,
             purpose="chimein_post",
             image_urls=image_urls,
+            thinking_enabled=True,
         )
 
         feed_urls = (

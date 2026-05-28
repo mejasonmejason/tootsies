@@ -165,6 +165,51 @@ async def test_call_emits_claude_api_event_on_failure_and_reraises(
     assert any("claude_api" in m and "\"ok\":false" in m for m in events)
 
 
+# ---- adaptive thinking ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_omits_thinking_by_default() -> None:
+    client, create = _client_with_fake_anthropic()
+    await client._call(model=SONNET, user_message="x", purpose="ask")
+    kwargs = create.call_args.kwargs
+    assert "thinking" not in kwargs
+    assert "output_config" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_call_passes_adaptive_thinking_when_enabled() -> None:
+    """Adaptive thinking + medium effort is the leak fix from the music-post bug."""
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=SONNET, user_message="x", purpose="music_post", thinking_enabled=True,
+    )
+    kwargs = create.call_args.kwargs
+    assert kwargs["thinking"] == {"type": "adaptive"}
+    assert kwargs["output_config"] == {"effort": "medium"}
+
+
+@pytest.mark.asyncio
+async def test_call_floors_max_tokens_at_4096_when_thinking_enabled() -> None:
+    """Thinking tokens count toward max_tokens; tweet-length caps (150/400) starve it."""
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=SONNET, user_message="x", purpose="post",
+        max_tokens=150, thinking_enabled=True,
+    )
+    assert create.call_args.kwargs["max_tokens"] == 4096
+
+
+@pytest.mark.asyncio
+async def test_call_preserves_caller_max_tokens_when_already_above_floor() -> None:
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=SONNET, user_message="x", purpose="ask",
+        max_tokens=8192, thinking_enabled=True,
+    )
+    assert create.call_args.kwargs["max_tokens"] == 8192
+
+
 # ---- public method routing --------------------------------------------------------
 
 
@@ -259,6 +304,7 @@ async def test_recap_uses_sonnet_with_web_search() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_recap_strips_hallucinated_urls() -> None:
     """Recap goes to Discord like ask/discourse, so it gets the same guardrail."""
     from claude_client import ClaudeResult
@@ -300,6 +346,37 @@ async def test_recap_keeps_hot_url_when_model_quotes_it() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ask_enables_thinking_when_use_web_is_true() -> None:
+    """With web_search on, inter-tool-call reasoning must go in thinking blocks
+    (not text blocks) so it can't leak into the user-visible reply."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="answer"))
+    with patch.object(client, "_call", fake):
+        await client.ask("q", use_web=True)
+    assert fake.call_args.kwargs["thinking_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_ask_omits_thinking_when_no_web_search() -> None:
+    """No tools = no inter-tool narration to leak. Don't pay for thinking tokens."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="answer"))
+    with patch.object(client, "_call", fake):
+        await client.ask("q", use_web=False)
+    assert fake.call_args.kwargs["thinking_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_recap_does_not_enable_thinking() -> None:
+    """Recap stays on the cheap path: opted out of thinking by design."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="recap"))
+    with patch.object(client, "_call", fake):
+        await client.recap("general", "msg blob")
+    assert fake.call_args.kwargs.get("thinking_enabled", False) is False
+
+
+@pytest.mark.asyncio
 async def test_discourse_uses_sonnet() -> None:
     """/discourse needs more judgment so it routes to Sonnet, not Haiku."""
     client = ClaudeClient(api_key="test")
@@ -307,6 +384,33 @@ async def test_discourse_uses_sonnet() -> None:
     with patch.object(client, "_call", fake):
         await client.discourse("hiphop", "sources blob")
     assert fake.call_args.kwargs["model"] == SONNET
+
+
+@pytest.mark.asyncio
+async def test_discourse_enables_thinking() -> None:
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.discourse("hiphop", "sources blob")
+    assert fake.call_args.kwargs["thinking_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_music_post_enables_thinking() -> None:
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.music_post("sources blob")
+    assert fake.call_args.kwargs["thinking_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_chimein_post_enables_thinking() -> None:
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="reply"))
+    with patch.object(client, "_call", fake):
+        await client.chimein_post("buffer blob", hook="lakers convo")
+    assert fake.call_args.kwargs["thinking_enabled"] is True
 
 
 @pytest.mark.asyncio
