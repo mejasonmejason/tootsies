@@ -400,12 +400,26 @@ async def test_kalshi_fetch_open_event_series_tickers_paginates_and_dedupes():
 
 async def test_kalshi_fetch_open_event_series_tickers_http_error_returns_none():
     client = KalshiClient()
-    with patch(
-        "utils.markets._get_session",
-        AsyncMock(return_value=_mock_session(_mock_resp(500))),
+    with (
+        patch(
+            "utils.markets._get_session",
+            AsyncMock(return_value=_mock_session(_mock_resp(500))),
+        ),
+        patch("utils.markets.emit") as emit_mock,
     ):
         result = await client._fetch_open_event_series_tickers()
     assert result is None
+    # The hourly degradation must surface as a structured market_fetch event
+    # (issue #91): it used to leave only a WARNING, invisible to dashboards.
+    fetches = [
+        c for c in emit_mock.call_args_list
+        if c.args and c.args[0] == "market_fetch"
+    ]
+    assert len(fetches) == 1, f"expected one market_fetch emit, got {emit_mock.call_args_list}"
+    assert fetches[0].kwargs["ok"] is False
+    assert fetches[0].kwargs["source"] == "kalshi"
+    assert fetches[0].kwargs["query"] == "open_events"
+    assert fetches[0].kwargs["error"] == "pagination_failed"
 
 
 async def test_kalshi_get_events_for_series_flattens_nested_markets():
