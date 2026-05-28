@@ -28,6 +28,17 @@ def test_house_rules_all_present() -> None:
         assert f"{rule_num}." in HOUSE_RULES
 
 
+def test_data_integrity_covers_non_market_verifiable_facts() -> None:
+    """DATA INTEGRITY originally just covered sports lines + market prices,
+    but the bot started repeating stale training-data numbers ("Drake has
+    13 #1s" when the current count is 14) on general /ask questions. The
+    rule must cover counts/records/dates and instruct the model to prefer
+    verified context over training memory."""
+    assert "DATA INTEGRITY" in HARD_RULES
+    for needle in ("records", "dates", "verified", "stale"):
+        assert needle in HARD_RULES, f"missing data-integrity term: {needle}"
+
+
 def test_persona_voice_markers() -> None:
     """The persona should still describe Toots's distinctive voice."""
     assert "Toots" in PERSONA_CORE

@@ -255,11 +255,18 @@ def build_search_query(
     """
     if surface == "ask":
         return (
-            f"What's the latest news and discourse about: {user_input}\n"
-            "Check Twitter/X, Reddit, Instagram/Threads, TikTok, YouTube, "
-            "and news outlets. Include breaking developments, trending "
-            "takes, relevant scores or stats, fan reactions, and any "
-            "facts from the last 24 hours."
+            f"Question: {user_input}\n\n"
+            "First, surface any VERIFIABLE FACTS the question depends on "
+            "(current counts, records, totals, chart positions, dates, "
+            '"most ever" / "first since" claims). Pull exact values from '
+            "authoritative sources (Wikipedia, Billboard, ESPN, official "
+            "league sites, label/artist pages, news outlets). If a specific "
+            "number or record is being asked about, give the precise current "
+            "value with the source.\n\n"
+            "Then, the latest news and discourse on the topic. Check "
+            "Twitter/X, Reddit, Instagram/Threads, TikTok, YouTube, and "
+            "news outlets for breaking developments, trending takes, fan "
+            "reactions from the last 24 hours."
         )
 
     if surface == "discourse":
@@ -299,9 +306,12 @@ def build_search_query(
 def format_perplexity_for_prompt(result: str) -> str:
     """Format Perplexity search results for injection into a Claude prompt."""
     return (
-        "REAL-TIME SEARCH CONTEXT (from Perplexity, current trending discourse "
-        "and social media; use to ground your take in what people are actually "
-        "saying right now. Don't mention Perplexity by name, but URLs in the "
-        "SOURCES block are real and linkable):\n"
+        "REAL-TIME SEARCH CONTEXT (from Perplexity, pulled live from authoritative "
+        "sources and social media for THIS question). Treat the specific numbers, "
+        "dates, names, counts, and records in this block as the current ground "
+        "truth and use them VERBATIM. If a value here disagrees with what you "
+        "remember from training, the value here wins, your training data is months "
+        "stale. Don't mention Perplexity by name. URLs in the SOURCES block are "
+        "real and linkable:\n"
         f"{result}"
     )

@@ -20,6 +20,17 @@ def test_build_query_ask():
     assert "drake" in q.lower()
 
 
+def test_build_query_ask_leads_with_fact_verification():
+    """Ask queries must instruct Perplexity to verify facts before discourse,
+    so verifiable counts/records ("how many #1s") come back grounded in
+    authoritative sources rather than ambient social chatter."""
+    q = build_search_query("how many number 1 hot 100s does drake have", surface="ask")
+    fact_terms = ("verifiable", "authoritative", "wikipedia", "billboard")
+    assert any(t in q.lower() for t in fact_terms), (
+        f"ask query should signal fact verification, got: {q}"
+    )
+
+
 def test_build_query_discourse_with_category():
     q = build_search_query("", surface="discourse", category="nba")
     assert "nba" in q.lower()
@@ -64,6 +75,20 @@ def test_format_prompt_includes_header():
     assert "REAL-TIME SEARCH CONTEXT" in result
     assert "drake is beefing with kendrick" in result
     assert "Perplexity" in result
+
+
+def test_format_prompt_flags_block_as_fact_authoritative():
+    """The block must read to Claude as ground-truth-for-this-question, not
+    just 'vibes'. Otherwise the model falls back to stale training memory on
+    specific counts/records that the verified context contradicts."""
+    result = format_perplexity_for_prompt("drake has 14 number ones on the hot 100")
+    lower = result.lower()
+    # Some phrasing that nudges the model to prefer the verified value over
+    # what training data remembers.
+    fact_signals = ("ground truth", "verbatim", "wins", "stale", "override")
+    assert any(s in lower for s in fact_signals), (
+        f"format header should signal fact-authority over training memory, got: {result}"
+    )
 
 
 # ---- PerplexityClient ----------------------------------------------------------
