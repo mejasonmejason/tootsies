@@ -243,13 +243,51 @@ class Order(commands.GroupCog, name="order"):  # type: ignore[call-arg]
             await interaction.response.send_message("nothing on the rail.", ephemeral=True)
             return
 
+        display = orders[:15]
+        await self._reconcile_from_github(display, guild_id, interaction.user.id)
+
         lines = []
-        for o in orders[:15]:
+        for o in display:
             emoji = ORDER_STATUS_EMOJI[o.status]
             label = ORDER_STATUS_LABEL[o.status]
             ref = f"issue #{o.issue_number}" if o.issue_number else f"order {o.id}"
             lines.append(f"{emoji} **{label}** · {ref} · {o.summary[:60]}")
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    async def _reconcile_from_github(
+        self, orders: list, guild_id: int, actor_id: int,
+    ) -> None:
+        """Flip non-terminal orders to SERVED when their GitHub issue is closed.
+
+        The close-on-deploy workflow only closes the issue after a successful
+        Railway deploy, so issue.state == "closed" is a reliable served signal.
+        Anything that mods close manually (/order cancel, /order retry) already
+        lives in a terminal state, so we skip those.
+        """
+        stuck = [o for o in orders if o.status not in TERMINAL_STATUSES and o.issue_number]
+        if not stuck:
+            return
+        for o in stuck:
+            try:
+                issue = await self.bot.gh.get_issue(o.issue_number)  # type: ignore[arg-type]
+            except Exception:
+                log.exception("issue reconcile fetch failed for #%s", o.issue_number)
+                continue
+            if issue.get("state") != "closed":
+                continue
+            prev = o.status
+            try:
+                await self.bot.db.update_order(o.id, status=OrderStatus.SERVED)
+            except Exception:
+                log.exception("issue reconcile DB write failed for order #%s", o.id)
+                continue
+            o.status = OrderStatus.SERVED
+            emit(
+                "order_state",
+                order_id=o.id, issue_number=o.issue_number,
+                guild_id=guild_id, user_id=actor_id,
+                **{"from": prev.value, "to": OrderStatus.SERVED.value, "via": "reconcile"},
+            )
 
     # ---- /order retry -----------------------------------------------------------
 

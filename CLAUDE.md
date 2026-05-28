@@ -31,15 +31,9 @@ curl -s -X POST https://backboard.railway.com/graphql/v2 \
 
 Quick triage: a FAILED deployment whose `meta` has no `imageDigest` died in `buildLogs`; one with an `imageDigest` died at runtime or healthcheck (use `deploymentLogs`).
 
-## Recovering a stuck order DB row
+## Order status reconciliation
 
-When close-on-deploy.yml fails (e.g. the `update_order_status.py` step errored before the row was flipped), the GitHub issue may already be closed but `/order status` keeps showing the order as "Prepping" / "On the stove" because the bot DB row never advanced. To fix it manually, from a machine with Railway CLI auth on this project:
-
-```bash
-railway run --service tootsies python scripts/update_order_status.py <issue_number> served
-```
-
-Statuses are defined in `models.OrderStatus` (`prepping`, `on_the_stove`, `plating`, `served`, `burnt`, `sent_back`). The Railway sandbox where Claude Code on the web runs has the API token but its outbound network policy blocks the public Postgres proxy, so the script can only be run locally or from inside the Railway runtime.
+`/order status` lazy-reconciles in-flight orders against GitHub on every invocation: for any non-terminal row with an `issue_number`, it fetches the issue and flips the row to SERVED if the issue is closed. The close-on-deploy workflow only closes the issue on successful Railway deploy, so a closed issue is a reliable served signal. This replaces the previous out-of-band `scripts/update_order_status.py` flow, which broke whenever the GitHub Actions runner couldn't reach Railway's Postgres host.
 
 ## Commands
 
