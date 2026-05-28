@@ -183,6 +183,23 @@ async def test_ask_uses_sonnet_with_web_search_when_use_web() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ask_system_prompt_tells_model_to_prefer_verified_values() -> None:
+    """The ask prompt must explicitly tell Claude that specific numbers /
+    dates / counts in REAL-TIME SEARCH CONTEXT, MARKET CONTEXT, or enriched
+    links override what training data remembers. Without this, the model
+    will keep answering 'Drake has 13 #1s' when Perplexity returned 14."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="answer"))
+    with patch.object(client, "_call", fake):
+        await client.ask("q")
+    system_extra = fake.call_args.kwargs["system_extra"].lower()
+    # The "override / wins / verified beats memory" intent, in any of the
+    # phrasings the prompt could land on.
+    assert "verified" in system_extra
+    assert "stale" in system_extra or "override" in system_extra or "wins" in system_extra
+
+
+@pytest.mark.asyncio
 async def test_ask_passes_image_urls_through() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="answer"))
