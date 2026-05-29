@@ -1066,6 +1066,7 @@ class ClaudeClient:
         recent_with_timestamps: str = "",
         *,
         channel_name: str = "",
+        channel_topic: str | None = None,
         must_post: bool = True,
         image_urls: list[str] | None = None,
         hot_urls: list[tuple[str, int, str, str]] | None = None,
@@ -1129,6 +1130,29 @@ class ClaudeClient:
         markets_block = ""
         if markets_context:
             markets_block = "\n\n" + format_markets_for_prompt(markets_context)
+
+        # Channel theme: the server's Discord channel description (the "topic"
+        # field). When set, it's a HARD constraint on subject matter, this is
+        # how a #screening-room described as a film channel keeps a Drake chart
+        # story out and a #main-stage described as music gets it instead. An
+        # explicit /discourse category: still wins (the user asked on purpose).
+        theme_block = ""
+        topic_clean = (channel_topic or "").strip()
+        if topic_clean and not category:
+            theme_block = (
+                "\n\nCHANNEL THEME (set by the server as this channel's Discord "
+                f"description):\n  \"{topic_clean}\"\n"
+                "This channel is FOR that theme. Your post must fit it. A story "
+                "that belongs in a different channel does NOT belong here just "
+                "because it's the hottest thing today (a music chart story in a "
+                "film channel, a trade rumor in a music channel, etc.). If "
+                "nothing fresh fits this channel's theme right now, "
+                + (
+                    "pick the closest on-theme angle you can find, the user asked so you must post."
+                    if must_post
+                    else "return EMPTY (literally the word EMPTY) so we skip this slot."
+                )
+            )
 
         system_extra = (
             "TASK: Post one conversation-starter in your voice with a "
@@ -1216,12 +1240,19 @@ class ClaudeClient:
             "  THE PATTERN: kill 'the most X' constructions. Kill labels "
             "('energy', 'vibes', 'on-brand'). State the fact, then react "
             "to it like a person, not a commentator ranking it."
-            f"{hot_urls_block}{enriched_block}{perplexity_block}{markets_block}{dedup_clause}"
+            f"{theme_block}{hot_urls_block}{enriched_block}{perplexity_block}{markets_block}"
+            f"{dedup_clause}"
             + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
+        theme_line = (
+            f"Channel theme: {topic_clean}\n" if topic_clean and not category else ""
+        )
         category_line = f"Category: {category}\n" if category else ""
-        user = f"{channel_line}{category_line}Read the room.\n\nAvailable sources:\n{sources_blob}"
+        user = (
+            f"{channel_line}{theme_line}{category_line}"
+            f"Read the room.\n\nAvailable sources:\n{sources_blob}"
+        )
         result = await self._call(
             model=SONNET,
             user_message=user,

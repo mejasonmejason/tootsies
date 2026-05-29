@@ -210,6 +210,12 @@ class Discourse(commands.Cog):
         me = guild.me
         assert me is not None
 
+        # The channel's Discord description (topic field) is a per-channel theme:
+        # it keeps off-theme stories out (a music chart story out of a film
+        # channel) without any new DB schema or /menu config. Threads have no
+        # topic; getattr keeps the union type happy.
+        channel_topic = (getattr(channel, "topic", None) or "").strip() or None
+
         sources: list[str] = []
         all_feed_msgs: list[discord.Message] = []
 
@@ -253,6 +259,7 @@ class Discourse(commands.Cog):
                 build_search_query(
                     "", surface="discourse",
                     category=category, channel_name=channel.name,
+                    channel_topic=channel_topic,
                 ),
                 purpose="discourse",
             ))
@@ -298,6 +305,7 @@ class Discourse(commands.Cog):
         compose_kwargs: dict[str, Any] = dict(
             category=category, sources_blob=sources_blob,
             recent_with_timestamps=recent_blob, channel_name=channel.name,
+            channel_topic=channel_topic,
             image_urls=image_urls, hot_urls=feed_hot_urls,
             enriched_links=enriched, perplexity_context=pplx_result,
             recently_seen_urls=recently_seen_urls,
@@ -307,7 +315,8 @@ class Discourse(commands.Cog):
         line = await self.bot.claude.discourse(
             compose_kwargs["category"], compose_kwargs["sources_blob"],
             recent_with_timestamps=compose_kwargs["recent_with_timestamps"],
-            channel_name=compose_kwargs["channel_name"], must_post=must_post,
+            channel_name=compose_kwargs["channel_name"],
+            channel_topic=compose_kwargs["channel_topic"], must_post=must_post,
             image_urls=compose_kwargs["image_urls"],
             hot_urls=compose_kwargs["hot_urls"],
             enriched_links=compose_kwargs["enriched_links"],
@@ -369,7 +378,8 @@ class Discourse(commands.Cog):
         line2 = await self.bot.claude.discourse(
             compose_kwargs["category"], compose_kwargs["sources_blob"],
             recent_with_timestamps=compose_kwargs["recent_with_timestamps"],
-            channel_name=compose_kwargs["channel_name"], must_post=True,
+            channel_name=compose_kwargs["channel_name"],
+            channel_topic=compose_kwargs["channel_topic"], must_post=True,
             image_urls=compose_kwargs["image_urls"],
             hot_urls=compose_kwargs["hot_urls"],
             enriched_links=compose_kwargs["enriched_links"],
