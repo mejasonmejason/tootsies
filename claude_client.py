@@ -624,7 +624,7 @@ class ClaudeClient:
 
         `girls_context`, if provided, is a comma-joined list of display names of
         patrons in the room who wear the house's "girls" role (configured via
-        /squad). Toots is extra warm and feminine with her girls. It's a tone
+        /girls). Toots is extra warm and feminine with her girls. It's a tone
         cue, not a license to disclose anything, the constitution still gates
         what she says.
 

@@ -1,9 +1,9 @@
-"""/squad family, tell Toots who her girls are.
+"""/girls family, tell Toots who her girls are.
 
-/squad show              list the roles Toots treats as her girls
-/squad add <role>        add a role to her girls (mods only)
-/squad remove <role>     drop a role from her girls (mods only)
-/squad clear             clear the whole list (mods only)
+/girls show              list the roles Toots treats as her girls
+/girls add <role>        add a role to her girls (mods only)
+/girls remove <role>     drop a role from her girls (mods only)
+/girls clear             clear the whole list (mods only)
 
 Anyone wearing one of these roles gets the extra-warm, feminine, sisterly
 treatment in /ask + @mentions (see claude_client.ask's girls_context). Storage
@@ -35,13 +35,13 @@ log = logging.getLogger(__name__)
 _NO_PING = discord.AllowedMentions.none()
 
 
-class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
+class Girls(commands.GroupCog, name="girls"):  # type: ignore[call-arg]
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
         super().__init__()
 
     @app_commands.command(name="show", description="see which roles toots treats as her girls.")
-    @track_command("squad show")
+    @track_command("girls show")
     async def show(self, interaction: discord.Interaction) -> None:
         if not await require_configured(interaction, self.bot.db):
             return
@@ -49,7 +49,7 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
         role_ids = await self.bot.db.get_girls_roles(interaction.guild.id)
         if not role_ids:
             await interaction.response.send_message(
-                "haven't met my girls yet. a mod can point them out with `/squad add`.",
+                "haven't met my girls yet. a mod can point them out with `/girls add`.",
                 ephemeral=True,
             )
             return
@@ -65,7 +65,7 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
 
     @app_commands.command(name="add", description="add a role to toots' girls. (mods only)")
     @app_commands.describe(role="the role to treat as one of the girls")
-    @track_command("squad add")
+    @track_command("girls add")
     async def add(self, interaction: discord.Interaction, role: discord.Role) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -82,7 +82,7 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
         role_ids.append(role.id)
         await self.bot.db.set_girls_roles(guild_id, role_ids, actor_id=interaction.user.id)
         await self.bot.db.audit(
-            guild_id, interaction.user.id, "squad_add", after={"role_id": role.id}
+            guild_id, interaction.user.id, "girls_add", after={"role_id": role.id}
         )
         await interaction.response.send_message(
             f"{role.mention}'s one of my girls now. i got them.",
@@ -91,7 +91,7 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
 
     @app_commands.command(name="remove", description="drop a role from toots' girls. (mods only)")
     @app_commands.describe(role="the role to stop treating as one of the girls")
-    @track_command("squad remove")
+    @track_command("girls remove")
     async def remove(self, interaction: discord.Interaction, role: discord.Role) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -108,7 +108,7 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
         role_ids = [rid for rid in role_ids if rid != role.id]
         await self.bot.db.set_girls_roles(guild_id, role_ids, actor_id=interaction.user.id)
         await self.bot.db.audit(
-            guild_id, interaction.user.id, "squad_remove", after={"role_id": role.id}
+            guild_id, interaction.user.id, "girls_remove", after={"role_id": role.id}
         )
         await interaction.response.send_message(
             f"took {role.mention} off the list. no drama.",
@@ -116,7 +116,7 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
         )
 
     @app_commands.command(name="clear", description="clear toots' whole girls list. (mods only)")
-    @track_command("squad clear")
+    @track_command("girls clear")
     async def clear(self, interaction: discord.Interaction) -> None:
         if not await self._mod_gate(interaction):
             return
@@ -128,7 +128,7 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
             )
             return
         await self.bot.db.set_girls_roles(guild_id, [], actor_id=interaction.user.id)
-        await self.bot.db.audit(guild_id, interaction.user.id, "squad_clear")
+        await self.bot.db.audit(guild_id, interaction.user.id, "girls_clear")
         await interaction.response.send_message("cleared the list. fresh slate.")
 
     async def _mod_gate(self, interaction: discord.Interaction) -> bool:
@@ -149,4 +149,4 @@ class Squad(commands.GroupCog, name="squad"):  # type: ignore[call-arg]
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Squad(cast("TootsiesBot", bot)))
+    await bot.add_cog(Girls(cast("TootsiesBot", bot)))

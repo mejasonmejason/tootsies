@@ -212,7 +212,7 @@ class Ask(commands.Cog):
         asker: discord.Member | None,
     ) -> str | None:
         """Names of patrons in the room who wear the guild's configured "girls"
-        role (set via /squad), so Toots is extra warm with her girls. Built from
+        role (set via /girls), so Toots is extra warm with her girls. Built from
         the asker plus recent posters. Fail-open: a lookup error never blocks an
         answer, it just drops the warmth cue.
         """

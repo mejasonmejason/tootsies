@@ -41,7 +41,7 @@ COGS = [
     "cogs.order",
     "cogs.admin",
     "cogs.settings",
-    "cogs.squad",
+    "cogs.girls",
     "cogs.help",
     "cogs.chimein",
     "cogs.music",
