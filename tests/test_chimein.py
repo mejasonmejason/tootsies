@@ -31,11 +31,20 @@ from cogs.chimein import (
     HOURS_END_ET_NEXT_DAY,
     HOURS_START_ET,
     MOOD_TUNING,
+    REACT_TARGET_WINDOW,
     SKIP_VIBES,
     ChimeIn,
 )
 from models import MoodMode, ScheduleState
 from utils.dedup import is_duplicate_of_recent
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_react_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The react target is random.choice over the recent buffer slice; pin it to
+    the last message so tests that place their target last stay deterministic.
+    Tests that exercise the randomness itself override this."""
+    monkeypatch.setattr("cogs.chimein.random.choice", lambda seq: seq[-1])
 
 # ---- _parse_chimein_score ----------------------------------------------------
 
@@ -600,6 +609,39 @@ async def test_react_uses_scorer_emoji_on_bare_message(
     await cog._maybe_chime_in_one(1, 2)
 
     target.add_reaction.assert_awaited_once_with("🧢")
+
+
+@pytest.mark.asyncio
+async def test_react_target_is_random_over_recent_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The target is a random message from the recent slice, not always the last."""
+    captured: dict[str, Any] = {}
+
+    def fake_choice(seq: Any) -> Any:
+        seq = list(seq)
+        captured["seq"] = seq
+        return seq[0]  # pick the OLDEST in the window, proving it's not hardcoded to [-1]
+
+    monkeypatch.setattr("cogs.chimein.random.choice", fake_choice)
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
+    _force_et_hour(monkeypatch, 12)
+    targets = [_reactable_message() for _ in range(3)]
+    for m in targets:
+        cog._buffers[(1, 2)].append(m)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    # choice ran over the recent window (<= REACT_TARGET_WINDOW), and the picked
+    # (oldest-in-window) message got the reaction, not the trailing one.
+    assert 0 < len(captured["seq"]) <= REACT_TARGET_WINDOW
+    targets[0].add_reaction.assert_awaited_once()
+    for m in targets[1:]:
+        m.add_reaction.assert_not_awaited()
 
 
 def test_skip_vibes_subset_of_known_vibes() -> None:

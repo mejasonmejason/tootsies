@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
@@ -79,6 +80,13 @@ CHIMEIN_QUALITY_THRESHOLD = 0.6
 # above the post cap because a reaction is free (no API call, no clutter, no ping).
 REACT_THRESHOLD = 0.45
 REACT_COOLDOWN = timedelta(minutes=10)
+# Which buffered message the reaction lands on. We pick ONE message at random
+# from the most recent slice rather than always the trailing line, so a 🔥/🕐/etc
+# stamps a specific take instead of whatever one-liner happened to land last (the
+# trailing message is often an unrelated reply, e.g. a "😭" to someone else's
+# point). Bounded to the recent slice so she reacts to the current moment, not a
+# stale message from earlier in the buffer.
+REACT_TARGET_WINDOW = 8
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
@@ -490,12 +498,13 @@ class ChimeIn(commands.Cog):
         *,
         eligible: bool,
     ) -> bool:
-        """React to the latest *scored* message on a near-miss-or-better score.
+        """React to ONE randomly-chosen recent message on a near-miss-or-better score.
 
         Cheap path: no Claude call, no post, no chimein post-cooldown/cap
         consumption. `eligible` is the DB-backed cooldown/daily-cap result.
-        `msgs` is the same snapshot the scorer saw, so the reaction can't drift
-        onto an unrelated message that arrived during the scoring await.
+        `msgs` is the same snapshot the scorer saw; we react to a random message
+        from its recent slice (not always the trailing line, which is often an
+        unrelated reply), so the emoji lands on a specific take.
         """
         if score < REACT_THRESHOLD or not eligible or not msgs:
             return False
@@ -507,7 +516,7 @@ class ChimeIn(commands.Cog):
         last_attempt = self._last_react_attempt.get(key)
         if last_attempt is not None and datetime.now(UTC) - last_attempt < REACT_COOLDOWN:
             return False
-        target = msgs[-1]
+        target = random.choice(msgs[-REACT_TARGET_WINDOW:])
         emoji = self._pick_react_emoji(target, vibe, suggested)
         self._last_react_attempt[key] = datetime.now(UTC)
         if not await react(target, emoji, source="chimein"):
