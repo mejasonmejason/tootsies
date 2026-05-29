@@ -72,11 +72,11 @@ CHIMEIN_QUALITY_THRESHOLD = 0.6
 # at or above this floor (and the vibe isn't a skip), she drops a single reaction
 # instead of staying fully silent, the "I'm here, I clocked that" move. Reactions
 # never post or consume the chimein post cooldown / daily cap; they ride their own
-# light cooldown + the mood's daily cap so she doesn't pepper the room. The reaction
-# decision sits AFTER scoring, alongside the post decision, so it still fires during
-# the post-cooldown / post-cap silent gaps it's meant to fill. The per-day reaction
-# allowance reuses the mood's daily_cap (chill 5 / yaps 10), so a chattier mood
-# reacts more, same as it posts more.
+# light cooldown + a mood-tuned daily cap so she doesn't pepper the room. The
+# reaction decision sits AFTER scoring, alongside the post decision, so it still
+# fires during the post-cooldown / post-cap silent gaps it's meant to fill. The
+# per-day reaction allowance is the mood's react_cap (chill 15 / yaps 30), set well
+# above the post cap because a reaction is free (no API call, no clutter, no ping).
 REACT_THRESHOLD = 0.45
 REACT_COOLDOWN = timedelta(minutes=10)
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
@@ -99,22 +99,28 @@ TICK_SECONDS = 60
 class _MoodTuning:
     """Cadence knobs per mood. Higher threshold = more reserved Toots."""
 
-    __slots__ = ("threshold", "daily_cap", "cooldown")
+    __slots__ = ("threshold", "daily_cap", "cooldown", "react_cap")
 
-    def __init__(self, *, threshold: float, daily_cap: int, cooldown: timedelta) -> None:
+    def __init__(
+        self, *, threshold: float, daily_cap: int, cooldown: timedelta, react_cap: int,
+    ) -> None:
         self.threshold = threshold
         self.daily_cap = daily_cap
         self.cooldown = cooldown
+        # Reactions are free (no API call, no channel clutter, no ping), so they
+        # get a much higher daily allowance than posts, ~3x. Still mood-aware so
+        # a reserved mood reacts less than a chatty one.
+        self.react_cap = react_cap
 
 
 # Mirrors the discourse scheduler's 2:4 chill:yaps post ratio. Chill is the
 # reserved bartender, yaps is the one leaning across the bar.
 MOOD_TUNING: dict[MoodMode, _MoodTuning] = {
     MoodMode.CHILL: _MoodTuning(
-        threshold=0.8, daily_cap=5, cooldown=timedelta(minutes=40),
+        threshold=0.8, daily_cap=5, cooldown=timedelta(minutes=40), react_cap=15,
     ),
     MoodMode.YAPS: _MoodTuning(
-        threshold=0.6, daily_cap=10, cooldown=timedelta(minutes=20),
+        threshold=0.6, daily_cap=10, cooldown=timedelta(minutes=20), react_cap=30,
     ),
 }
 
@@ -265,7 +271,7 @@ class ChimeIn(commands.Cog):
         # never on the common about-to-post path.
         react_ok: bool | None = None
         if post_blocked:
-            react_ok = await self._react_eligible(guild_id, channel_id, tuning.daily_cap)
+            react_ok = await self._react_eligible(guild_id, channel_id, tuning.react_cap)
             if not react_ok:
                 emit(
                     "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
@@ -306,7 +312,7 @@ class ChimeIn(commands.Cog):
             # near-miss-or-better, otherwise go dark. The reaction is the lighter
             # acknowledgement that fills the gap a post would have left.
             if react_ok is None:
-                react_ok = await self._react_eligible(guild_id, channel_id, tuning.daily_cap)
+                react_ok = await self._react_eligible(guild_id, channel_id, tuning.react_cap)
             reacted = await self._maybe_react(
                 key, msgs, vibe, score, reaction, eligible=react_ok,
             )
