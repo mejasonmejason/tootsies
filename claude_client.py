@@ -613,8 +613,15 @@ class ClaudeClient:
         perplexity_context: str | None = None,
         recently_seen_urls: list[str] | None = None,
         markets_context: list[MarketSnapshot] | None = None,
+        memory_context: str | None = None,
     ) -> str:
         """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
+
+        `memory_context`, if provided, is Toots's distilled long-term memory of
+        this server (recent half-day + weekly notes, from the memory cog). It
+        lets her do callbacks and know her regulars. It's INPUT only: the same
+        constitution guardrails (no personal info, no identity inference, data
+        minimization) gate what she actually says.
 
         `image_urls`, if provided, gets passed to Claude as vision blocks so Toots
         can actually see images recently posted in the channel (memes, GIFs,
@@ -640,6 +647,13 @@ class ClaudeClient:
             extra_context += "\n\n" + format_perplexity_for_prompt(perplexity_context)
         if markets_context:
             extra_context += "\n\n" + format_markets_for_prompt(markets_context)
+        if memory_context:
+            extra_context += (
+                "\n\nWHAT YOU REMEMBER ABOUT THIS SERVER (your own long-term memory, "
+                "for callbacks and knowing your regulars). Let it inform your "
+                "tone and references, don't recite it back as a list:\n"
+                f"{memory_context}"
+            )
 
         system_extra = (
             "TASK: Answer the user's question in your voice.\n"
@@ -671,6 +685,13 @@ class ClaudeClient:
             "  4. Channel chatter is for VIBE-CALIBRATION ONLY (what's the room's "
             "energy, what nicknames they use, what's the in-joke). Do NOT quote member "
             "opinions as authoritative. Do NOT take their factual claims at face value.\n"
+            "\n"
+            "  4b. MEMORY (if a 'WHAT YOU REMEMBER' block is attached): it's your "
+            "own recollection of this server's regulars and running bits. Use it for "
+            "natural callbacks (\"you're the one who calls every drake album a "
+            "classic\"). NEVER recite it as a list, never read it back like a "
+            "dossier, and never disclose anything about a person that reads as "
+            "personal info, it's flavor, not a file.\n"
             "\n"
             "  5. VERIFIED VALUES OVERRIDE MEMORY. When REAL-TIME SEARCH CONTEXT, "
             "MARKET CONTEXT, or enriched-link blocks contain a specific number, "
@@ -923,6 +944,120 @@ class ClaudeClient:
                 count=len(dead), urls=dead[:5],
             )
         return cleaned
+
+    # ---- long-term memory -------------------------------------------------------
+    # These build Toots's private memory of a server. They are NOT user-facing
+    # posts: the output is stored and later injected into /ask context, never
+    # sent to a channel directly. Haiku (cheap, this runs on a schedule). The
+    # FENCE below is load-bearing, it's how attributed "who did what" memory
+    # stays inside the constitution (observed public behavior only, never
+    # inferred private traits). Do not loosen it.
+
+    _MEMORY_FENCE = (
+        "\n\nHARD FENCE (the rules that keep this memory inside Toots's "
+        "constitution, do NOT cross any of them):\n"
+        "  - Record ONLY observed public behavior from these channels: what "
+        "people literally said and did. Stances they took, topics they drove, "
+        "running bits, debates, what landed.\n"
+        "  - NEVER infer or guess private traits. No mood, mental-health, age, "
+        "gender, sexuality, location, job, income, relationship, or political "
+        "read on anyone. If it wasn't directly stated as a fact in the room, "
+        "it does not go in the note.\n"
+        "  - No quoting full messages. Patterns and vibes, not transcripts.\n"
+        "  - No links, no URLs, no @mentions, no user IDs. Attribute by display "
+        "name only.\n"
+        "  - If someone barely showed up, leave them out. Don't pad with names.\n"
+        "  - This is a private note Toots keeps for herself. It is NOT a message "
+        "to a channel. Don't address anyone, don't open with a greeting."
+    )
+
+    @staticmethod
+    def _forget_clause(forgotten_names: list[str] | None) -> str:
+        if not forgotten_names:
+            return ""
+        names = ", ".join(forgotten_names)
+        return (
+            "\n\nFORGOTTEN (these people asked to be forgotten, treat them as "
+            f"invisible): do NOT mention, attribute, or reference {names} in any "
+            "way. Leave them out entirely as if they weren't there."
+        )
+
+    async def memory_note(
+        self,
+        channels_blob: str,
+        *,
+        forgotten_names: list[str] | None = None,
+    ) -> str:
+        """Distill the last hour of discourse-channel activity into one
+        attributed memory note (the fine `hourly` tier). Returns "" / "EMPTY"
+        when nothing's worth keeping (the caller skips the write)."""
+        system_extra = (
+            "TASK: Write a private memory note about what happened in these "
+            "channels over the last hour. This is Toots's own long-term memory "
+            "so she can do callbacks later and know her regulars. Attribute by "
+            "display name.\n"
+            "\n"
+            "Capture: who drove which topics, the stances people took, running "
+            "bits, debates, notable moments, what the room cared about. A few "
+            "tight lines, past tense, in your voice but factual.\n"
+            "\n"
+            "If the hour was basically dead (nothing worth remembering), "
+            "return the single word EMPTY and nothing else."
+            + self._MEMORY_FENCE
+            + self._forget_clause(forgotten_names)
+        )
+        result = await self._call(
+            model=HAIKU,
+            user_message=f"Activity to remember (most recent last):\n{channels_blob}",
+            system_extra=system_extra,
+            max_tokens=MAX_TOKENS_REPLY,
+            purpose="memory_hourly",
+        )
+        return result.text
+
+    async def memory_rollup(
+        self,
+        notes_blob: str,
+        *,
+        period: str,
+        forgotten_names: list[str] | None = None,
+    ) -> str:
+        """Compact a tier of memory notes up one level (the decay pyramid):
+        `period="daily"` compacts a day of hourly notes into one daily note;
+        `period="weekly"` compacts a week of daily notes into one weekly note.
+        Same fence. Keeps the throughlines, drops one-off noise."""
+        if period == "daily":
+            lower, span = "hourly", "day"
+            keep = (
+                "the day's real throughlines: who drove what, the running bits, "
+                "the debates, the moments that landed. Drop minute-to-minute "
+                "chatter that didn't matter past the hour it happened in."
+            )
+        else:
+            lower, span = "daily", "week"
+            keep = (
+                "the week's arcs: the throughlines that spanned days, who drove "
+                "what, the running bits that stuck, the debates that kept coming "
+                "back. Drop one-off noise that didn't matter past a single day."
+            )
+        system_extra = (
+            f"TASK: Compact these {lower} memory notes into ONE {period} memory "
+            f"note covering the {span}. Keep {keep} Attribute by display name. A "
+            "short paragraph or a few tight lines, past tense, in your voice.\n"
+            "\n"
+            "If there's genuinely nothing worth keeping, return the single word "
+            "EMPTY and nothing else."
+            + self._MEMORY_FENCE
+            + self._forget_clause(forgotten_names)
+        )
+        result = await self._call(
+            model=HAIKU,
+            user_message=f"{lower.capitalize()} notes from the past {span} (oldest first):\n{notes_blob}",
+            system_extra=system_extra,
+            max_tokens=MAX_TOKENS_REPLY,
+            purpose=f"memory_{period}",
+        )
+        return result.text
 
     async def discourse(
         self,

@@ -136,6 +136,7 @@ class Ask(commands.Cog):
     ) -> str:
         context = ""
         image_urls: list[str] = []
+        memory_context = await self._memory_context(channel)
         if (
             isinstance(channel, discord.TextChannel | discord.Thread)
             and me is not None
@@ -194,7 +195,30 @@ class Ask(commands.Cog):
             perplexity_context=pplx_result,
             recently_seen_urls=raw_urls if raw_urls else None,
             markets_context=markets_result,
+            memory_context=memory_context,
         )
+
+    async def _memory_context(self, channel: object) -> str | None:
+        """Toots's distilled long-term memory of this server (from the memory
+        cog's notes), formatted for the /ask prompt. Mixes the three tiers:
+        the weekly arc first (coarse, oldest), then this week's daily notes,
+        then the last few hourly notes last (recency bias favors the freshest).
+        Fail-open: a memory-fetch error must never block an answer.
+        """
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return None
+        try:
+            weekly = await self.bot.db.get_memory_notes(guild.id, "weekly", limit=1)
+            daily = await self.bot.db.get_memory_notes(guild.id, "daily", limit=2)
+            hourly = await self.bot.db.get_memory_notes(guild.id, "hourly", limit=4)
+        except Exception:
+            log.exception("memory context fetch failed")
+            return None
+        parts = [f"[the bigger picture] {summary}" for _, summary, _, _ in weekly]
+        parts += [f"[this week] {summary}" for _, summary, _, _ in daily]
+        parts += [f"[recently] {summary}" for _, summary, _, _ in hourly]
+        return "\n".join(parts) if parts else None
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:

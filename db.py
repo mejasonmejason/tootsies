@@ -14,6 +14,29 @@ from models import MoodMode, Order, OrderStatus, ScheduleState
 log = logging.getLogger(__name__)
 
 
+def _name_in_text(text: str, name: str) -> bool:
+    """Word-boundary, case-insensitive match of a display name inside note text.
+
+    Used by /forget to find memory notes that mention a user. Word-boundary so
+    "al" doesn't match "always"; case-insensitive so "Alex" matches "alex".
+    A blank/whitespace name never matches (guards against pathological input).
+
+    Both sides are NFC-normalized first: a display name with combining
+    diacritics (e.g. "Jose" + combining acute) and the note text the model
+    wrote may differ in unicode normalization, which would otherwise leave a
+    user partially forgotten, the exact privacy failure /forget exists to
+    prevent.
+    """
+    import re
+    import unicodedata
+
+    if not name or not name.strip():
+        return False
+    name_n = unicodedata.normalize("NFC", name)
+    text_n = unicodedata.normalize("NFC", text)
+    return re.search(rf"\b{re.escape(name_n)}\b", text_n, re.IGNORECASE) is not None
+
+
 def sql_op(query: str) -> str:
     """Extract a coarse SQL op label (e.g. 'SELECT FROM discourse_schedule').
 
@@ -286,6 +309,40 @@ CREATE TABLE IF NOT EXISTS abuse_violations (
 CREATE INDEX IF NOT EXISTS abuse_silenced_idx
     ON abuse_violations (guild_id)
     WHERE silenced_at IS NOT NULL AND lifted_at IS NULL;
+
+-- Long-term memory: distilled, attributed notes about what happened in a
+-- guild's discourse channels. The decay pyramid: written hourly (tier='hourly'),
+-- rolled up daily (tier='daily', rolled-up hourlies deleted) and weekly
+-- (tier='weekly', rolled-up dailies deleted), so the store stays bounded. Read
+-- at /ask + @mention time so Toots can do callbacks and know her regulars.
+-- Notes are distilled prose (vibes + observed public behavior, no transcripts),
+-- never raw message content, per the constitution's data-minimization rule.
+CREATE TABLE IF NOT EXISTS memory_notes (
+    id          BIGSERIAL PRIMARY KEY,
+    guild_id    BIGINT NOT NULL,
+    tier        TEXT NOT NULL,              -- 'hourly' | 'daily' | 'weekly'
+    summary     TEXT NOT NULL,
+    span_start  TIMESTAMPTZ NOT NULL,
+    span_end    TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS memory_notes_guild_tier_idx
+    ON memory_notes (guild_id, tier, span_end DESC);
+
+-- Self-service erasure (/forget): a user can wipe themselves from Toots's
+-- memory. Their display name is suppressed from all FUTURE memory writes (the
+-- writer is told not to attribute anything to these names) and existing notes
+-- mentioning them are deleted at /forget time. display_name is captured at
+-- forget-time (the handle that appears in notes).
+CREATE TABLE IF NOT EXISTS memory_forgotten (
+    guild_id     BIGINT NOT NULL,
+    user_id      BIGINT NOT NULL,
+    display_name TEXT NOT NULL,
+    forgotten_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS memory_forgotten_guild_idx
+    ON memory_forgotten (guild_id);
 
 -- Migrate legacy discourse_channel setting (single channel) to discourse_channels.
 -- NOT EXISTS guard: once a guild has ANY row in discourse_channels (from this
@@ -1142,6 +1199,120 @@ class DB:
             (r["user_id"], r["violations"], r["last_violation_at"], r["silenced_at"])
             for r in rows
         ]
+
+    # ---- long-term memory -------------------------------------------------------
+
+    async def add_memory_note(
+        self,
+        guild_id: int,
+        tier: str,
+        summary: str,
+        span_start: datetime,
+        span_end: datetime,
+    ) -> None:
+        await self._execute(
+            """
+            INSERT INTO memory_notes (guild_id, tier, summary, span_start, span_end)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            guild_id, tier, summary, span_start, span_end,
+        )
+
+    async def get_memory_notes(
+        self, guild_id: int, tier: str, limit: int = 4,
+    ) -> list[tuple[int, str, datetime, datetime]]:
+        """Most recent notes of a tier: (id, summary, span_start, span_end)."""
+        rows = await self._fetch(
+            """
+            SELECT id, summary, span_start, span_end FROM memory_notes
+            WHERE guild_id = $1 AND tier = $2
+            ORDER BY span_end DESC LIMIT $3
+            """,
+            guild_id, tier, limit,
+        )
+        return [(r["id"], r["summary"], r["span_start"], r["span_end"]) for r in rows]
+
+    async def last_memory_note_at(self, guild_id: int, tier: str) -> datetime | None:
+        """span_end of the most recent note of a tier, used to gate the writer."""
+        return await self._fetchval(
+            "SELECT MAX(span_end) FROM memory_notes WHERE guild_id = $1 AND tier = $2",
+            guild_id, tier,
+        )
+
+    async def memory_notes_since(
+        self, guild_id: int, tier: str, since: datetime,
+    ) -> list[tuple[int, str, datetime, datetime]]:
+        """Notes of a tier with span_end after `since`, oldest first (for rollup)."""
+        rows = await self._fetch(
+            """
+            SELECT id, summary, span_start, span_end FROM memory_notes
+            WHERE guild_id = $1 AND tier = $2 AND span_end > $3
+            ORDER BY span_end ASC
+            """,
+            guild_id, tier, since,
+        )
+        return [(r["id"], r["summary"], r["span_start"], r["span_end"]) for r in rows]
+
+    async def delete_memory_notes(self, ids: list[int]) -> None:
+        if not ids:
+            return
+        await self._execute(
+            "DELETE FROM memory_notes WHERE id = ANY($1::bigint[])", ids
+        )
+
+    async def forgotten_names(self, guild_id: int) -> list[str]:
+        rows = await self._fetch(
+            "SELECT display_name FROM memory_forgotten WHERE guild_id = $1", guild_id
+        )
+        return [r["display_name"] for r in rows]
+
+    async def forget_user(
+        self, guild_id: int, user_id: int, display_name: str,
+    ) -> int:
+        """Erase a user from memory: suppress them from future writes and delete
+        existing notes that mention their display name.
+
+        Deletion (not surgical redaction) is deliberate: notes are free-text, so
+        a clean string-excision can't guarantee the name is gone without leaving
+        an incoherent husk. Over-deleting a co-mentioned note is the SAFE failure
+        mode for a privacy control (forget errs toward forgetting more, and the
+        lost lore regenerates over the next writes). Matching is word-boundary +
+        case-insensitive, done in Python to avoid SQL-regex escaping pitfalls.
+        Returns the number of notes deleted.
+        """
+        await self._execute(
+            """
+            INSERT INTO memory_forgotten (guild_id, user_id, display_name)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (guild_id, user_id) DO UPDATE
+                SET display_name = EXCLUDED.display_name, forgotten_at = NOW()
+            """,
+            guild_id, user_id, display_name,
+        )
+        rows = await self._fetch(
+            "SELECT id, summary FROM memory_notes WHERE guild_id = $1", guild_id
+        )
+        to_delete = [r["id"] for r in rows if _name_in_text(r["summary"], display_name)]
+        await self.delete_memory_notes(to_delete)
+        return len(to_delete)
+
+    async def prune_memory(self) -> None:
+        """Backstop pruning for the decay pyramid. Rollups normally delete the
+        tier below them, but if a guild's rollup never fires (low activity), the
+        lower tiers would accumulate, so hard-cap each tier's age well past its
+        rollup horizon: hourly ~2d, daily ~30d, weekly ~180d."""
+        await self._execute(
+            "DELETE FROM memory_notes WHERE tier = 'hourly' "
+            "AND span_end < NOW() - INTERVAL '2 days'"
+        )
+        await self._execute(
+            "DELETE FROM memory_notes WHERE tier = 'daily' "
+            "AND span_end < NOW() - INTERVAL '30 days'"
+        )
+        await self._execute(
+            "DELETE FROM memory_notes WHERE tier = 'weekly' "
+            "AND span_end < NOW() - INTERVAL '180 days'"
+        )
 
 
 def _row_to_order(row: Any) -> Order:
