@@ -42,7 +42,7 @@ from utils.dedup import is_duplicate_of_recent
 
 def test_parse_chimein_score_happy_path() -> None:
     text = '{"score": 0.78, "vibe": "debate", "hook": "kendrick vs drake"}'
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.78)
     assert vibe == "debate"
     assert hook == "kendrick vs drake"
@@ -50,7 +50,7 @@ def test_parse_chimein_score_happy_path() -> None:
 
 def test_parse_chimein_score_strips_code_fence() -> None:
     text = '```json\n{"score": 0.5, "vibe": "question", "hook": "asking about pizza"}\n```'
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.5)
     assert vibe == "question"
     assert hook == "asking about pizza"
@@ -62,7 +62,7 @@ def test_parse_chimein_score_with_preamble() -> None:
         'Based on the buffer, here is my score:\n'
         '{"score": 0.9, "vibe": "hot_take", "hook": "spicy take on the bulls"}'
     )
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.9)
     assert vibe == "hot_take"
 
@@ -76,43 +76,56 @@ def test_parse_chimein_score_clamps_out_of_range() -> None:
 
 def test_parse_chimein_score_unknown_vibe_falls_back_to_other() -> None:
     text = '{"score": 0.7, "vibe": "philosophical", "hook": "x"}'
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.7)  # score is still respected
     assert vibe == "other"  # unknown vibe coerced
 
 
 def test_parse_chimein_score_invalid_score_returns_zero_fallback() -> None:
     text = '{"score": "high", "vibe": "debate", "hook": "x"}'
-    assert _parse_chimein_score(text) == (0.0, "other", "")
+    assert _parse_chimein_score(text) == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_missing_score_returns_zero_fallback() -> None:
     text = '{"vibe": "debate", "hook": "x"}'
-    assert _parse_chimein_score(text) == (0.0, "other", "")
+    assert _parse_chimein_score(text) == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_empty_input_returns_zero_fallback() -> None:
-    assert _parse_chimein_score("") == (0.0, "other", "")
+    assert _parse_chimein_score("") == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_no_json_block_returns_zero_fallback() -> None:
-    assert _parse_chimein_score("yeah that's a 7 out of 10 imo") == (0.0, "other", "")
+    assert _parse_chimein_score("yeah that's a 7 out of 10 imo") == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_malformed_json_returns_zero_fallback() -> None:
-    assert _parse_chimein_score('{"score": 0.5, "vibe":}') == (0.0, "other", "")
+    assert _parse_chimein_score('{"score": 0.5, "vibe":}') == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_non_string_vibe_coerced_to_other() -> None:
     text = '{"score": 0.7, "vibe": 5, "hook": "x"}'
-    _, vibe, _hook = _parse_chimein_score(text)
+    _, vibe, _hook, _r = _parse_chimein_score(text)
     assert vibe == "other"
 
 
 def test_parse_chimein_score_non_string_hook_coerced_to_empty() -> None:
     text = '{"score": 0.7, "vibe": "debate", "hook": 42}'
-    _, _vibe, hook = _parse_chimein_score(text)
+    _, _vibe, hook, _r = _parse_chimein_score(text)
     assert hook == ""
+
+
+def test_parse_chimein_score_reaction_parsed_when_on_palette() -> None:
+    text = '{"score": 0.7, "vibe": "hot_take", "hook": "x", "reaction": "🧢"}'
+    _, _vibe, _hook, reaction = _parse_chimein_score(text)
+    assert reaction == "🧢"
+
+
+def test_parse_chimein_score_off_palette_reaction_dropped() -> None:
+    """An emoji not in the curated palette is discarded (caller falls back)."""
+    text = '{"score": 0.7, "vibe": "hot_take", "hook": "x", "reaction": "🦄"}'
+    _, _vibe, _hook, reaction = _parse_chimein_score(text)
+    assert reaction == ""
 
 
 # ---- ChimeIn cog: helpers --------------------------------------------------
@@ -180,9 +193,10 @@ def _stub_claude(
     vibe: str = "debate",
     hook: str = "x",
     post_text: str = "real take",
+    reaction: str = "",
 ) -> Any:
     claude = MagicMock()
-    claude.chimein_score = AsyncMock(return_value=(score, vibe, hook))
+    claude.chimein_score = AsyncMock(return_value=(score, vibe, hook, reaction))
     claude.chimein_post = AsyncMock(return_value=post_text)
     return claude
 
@@ -567,6 +581,25 @@ async def test_react_piles_onto_top_existing_reaction(
     await cog._maybe_chime_in_one(1, 2)
 
     target.add_reaction.assert_awaited_once_with("💯")
+
+
+@pytest.mark.asyncio
+async def test_react_uses_scorer_emoji_on_bare_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a bare message, the scorer's stance emoji is used (not a random pick)."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    # hot take that's nonsense -> scorer returns the cap emoji.
+    cog.bot.claude = _stub_claude(score=0.6, vibe="hot_take", reaction="🧢")
+    _force_et_hour(monkeypatch, 12)
+    target = _reactable_message()  # no existing reactions
+    _fill_buffer_ending_with(cog, target)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_awaited_once_with("🧢")
 
 
 def test_skip_vibes_subset_of_known_vibes() -> None:

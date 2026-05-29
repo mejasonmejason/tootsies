@@ -44,6 +44,12 @@ _CHIMEIN_VIBES = {
     "vulnerable", "catchup", "other",
 }
 
+# Emoji Toots may react with, each with a distinct meaning so the scorer picks by
+# STANCE, not vibe-bucket: 🔥/💯 cosign, 🧢 calls BS, 💀/😭 funny, 👀/🍿 here-for-it,
+# 🤔 skeptical, 🥊 debate, 🫡 respect. cap and fire are NOT interchangeable, which is
+# the whole reason the model chooses instead of a random pool draw.
+_CHIMEIN_REACTIONS = {"🔥", "💯", "🧢", "💀", "😭", "👀", "🍿", "🤔", "🥊", "🫡"}
+
 
 def _parse_market_intent(text: str) -> dict[str, Any] | None:
     """Parse Claude's classify_market_intent response into a routing dict.
@@ -82,45 +88,50 @@ def _parse_market_intent(text: str) -> dict[str, Any] | None:
     return out
 
 
-def _parse_chimein_score(text: str) -> tuple[float, str, str]:
-    """Parse Claude's chimein_score response into (score, vibe, hook).
+def _parse_chimein_score(text: str) -> tuple[float, str, str, str]:
+    """Parse Claude's chimein_score response into (score, vibe, hook, reaction).
 
     Tolerant of slight format drift (extra whitespace, missing fields, code
-    fences). Returns a safe fallback (0.0, "other", "") on any parse failure
-    so the chime-in tick skips the slot rather than misfiring.
+    fences). Returns a safe fallback (0.0, "other", "", "") on any parse failure
+    so the chime-in tick skips the slot rather than misfiring. `reaction` is a
+    single emoji from _CHIMEIN_REACTIONS or "" (anything off-palette is dropped,
+    so the caller falls back to a vibe-based pick).
     """
     import json
 
     if not text:
-        return 0.0, "other", ""
+        return 0.0, "other", "", ""
 
     # Strip optional markdown code-fence wrapping.
     cleaned = re.sub(r"^```\w*\s*|```$", "", text.strip(), flags=re.MULTILINE).strip()
     # Find the first {...} block (Claude sometimes prefaces with explanation).
     match = re.search(r"\{[^{}]*\}", cleaned)
     if not match:
-        return 0.0, "other", ""
+        return 0.0, "other", "", ""
 
     try:
         data = json.loads(match.group(0))
     except json.JSONDecodeError:
-        return 0.0, "other", ""
+        return 0.0, "other", "", ""
 
     score = data.get("score")
     vibe = data.get("vibe", "other")
     hook = data.get("hook", "")
+    reaction = data.get("reaction", "")
 
     try:
         score_f = float(score)
     except (TypeError, ValueError):
-        return 0.0, "other", ""
+        return 0.0, "other", "", ""
     score_f = max(0.0, min(1.0, score_f))
 
     if not isinstance(vibe, str) or vibe not in _CHIMEIN_VIBES:
         vibe = "other"
     if not isinstance(hook, str):
         hook = ""
-    return score_f, vibe, hook
+    if not isinstance(reaction, str) or reaction not in _CHIMEIN_REACTIONS:
+        reaction = ""
+    return score_f, vibe, hook, reaction
 
 
 def _parse_discourse_score(text: str) -> tuple[float, str]:
@@ -1396,15 +1407,18 @@ class ClaudeClient:
 
     async def chimein_score(
         self, buffer_blob: str, recent_self_posts: str = "",
-    ) -> tuple[float, str, str]:
+    ) -> tuple[float, str, str, str]:
         """Score whether the recent buffer is worth chiming in on.
 
-        Cheap Haiku call. Returns (score 0..1, vibe, hook):
+        Cheap Haiku call. Returns (score 0..1, vibe, hook, reaction):
           - score: how worth-chiming-in this conversation is.
           - vibe: one of: debate, hot_take, question, conversational,
                   vulnerable, catchup, other.
           - hook: a one-line description of what Toots would actually
                   say something about. Empty if score is low.
+          - reaction: a single emoji matching Toots' stance, for the cheap
+                  reaction path when she's not posting. "" if none fits;
+                  picked by meaning (🔥 cosign vs 🧢 cap are not the same).
 
         Vibe categories matter for gating: vulnerable/catchup/other are
         no-go zones regardless of score. Debate/hot_take/question are the
@@ -1435,6 +1449,15 @@ class ClaudeClient:
             "      vulnerable     (someone shared something personal, sad, or sensitive)\n"
             "      catchup        (weekend plans, hi-how-are-you, schedule logistics)\n"
             "      other          (everything else, including pure spam / off-topic noise)\n"
+            "  - reaction: a SINGLE emoji from this palette matching YOUR stance on the room "
+            "right now, or \"\" if none fits. These are NOT interchangeable, choose by meaning:\n"
+            "      🔥 fire take, cosign hard      💯 facts, full agreement\n"
+            "      🧢 cap / that's a lie / BS     💀 dead, too funny\n"
+            "      😭 crying, relatable           👀 watching, intrigued or messy\n"
+            "      🍿 here for the drama          🤔 skeptical, hmm\n"
+            "      🥊 they're scrapping (debate)  🫡 respect\n"
+            "    e.g. a hot take you AGREE with -> 🔥 or 💯; a hot take that's nonsense -> 🧢. "
+            "Never react 🔥 to something you'd call cap. Use \"\" when nothing fits cleanly.\n"
             "\n"
             "RULES:\n"
             "  - Vulnerable, catchup, and 'other' vibes ALWAYS get score <= 0.3 regardless of "
@@ -1445,7 +1468,7 @@ class ClaudeClient:
             "  - Be skeptical. Default to 'this isn't worth interrupting for' unless it really is.\n"
             "\n"
             "Respond on ONE line of EXACTLY this format (one JSON-like object, no markdown):\n"
-            "  {\"score\": 0.78, \"vibe\": \"debate\", \"hook\": \"they're going at it about whether kendrick won\"}\n"
+            "  {\"score\": 0.78, \"vibe\": \"debate\", \"hook\": \"they're going at it about whether kendrick won\", \"reaction\": \"🍿\"}\n"
             "If the response can't be parsed we treat it as a 0-score skip."
         )
         recent_self_block = (

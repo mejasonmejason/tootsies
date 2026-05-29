@@ -285,7 +285,7 @@ class ChimeIn(commands.Cog):
         )
 
         try:
-            score, vibe, hook = await self.bot.claude.chimein_score(
+            score, vibe, hook, reaction = await self.bot.claude.chimein_score(
                 buffer_blob, recent_self_posts=recent_posts,
             )
         except Exception as exc:
@@ -307,7 +307,9 @@ class ChimeIn(commands.Cog):
             # acknowledgement that fills the gap a post would have left.
             if react_ok is None:
                 react_ok = await self._react_eligible(guild_id, channel_id, tuning.daily_cap)
-            reacted = await self._maybe_react(key, msgs, vibe, score, eligible=react_ok)
+            reacted = await self._maybe_react(
+                key, msgs, vibe, score, reaction, eligible=react_ok,
+            )
             if reacted:
                 decision = "reacted"
             elif post_on_cooldown:
@@ -455,18 +457,22 @@ class ChimeIn(commands.Cog):
 
     @staticmethod
     def _pick_react_emoji(
-        message: discord.Message, vibe: str,
+        message: discord.Message, vibe: str, suggested: str,
     ) -> str | discord.Emoji | discord.PartialEmoji:
-        """Co-sign the room's reaction if there is one, else bring her own.
+        """Choose the emoji to react with.
 
-        When the message already carries reactions, pile onto the most-used one
-        (highest count; ties resolve to the first-added, since Discord returns
-        reactions in insertion order and max() keeps the first on ties). On a
-        bare message, fall back to a vibe-appropriate emoji.
+        Priority:
+          1. Co-sign the room: if the message already carries reactions, pile
+             onto the most-used one (highest count; ties resolve to the
+             first-added, since Discord returns reactions in insertion order and
+             max() keeps the first on ties).
+          2. The scorer's `suggested` emoji, chosen by stance (🔥 cosign vs 🧢
+             cap aren't interchangeable), when the message is bare.
+          3. A random vibe-appropriate pick, only if the scorer offered nothing.
         """
         if message.reactions:
             return max(message.reactions, key=lambda r: r.count).emoji
-        return voice.pick_reaction(vibe)
+        return suggested or voice.pick_reaction(vibe)
 
     async def _maybe_react(
         self,
@@ -474,6 +480,7 @@ class ChimeIn(commands.Cog):
         msgs: list[discord.Message],
         vibe: str,
         score: float,
+        suggested: str,
         *,
         eligible: bool,
     ) -> bool:
@@ -495,7 +502,7 @@ class ChimeIn(commands.Cog):
         if last_attempt is not None and datetime.now(UTC) - last_attempt < REACT_COOLDOWN:
             return False
         target = msgs[-1]
-        emoji = self._pick_react_emoji(target, vibe)
+        emoji = self._pick_react_emoji(target, vibe, suggested)
         self._last_react_attempt[key] = datetime.now(UTC)
         if not await react(target, emoji, source="chimein"):
             return False
