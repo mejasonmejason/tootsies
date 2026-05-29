@@ -75,6 +75,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 - `music.py`, `/music setup` (channel picker) + `/music drop` (manual post) + scheduled music-lounge posts (track recs with Apple Music links). Sources: feed channels (Twitter/social), Perplexity (music news/trends), channel activity, web_search. Links-only channel. Rides on the existing mood schedule.
 - `admin.py`, `/close`, `/open`, `/undo`
 - `settings.py`, `/menu` interactive wizard
+- `memory.py`, long-term memory: a twice-daily writer + weekly rollup that distill a guild's discourse-channel activity into attributed memory notes (the decay pyramid: `halfday` notes roll up into `weekly` notes, rolled-up halfdays deleted), read back into `/ask`/mention context so Toots does callbacks and knows her regulars. Plus `/forget` (self-service erasure, no parameter, you can only forget yourself). The write prompt is fenced (observed public behavior only, never inferred private traits, no transcripts) to keep attributed "who did what" memory inside the constitution.
 
 **Utils** (in `utils/`):
 - `rate_limits.py`, per-user daily limits (`/ask`, `/recap`) and server-wide daily limits (`/discourse`, `/order`) + cooldowns
@@ -93,6 +94,8 @@ The `/order` pre-flight (in `claude_client.py:preflight_order`) rejects orders t
 - `constitution.py`, `persona.py` core voice, `.github/`, `Dockerfile`, `railway.toml`, `Procfile`, `db.py` connection setup, `bot.py` boot logic, `requirements.txt` deletions
 
 Exceptions exist (e.g., adding new cogs, new tables, new deps, voice library additions in `utils/voice.py` are all allowed).
+
+The long-term-memory **fence** (`claude_client.py:_MEMORY_FENCE` / `memory_note` / `memory_rollup`) is a constitutional guarantee, not a tunable: it's what keeps attributed "who did what" memory from drifting into banned identity inference / personal-info disclosure. Treat it like `constitution.py` — it must not be loosened via `/order`.
 
 ## Testing
 
@@ -140,6 +143,8 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `abuse_warned` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `abuse_silenced` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `reaction_added` | utils/reactions.py | source, guild_id, channel_id, message_id, emoji |
+| `memory_write` | cogs/memory.py | guild_id, tier (halfday\|weekly), ok, chars\|skipped, message_count, channel_count, rolled_up |
+| `memory_forget` | cogs/memory.py | guild_id, user_id, notes_deleted |
 
 **Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to
 the table above + the events.py docstring. Use snake_case for kinds and fields. Don't

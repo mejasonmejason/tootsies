@@ -106,6 +106,13 @@ Known kinds (keep this list in sync with what's emitted):
       guild_id, user_id, violations
   - abuse_silenced     : user hit ABUSE_THRESHOLD and is silenced for the session
       guild_id, user_id, violations
+  - memory_write       : long-term memory writer ran (cogs/memory.py)
+      guild_id, tier (halfday|weekly), ok
+      On a written note: chars, plus message_count + channel_count (halfday)
+        or rolled_up (weekly, # of half-day notes compacted).
+      On a skip: skipped (low_activity|empty) instead of chars.
+  - memory_forget      : a user wiped themselves from memory via /forget (cogs/memory.py)
+      guild_id, user_id, notes_deleted
 
 Railway dashboards: filter logs by `EVENT ` then group by the `event` field for
 counts, or extract numeric fields (`duration_ms`, `input_tokens`) for percentiles.
