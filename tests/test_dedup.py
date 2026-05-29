@@ -45,6 +45,17 @@ def test_url_host_alias_folds_to_same_post() -> None:
     assert is_duplicate_of_recent(new, [prior])
 
 
+def test_url_x_and_twitter_and_fixers_all_fold_together() -> None:
+    """twitter.com is retired -> everything Twitter/X folds to one canonical host."""
+    prior = "take\nhttps://x.com/DrakeDirect/status/2060342033940705422"
+    for host in ("twitter.com", "fxtwitter.com", "vxtwitter.com", "fixupx.com"):
+        new = (
+            "a totally unrelated sentence with different wording\n"
+            f"https://{host}/DrakeDirect/status/2060342033940705422"
+        )
+        assert is_duplicate_of_recent(new, [prior]), host
+
+
 def test_url_query_and_trailing_punct_ignored() -> None:
     prior = "take one\nhttps://news.example/article"
     new = "take two, unrelated phrasing\n(https://news.example/article?utm=x)."

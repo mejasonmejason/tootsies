@@ -23,18 +23,22 @@ _MENTION_RE = re.compile(r"<@!?\d+>")
 _URL_RE = re.compile(r"https?://\S+")
 
 # Embed-fixer / mirror hosts that resolve to the same underlying post. Folded
-# to a canonical host so "fxtwitter.com/x/status/1" and "twitter.com/x/status/1"
-# dedup against each other (the bot and the feeds use these interchangeably).
+# to a single canonical host so "fxtwitter.com/u/status/1", "x.com/u/status/1"
+# and "twitter.com/u/status/1" all dedup against each other (the bot and the
+# feeds use these interchangeably). Canonical is x.com — twitter.com is retired
+# and redirects there, so everything Twitter/X folds to x.com.
 _HOST_ALIASES = {
-    "fxtwitter.com": "twitter.com",
-    "vxtwitter.com": "twitter.com",
+    "twitter.com": "x.com",
+    "www.twitter.com": "x.com",
+    "www.x.com": "x.com",
+    "mobile.twitter.com": "x.com",
+    "fxtwitter.com": "x.com",
+    "vxtwitter.com": "x.com",
     "fixupx.com": "x.com",
-    "x.com": "twitter.com",
-    "fixvx.com": "twitter.com",
+    "fixvx.com": "x.com",
     "tnktok.com": "tiktok.com",
     "vxtiktok.com": "tiktok.com",
     "www.tiktok.com": "tiktok.com",
-    "www.twitter.com": "twitter.com",
 }
 
 
