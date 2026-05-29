@@ -113,6 +113,8 @@ Known kinds (keep this list in sync with what's emitted):
       On a skip: skipped (low_activity|empty) instead of chars.
       backfill: True when written by the /remember one-time backfill (vs the
         live scheduler), so dashboards can tell seeded notes from live ones.
+  - memory_search      : the search_memory tool ran during /ask (cogs/ask.py)
+      guild_id, query (<=120 chars), hits (# of notes returned)
   - memory_forget      : a user wiped themselves from memory via /forget (cogs/memory.py)
       guild_id, user_id, notes_deleted
 

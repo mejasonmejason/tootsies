@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import discord
@@ -17,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils import abuse_tracker, bot_logs, voice
-from utils.events import emit_error
+from utils.events import emit, emit_error
 from utils.feeds import _strip_html, format_for_prompt, recent_image_urls, recent_messages
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
@@ -31,6 +33,25 @@ if TYPE_CHECKING:
     from bot import TootsiesBot
 
 log = logging.getLogger(__name__)
+
+
+def _format_memory_hits(
+    hits: list[tuple[str, str, datetime, datetime]],
+) -> str:
+    """Render search_memory hits for the model: tier + date range + the note.
+    Empty result reads as a plain 'nothing recalled' so the model answers
+    naturally instead of narrating a failed search."""
+    if not hits:
+        return "no memories match that, nothing specific comes to mind."
+    lines = []
+    for tier, summary, span_start, span_end in hits:
+        when = (
+            f"{span_start:%b %d}"
+            if span_start.date() == span_end.date()
+            else f"{span_start:%b %d}-{span_end:%b %d}"
+        )
+        lines.append(f"[{tier} | {when}] {summary}")
+    return "\n".join(lines)
 
 
 def _reply_quote(message: discord.Message, me_id: int) -> str | None:
@@ -196,7 +217,31 @@ class Ask(commands.Cog):
             recently_seen_urls=raw_urls if raw_urls else None,
             markets_context=markets_result,
             memory_context=memory_context,
+            memory_search=self._make_memory_search(channel),
         )
+
+    def _make_memory_search(
+        self, channel: object,
+    ) -> Callable[[str], Awaitable[str]] | None:
+        """Build the `search_memory` tool handler for claude.ask: an async
+        (query) -> str bound to this guild's notes, for on-demand deep recall
+        past the fixed memory block. None outside a guild. Fail-open: a search
+        error returns a soft string, never raises into the model's tool loop."""
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return None
+        guild_id = guild.id
+
+        async def search(query: str) -> str:
+            try:
+                hits = await self.bot.db.search_memory_notes(guild_id, query)
+            except Exception:
+                log.exception("search_memory failed")
+                return "(couldn't reach memory just now)"
+            emit("memory_search", guild_id=guild_id, query=query[:120], hits=len(hits))
+            return _format_memory_hits(hits)
+
+        return search
 
     async def _memory_context(self, channel: object) -> str | None:
         """Toots's distilled long-term memory of this server (from the memory
