@@ -72,13 +72,13 @@ CHIMEIN_QUALITY_THRESHOLD = 0.6
 # at or above this floor (and the vibe isn't a skip), she drops a single reaction
 # instead of staying fully silent, the "I'm here, I clocked that" move. Reactions
 # never post or consume the chimein post cooldown / daily cap; they ride their own
-# light cooldown + daily cap so she doesn't pepper the room. The reaction decision
-# sits AFTER scoring, alongside the post decision, so it still fires during the
-# post-cooldown / post-cap silent gaps it's meant to fill.
+# light cooldown + the mood's daily cap so she doesn't pepper the room. The reaction
+# decision sits AFTER scoring, alongside the post decision, so it still fires during
+# the post-cooldown / post-cap silent gaps it's meant to fill. The per-day reaction
+# allowance reuses the mood's daily_cap (chill 5 / yaps 10), so a chattier mood
+# reacts more, same as it posts more.
 REACT_THRESHOLD = 0.45
 REACT_COOLDOWN = timedelta(minutes=10)
-# Mood-independent: a reaction is the same low-cost gesture however chatty she is.
-REACT_DAILY_CAP = 8
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
@@ -265,7 +265,7 @@ class ChimeIn(commands.Cog):
         # never on the common about-to-post path.
         react_ok: bool | None = None
         if post_blocked:
-            react_ok = await self._react_eligible(guild_id, channel_id)
+            react_ok = await self._react_eligible(guild_id, channel_id, tuning.daily_cap)
             if not react_ok:
                 emit(
                     "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
@@ -306,7 +306,7 @@ class ChimeIn(commands.Cog):
             # near-miss-or-better, otherwise go dark. The reaction is the lighter
             # acknowledgement that fills the gap a post would have left.
             if react_ok is None:
-                react_ok = await self._react_eligible(guild_id, channel_id)
+                react_ok = await self._react_eligible(guild_id, channel_id, tuning.daily_cap)
             reacted = await self._maybe_react(key, msgs, vibe, score, eligible=react_ok)
             if reacted:
                 decision = "reacted"
@@ -438,17 +438,35 @@ class ChimeIn(commands.Cog):
         )
 
 
-    async def _react_eligible(self, guild_id: int, channel_id: int) -> bool:
+    async def _react_eligible(
+        self, guild_id: int, channel_id: int, daily_cap: int,
+    ) -> bool:
         """DB-backed gate: react cooldown elapsed AND daily cap not hit.
 
         Durable across redeploys (unlike a purely in-memory timer), mirroring the
-        post cooldown/cap. Counts only successful reactions (rows in
-        chimein_reactions).
+        post cooldown/cap. `daily_cap` is the mood's cap (chill 5 / yaps 10), so
+        reactions pace with the same mood cadence as posts. Counts only
+        successful reactions (rows in chimein_reactions).
         """
         last = await self.bot.db.last_reaction_at(guild_id, channel_id)
         if last is not None and datetime.now(UTC) - last < REACT_COOLDOWN:
             return False
-        return await self.bot.db.reaction_count_today(guild_id, channel_id) < REACT_DAILY_CAP
+        return await self.bot.db.reaction_count_today(guild_id, channel_id) < daily_cap
+
+    @staticmethod
+    def _pick_react_emoji(
+        message: discord.Message, vibe: str,
+    ) -> str | discord.Emoji | discord.PartialEmoji:
+        """Co-sign the room's reaction if there is one, else bring her own.
+
+        When the message already carries reactions, pile onto the most-used one
+        (highest count; ties resolve to the first-added, since Discord returns
+        reactions in insertion order and max() keeps the first on ties). On a
+        bare message, fall back to a vibe-appropriate emoji.
+        """
+        if message.reactions:
+            return max(message.reactions, key=lambda r: r.count).emoji
+        return voice.pick_reaction(vibe)
 
     async def _maybe_react(
         self,
@@ -477,11 +495,11 @@ class ChimeIn(commands.Cog):
         if last_attempt is not None and datetime.now(UTC) - last_attempt < REACT_COOLDOWN:
             return False
         target = msgs[-1]
-        emoji = voice.pick_reaction(vibe)
+        emoji = self._pick_react_emoji(target, vibe)
         self._last_react_attempt[key] = datetime.now(UTC)
         if not await react(target, emoji, source="chimein"):
             return False
-        await self.bot.db.record_reaction(key[0], key[1], target.id, emoji)
+        await self.bot.db.record_reaction(key[0], key[1], target.id, str(emoji))
         return True
 
 

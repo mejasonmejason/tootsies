@@ -140,6 +140,7 @@ def _stub_message(content: str = "hello", author_id: int = 99) -> Any:
     )
     msg.attachments = []
     msg.embeds = []
+    msg.reactions = []
     msg.created_at = datetime.now(UTC)
     return msg
 
@@ -516,21 +517,56 @@ async def test_skips_scoring_when_post_and_react_both_blocked(
 
 
 @pytest.mark.asyncio
-async def test_react_respects_daily_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reactions stop once REACT_DAILY_CAP is hit (DB-backed count), even off cooldown."""
+async def test_react_daily_cap_is_mood_tuned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reaction daily cap reuses the mood cap (chill 5): at the cap, no reaction;
+    the same count under the yaps cap (10) still reacts."""
     monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+    chill_cap = MOOD_TUNING[MoodMode.CHILL].daily_cap  # 5
 
-    from cogs.chimein import REACT_DAILY_CAP
+    # score 0.5: under both post thresholds (chill 0.8 / yaps 0.6) so we hit the
+    # react branch, and above REACT_THRESHOLD (0.45) so a reaction is wanted.
+    # At the chill cap -> blocked.
     cog = _make_cog()
-    cog.bot.db = _stub_db(mood=MoodMode.CHILL, reaction_count_today=REACT_DAILY_CAP)
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL, reaction_count_today=chill_cap)
+    cog.bot.claude = _stub_claude(score=0.5, vibe="debate")
+    _force_et_hour(monkeypatch, 12)
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+    await cog._maybe_chime_in_one(1, 2)
+    target.add_reaction.assert_not_awaited()
+
+    # Same count, but yaps cap (10) is higher -> still reacts.
+    cog2 = _make_cog()
+    cog2.bot.db = _stub_db(mood=MoodMode.YAPS, reaction_count_today=chill_cap)
+    cog2.bot.claude = _stub_claude(score=0.5, vibe="debate")
+    target2 = _reactable_message()
+    _fill_buffer_ending_with(cog2, target2)
+    await cog2._maybe_chime_in_one(1, 2)
+    target2.add_reaction.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_react_piles_onto_top_existing_reaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the message already has reactions, Toots co-signs the highest-count one
+    instead of bringing her own vibe emoji."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
     cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
     _force_et_hour(monkeypatch, 12)
     target = _reactable_message()
+    # 💯 has more reactors than 👀, so she should pile onto 💯.
+    target.reactions = [
+        SimpleNamespace(emoji="👀", count=1, me=False),
+        SimpleNamespace(emoji="💯", count=4, me=False),
+    ]
     _fill_buffer_ending_with(cog, target)
 
     await cog._maybe_chime_in_one(1, 2)
 
-    target.add_reaction.assert_not_awaited()
+    target.add_reaction.assert_awaited_once_with("💯")
 
 
 def test_skip_vibes_subset_of_known_vibes() -> None:

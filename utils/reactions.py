@@ -23,11 +23,15 @@ log = logging.getLogger(__name__)
 
 async def react(
     message: discord.Message,
-    emoji: str,
+    emoji: str | discord.Emoji | discord.PartialEmoji,
     *,
     source: str,
 ) -> bool:
     """Add a single reaction to a message. Returns True only if it landed.
+
+    `emoji` may be a unicode string or a custom-emoji object (e.g. when piling
+    onto a reaction the room already used, which surfaces as an Emoji /
+    PartialEmoji rather than a plain string).
 
     Guards:
       - guild context + add_reactions/read perms (via can_react)
@@ -46,10 +50,11 @@ async def react(
     if me is None or not can_react(channel, me):
         return False
 
+    emoji_key = str(emoji)
     # Already reacted with this emoji? `r.me` is True when the bot is among the
     # reactors. Avoids stacking the same emoji across ticks.
     for r in message.reactions:
-        if r.me and str(r.emoji) == emoji:
+        if r.me and str(r.emoji) == emoji_key:
             return False
 
     try:
@@ -64,6 +69,6 @@ async def react(
         guild_id=guild.id,
         channel_id=channel.id,
         message_id=message.id,
-        emoji=emoji,
+        emoji=emoji_key,
     )
     return True
