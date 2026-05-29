@@ -99,6 +99,15 @@ Known kinds (keep this list in sync with what's emitted):
   - discourse_scored   : post-generation quality gate for discourse posts
       guild_id, channel_id, score, reason, must_post, category,
       user_id (manual only), post_preview (first 120 chars)
+  - music_scored       : post-generation quality gate for music drops (cogs/music.py)
+      guild_id, channel_id, channel_name, score, reason, must_post,
+      post_preview (first 120 chars)
+  - music_dedup        : a composed music drop was too similar to a recent one
+      guild_id, channel_id, channel_name, decision (similarity_gate), post_preview
+  - music_fallback     : Claude returned EMPTY for a music drop
+      guild_id, channel_id, channel_name, reason (claude_returned_empty)
+  - music_link_missing : a music drop lacked an Apple Music / Spotify link
+      guild_id, channel_id, channel_name, must_post, attempt (1|2), post_preview
   - market_fetch       : sports/prediction-market enricher call (utils/markets.py)
       source (sgo|polymarket|kalshi), query, ok, duration_ms,
       cache_hit, result_count, error (on failure)
