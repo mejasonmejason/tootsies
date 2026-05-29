@@ -221,7 +221,8 @@ class Music(commands.Cog):
         if not line or line.strip().upper() == "EMPTY":
             emit(
                 "music_fallback",
-                guild_id=guild.id, reason="claude_returned_empty",
+                guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
+                reason="claude_returned_empty",
             )
             # Links-only channel: don't post a linkless fallback quip.
             # Skip the slot on scheduled posts; on manual /music,
@@ -244,7 +245,7 @@ class Music(commands.Cog):
 
         emit(
             "music_scored",
-            guild_id=guild.id, channel_id=channel.id,
+            guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
             score=score, reason=reason, must_post=must_post,
             post_preview=line[:120],
         )
@@ -261,7 +262,7 @@ class Music(commands.Cog):
         if not _has_music_link(line):
             emit(
                 "music_link_missing",
-                guild_id=guild.id, channel_id=channel.id,
+                guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
                 must_post=must_post, attempt=1, post_preview=line[:120],
             )
             log.info("music post missing music link, retrying for guild %d channel %d", guild.id, channel.id)
@@ -279,7 +280,7 @@ class Music(commands.Cog):
                 return line2
             emit(
                 "music_link_missing",
-                guild_id=guild.id, channel_id=channel.id,
+                guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
                 must_post=must_post, attempt=2, post_preview=(line2 or "")[:120],
             )
             if not must_post:
@@ -373,8 +374,18 @@ class Music(commands.Cog):
         )
 
         if last_post_at is None:
+            # First time we've seen this channel: seed its slot counters without
+            # posting (avoids a backlog dump right after it's configured). It
+            # starts posting on the next slot. Log it so a freshly-added channel's
+            # silence is explained rather than looking like a dropped post.
             for _ in range(expected):
                 await self.bot.db.record_music_slot(guild.id, channel_id, today)
+            ch = guild.get_channel(channel_id)
+            name = ch.name if isinstance(ch, discord.TextChannel) else "?"
+            log.info(
+                "music slot seeded (first run, no post) for guild %d channel #%s (%d)",
+                guild.id, name, channel_id,
+            )
             return
 
         now_et = datetime.now(ET)
@@ -397,7 +408,10 @@ class Music(commands.Cog):
 
         if not line or line.strip().upper() == "EMPTY":
             await self.bot.db.record_music_slot(guild.id, channel_id, today)
-            log.info("music slot skipped for guild %d channel %d", guild.id, channel_id)
+            log.info(
+                "music slot skipped for guild %d channel #%s (%d)",
+                guild.id, channel.name, channel_id,
+            )
             return
 
         recent_all = await self.bot.db.recent_music_history(guild.id, limit=15)
@@ -405,11 +419,14 @@ class Music(commands.Cog):
             await self.bot.db.record_music_slot(guild.id, channel_id, today)
             emit(
                 "music_dedup",
-                guild_id=guild.id, channel_id=channel_id,
+                guild_id=guild.id, channel_id=channel_id, channel_name=channel.name,
                 decision="similarity_gate",
                 post_preview=line[:120],
             )
-            log.info("music post deduped for guild %d channel %d", guild.id, channel_id)
+            log.info(
+                "music post deduped for guild %d channel #%s (%d)",
+                guild.id, channel.name, channel_id,
+            )
             return
 
         try:
