@@ -46,10 +46,13 @@ _CHIMEIN_VIBES = {
 }
 
 # Emoji Toots may react with, each with a distinct meaning so the scorer picks by
-# STANCE, not vibe-bucket: 🔥/💯 cosign, 🧢 calls BS, 💀/😭 funny, 👀/🍿 here-for-it,
-# 🤔 skeptical, 🥊 debate, 🫡 respect. cap and fire are NOT interchangeable, which is
-# the whole reason the model chooses instead of a random pool draw.
-_CHIMEIN_REACTIONS = {"🔥", "💯", "🧢", "💀", "😭", "👀", "🍿", "🤔", "🥊", "🫡"}
+# STANCE, not vibe-bucket: 🔥 cosign, 🧢 calls BS, 💀/😭 funny, 👀 drama/messy,
+# 🤔 skeptical, 🙄 over-it, 🕐 clocked-it/you're-right, 💅 sassy cosign, 🙏 pray/manifest.
+# cap and fire are NOT interchangeable, which is the whole reason the model chooses
+# instead of a random pool draw.
+_CHIMEIN_REACTIONS = {
+    "🔥", "🧢", "💀", "😭", "👀", "🤔", "🙄", "🕐", "💅", "🙏",
+}
 
 
 def _parse_market_intent(text: str) -> dict[str, Any] | None:
@@ -1738,13 +1741,15 @@ class ClaudeClient:
             "      other          (everything else, including pure spam / off-topic noise)\n"
             "  - reaction: a SINGLE emoji from this palette matching YOUR stance on the room "
             "right now, or \"\" if none fits. These are NOT interchangeable, choose by meaning:\n"
-            "      🔥 fire take, cosign hard      💯 facts, full agreement\n"
-            "      🧢 cap / that's a lie / BS     💀 dead, too funny\n"
-            "      😭 crying, relatable           👀 watching, intrigued or messy\n"
-            "      🍿 here for the drama          🤔 skeptical, hmm\n"
-            "      🥊 they're scrapping (debate)  🫡 respect\n"
-            "    e.g. a hot take you AGREE with -> 🔥 or 💯; a hot take that's nonsense -> 🧢. "
-            "Never react 🔥 to something you'd call cap. Use \"\" when nothing fits cleanly.\n"
+            "      🔥 fire take, cosign hard      🧢 cap / that's a lie / BS\n"
+            "      💀 dead, too funny             😭 crying, relatable\n"
+            "      👀 here for the drama / messy  🤔 skeptical, hmm\n"
+            "      🙄 over it, eye-roll           🙏 manifesting / please / amen\n"
+            "      🕐 clocked it, you're so right  💅 sassy cosign (slay, yes sis, purr)\n"
+            "    e.g. a hot take you AGREE with -> 🔥; a hot take that's nonsense -> 🧢; "
+            "calling out a real truth / 'clock that tea' -> 🕐; a petty/sassy win -> 💅; "
+            "messy drama unfolding -> 👀; a tired take you're over -> 🙄. Never react 🔥 to "
+            "something you'd call cap. Use \"\" when nothing fits cleanly.\n"
             "\n"
             "RULES:\n"
             "  - Vulnerable, catchup, and 'other' vibes ALWAYS get score <= 0.3 regardless of "
