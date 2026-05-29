@@ -1061,10 +1061,16 @@ class ClaudeClient:
         "  - Record ONLY observed public behavior from these channels: what "
         "people literally said and did. Stances they took, topics they drove, "
         "running bits, debates, what landed.\n"
-        "  - NEVER infer or guess private traits. No mood, mental-health, age, "
+        "  - NEVER infer or guess private traits: mood, mental health, age, "
         "gender, sexuality, location, job, income, relationship, or political "
-        "read on anyone. If it wasn't directly stated as a fact in the room, "
-        "it does not go in the note.\n"
+        "read. If it wasn't directly stated, it does not go in the note.\n"
+        "  - Some things you do NOT record EVEN IF stated outright, because a "
+        "durable, attributed memory of them is itself the harm: health / "
+        "medical / therapy / medication, sexuality or coming-out, religion, "
+        "immigration or legal status, home address or contact info, or anything "
+        "about a minor. If someone brings one up, you may keep the PUBLIC moment "
+        "if it mattered (\"the room rallied around someone\") but NEVER the "
+        "private detail itself, and NEVER tied to a name.\n"
         "  - No quoting full messages. Patterns and vibes, not transcripts.\n"
         "  - No links, no URLs, no @mentions, no user IDs. Attribute by display "
         "name only.\n"
@@ -1095,7 +1101,14 @@ class ClaudeClient:
         memory note. `span_label` names the window in the prompt ("the last
         hour" for the live hourly writer, "this day" / "this week" for the
         /remember backfill). Returns "" / "EMPTY" when nothing's worth keeping
-        (the caller skips the write)."""
+        (the caller skips the write).
+
+        Runs on Sonnet, not Haiku: the fence (no inferred private traits, no
+        transcripts) is a constitutional guarantee, and the Haiku writer leaked
+        sensitive disclosures (health, coming-out) past it in the fence eval
+        (scripts/eval_memory_fence.py). Sonnet holds the fence; the writer is
+        low-volume (one call/hour/active-guild + the bounded /remember backfill),
+        so the cost is modest. The daily/weekly rollups are already Sonnet."""
         system_extra = (
             "TASK: Write a private memory note about what happened in these "
             f"channels over {span_label}. This is Toots's own long-term memory "
@@ -1112,7 +1125,7 @@ class ClaudeClient:
             + self._forget_clause(forgotten_names)
         )
         result = await self._call(
-            model=HAIKU,
+            model=SONNET,
             user_message=f"Activity to remember (most recent last):\n{channels_blob}",
             system_extra=system_extra,
             max_tokens=MAX_TOKENS_REPLY,
