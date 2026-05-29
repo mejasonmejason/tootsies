@@ -986,14 +986,17 @@ class ClaudeClient:
         self,
         channels_blob: str,
         *,
+        span_label: str = "the last hour",
         forgotten_names: list[str] | None = None,
     ) -> str:
-        """Distill the last hour of discourse-channel activity into one
-        attributed memory note (the fine `hourly` tier). Returns "" / "EMPTY"
-        when nothing's worth keeping (the caller skips the write)."""
+        """Distill a window of discourse-channel activity into one attributed
+        memory note. `span_label` names the window in the prompt ("the last
+        hour" for the live hourly writer, "this day" / "this week" for the
+        /remember backfill). Returns "" / "EMPTY" when nothing's worth keeping
+        (the caller skips the write)."""
         system_extra = (
             "TASK: Write a private memory note about what happened in these "
-            "channels over the last hour. This is Toots's own long-term memory "
+            f"channels over {span_label}. This is Toots's own long-term memory "
             "so she can do callbacks later and know her regulars. Attribute by "
             "display name.\n"
             "\n"
@@ -1001,7 +1004,7 @@ class ClaudeClient:
             "bits, debates, notable moments, what the room cared about. A few "
             "tight lines, past tense, in your voice but factual.\n"
             "\n"
-            "If the hour was basically dead (nothing worth remembering), "
+            f"If {span_label} was basically dead (nothing worth remembering), "
             "return the single word EMPTY and nothing else."
             + self._MEMORY_FENCE
             + self._forget_clause(forgotten_names)
