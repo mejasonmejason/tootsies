@@ -16,6 +16,7 @@ from utils.feeds import (
     hot_urls,
     is_channel_dead,
     recent_image_urls,
+    resolve_reactors,
 )
 
 
@@ -26,6 +27,7 @@ def _fake_msg(
     embeds: list[object] | None = None,
     reactions: list[object] | None = None,
     created_at: object | None = None,
+    msg_id: int | None = None,
 ) -> MagicMock:
     """Build a fake discord.Message with sane defaults.
 
@@ -41,11 +43,31 @@ def _fake_msg(
     msg.embeds = embeds or []
     msg.reactions = reactions or []
     msg.created_at = created_at or datetime.now(UTC)
+    if msg_id is not None:
+        msg.id = msg_id
     return msg
 
 
 def _fake_reaction(count: int) -> object:
     return SimpleNamespace(count=count)
+
+
+def _fake_reaction_with_users(
+    emoji: object, names: list[str], count: int | None = None
+) -> object:
+    """A reaction whose .users() async-yields members with the given display names.
+
+    `count` defaults to len(names); pass a larger count to simulate more reactors
+    than the users() page returns (exercises the "+N more" path).
+    """
+
+    async def users(limit: int | None = None):
+        for n in names[: limit if limit is not None else len(names)]:
+            yield SimpleNamespace(display_name=n, name=n)
+
+    rxn = SimpleNamespace(emoji=emoji, count=count if count is not None else len(names))
+    rxn.users = users
+    return rxn
 
 
 def _fake_attachment(filename: str, content_type: str, size: int, url: str) -> object:
@@ -544,3 +566,93 @@ async def test_recent_messages_respects_within_cutoff() -> None:
     me = MagicMock(spec=discord.Member)
     out = await recent_messages(channel, me, limit=10, within=timedelta(hours=1))
     assert [m.content for m in out] == ["fresh"]
+
+
+# ---- resolve_reactors ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_reactors_names_who_reacted_per_emoji() -> None:
+    """Maps message id -> "emoji name, name; emoji name" reactor summary."""
+    msg = _fake_msg(
+        content="hot take",
+        msg_id=42,
+        reactions=[
+            _fake_reaction_with_users("🔥", ["alice", "bob"]),
+            _fake_reaction_with_users("👀", ["carol"]),
+        ],
+    )
+    out = await resolve_reactors([msg])
+    assert out == {42: "🔥 alice, bob; 👀 carol"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_reactors_custom_emoji_renders_as_colon_name() -> None:
+    """Custom guild emoji (Emoji/PartialEmoji) collapse to :name: not <:name:id>."""
+    custom = SimpleNamespace(name="pepehands", id=999)
+    msg = _fake_msg(msg_id=7, reactions=[_fake_reaction_with_users(custom, ["dana"])])
+    out = await resolve_reactors([msg])
+    assert out == {7: ":pepehands: dana"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_reactors_summarizes_overflow_with_plus_more() -> None:
+    """When the count exceeds the names we page in, show '+N more'."""
+    msg = _fake_msg(
+        msg_id=1,
+        reactions=[_fake_reaction_with_users("🔥", ["alice", "bob"], count=10)],
+    )
+    out = await resolve_reactors([msg], max_users_per_emoji=2)
+    assert out == {1: "🔥 alice, bob +8 more"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_reactors_bounds_to_top_reacted_messages() -> None:
+    """Only the top `max_messages` by total reaction count get the API lookup."""
+    big = _fake_msg(msg_id=1, reactions=[_fake_reaction_with_users("🔥", ["a", "b", "c"])])
+    small = _fake_msg(msg_id=2, reactions=[_fake_reaction_with_users("👍", ["d"])])
+    out = await resolve_reactors([small, big], max_messages=1)
+    assert set(out) == {1}
+
+
+@pytest.mark.asyncio
+async def test_resolve_reactors_skips_messages_with_no_reactions() -> None:
+    plain = _fake_msg(msg_id=5)
+    out = await resolve_reactors([plain])
+    assert out == {}
+
+
+@pytest.mark.asyncio
+async def test_resolve_reactors_falls_back_silently_on_api_error() -> None:
+    """A users() API failure on one message drops that message, never raises."""
+
+    async def boom(limit: int | None = None):
+        raise discord.HTTPException(MagicMock(), "rate limited")
+        yield  # pragma: no cover - makes this an async generator
+
+    bad_rxn = SimpleNamespace(emoji="🔥", count=3)
+    bad_rxn.users = boom
+    msg = _fake_msg(msg_id=9, reactions=[bad_rxn])
+    out = await resolve_reactors([msg])
+    assert out == {}
+
+
+def test_format_for_prompt_renders_reactor_names_when_provided() -> None:
+    """reactors mapping wins over the bare count: names WHO reacted with WHAT."""
+    msg = _fake_msg(content="big take", display_name="jordan", msg_id=100)
+    rendered = format_for_prompt(
+        [msg], include_reactions=True, reactors={100: "🔥 alice, bob"},
+    )
+    assert "[reactions: 🔥 alice, bob]" in rendered
+    assert "jordan: big take" in rendered
+
+
+def test_format_for_prompt_reactor_mapping_falls_back_to_count() -> None:
+    """A message absent from the reactors map still shows the aggregate count."""
+    named = _fake_msg(content="hot", msg_id=1, reactions=[_fake_reaction(2)])
+    plain = _fake_msg(content="meh", msg_id=2, reactions=[_fake_reaction(5)])
+    rendered = format_for_prompt(
+        [named, plain], include_reactions=True, reactors={1: "🔥 alice, bob"},
+    )
+    assert "[reactions: 🔥 alice, bob]" in rendered
+    assert "[5 reactions]" in rendered

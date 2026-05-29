@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
 
 from claude_client import _parse_chimein_score
@@ -41,7 +42,7 @@ from utils.dedup import is_duplicate_of_recent
 
 def test_parse_chimein_score_happy_path() -> None:
     text = '{"score": 0.78, "vibe": "debate", "hook": "kendrick vs drake"}'
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.78)
     assert vibe == "debate"
     assert hook == "kendrick vs drake"
@@ -49,7 +50,7 @@ def test_parse_chimein_score_happy_path() -> None:
 
 def test_parse_chimein_score_strips_code_fence() -> None:
     text = '```json\n{"score": 0.5, "vibe": "question", "hook": "asking about pizza"}\n```'
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.5)
     assert vibe == "question"
     assert hook == "asking about pizza"
@@ -61,7 +62,7 @@ def test_parse_chimein_score_with_preamble() -> None:
         'Based on the buffer, here is my score:\n'
         '{"score": 0.9, "vibe": "hot_take", "hook": "spicy take on the bulls"}'
     )
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.9)
     assert vibe == "hot_take"
 
@@ -75,43 +76,56 @@ def test_parse_chimein_score_clamps_out_of_range() -> None:
 
 def test_parse_chimein_score_unknown_vibe_falls_back_to_other() -> None:
     text = '{"score": 0.7, "vibe": "philosophical", "hook": "x"}'
-    score, vibe, hook = _parse_chimein_score(text)
+    score, vibe, hook, _reaction = _parse_chimein_score(text)
     assert score == pytest.approx(0.7)  # score is still respected
     assert vibe == "other"  # unknown vibe coerced
 
 
 def test_parse_chimein_score_invalid_score_returns_zero_fallback() -> None:
     text = '{"score": "high", "vibe": "debate", "hook": "x"}'
-    assert _parse_chimein_score(text) == (0.0, "other", "")
+    assert _parse_chimein_score(text) == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_missing_score_returns_zero_fallback() -> None:
     text = '{"vibe": "debate", "hook": "x"}'
-    assert _parse_chimein_score(text) == (0.0, "other", "")
+    assert _parse_chimein_score(text) == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_empty_input_returns_zero_fallback() -> None:
-    assert _parse_chimein_score("") == (0.0, "other", "")
+    assert _parse_chimein_score("") == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_no_json_block_returns_zero_fallback() -> None:
-    assert _parse_chimein_score("yeah that's a 7 out of 10 imo") == (0.0, "other", "")
+    assert _parse_chimein_score("yeah that's a 7 out of 10 imo") == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_malformed_json_returns_zero_fallback() -> None:
-    assert _parse_chimein_score('{"score": 0.5, "vibe":}') == (0.0, "other", "")
+    assert _parse_chimein_score('{"score": 0.5, "vibe":}') == (0.0, "other", "", "")
 
 
 def test_parse_chimein_score_non_string_vibe_coerced_to_other() -> None:
     text = '{"score": 0.7, "vibe": 5, "hook": "x"}'
-    _, vibe, _hook = _parse_chimein_score(text)
+    _, vibe, _hook, _r = _parse_chimein_score(text)
     assert vibe == "other"
 
 
 def test_parse_chimein_score_non_string_hook_coerced_to_empty() -> None:
     text = '{"score": 0.7, "vibe": "debate", "hook": 42}'
-    _, _vibe, hook = _parse_chimein_score(text)
+    _, _vibe, hook, _r = _parse_chimein_score(text)
     assert hook == ""
+
+
+def test_parse_chimein_score_reaction_parsed_when_on_palette() -> None:
+    text = '{"score": 0.7, "vibe": "hot_take", "hook": "x", "reaction": "🧢"}'
+    _, _vibe, _hook, reaction = _parse_chimein_score(text)
+    assert reaction == "🧢"
+
+
+def test_parse_chimein_score_off_palette_reaction_dropped() -> None:
+    """An emoji not in the curated palette is discarded (caller falls back)."""
+    text = '{"score": 0.7, "vibe": "hot_take", "hook": "x", "reaction": "🦄"}'
+    _, _vibe, _hook, reaction = _parse_chimein_score(text)
+    assert reaction == ""
 
 
 # ---- ChimeIn cog: helpers --------------------------------------------------
@@ -127,6 +141,7 @@ def _make_cog() -> ChimeIn:
     cog._buffers = defaultdict(lambda: _dq(maxlen=BUFFER_MAX))
     cog._new_since_eval = defaultdict(int)
     cog._listen_channels = {}
+    cog._last_react_attempt = {}
     return cog
 
 
@@ -138,6 +153,7 @@ def _stub_message(content: str = "hello", author_id: int = 99) -> Any:
     )
     msg.attachments = []
     msg.embeds = []
+    msg.reactions = []
     msg.created_at = datetime.now(UTC)
     return msg
 
@@ -155,6 +171,8 @@ def _stub_db(
     last_chimein_at: datetime | None = None,
     count_today: int = 0,
     mood: MoodMode = MoodMode.CHILL,
+    last_reaction_at: datetime | None = None,
+    reaction_count_today: int = 0,
 ) -> Any:
     db = MagicMock()
     db.last_chimein_at = AsyncMock(return_value=last_chimein_at)
@@ -163,6 +181,9 @@ def _stub_db(
     db.add_discourse = AsyncMock()
     db.get_schedule = AsyncMock(return_value=_stub_schedule(mood))
     db.recent_discourse_all = AsyncMock(return_value=[])
+    db.last_reaction_at = AsyncMock(return_value=last_reaction_at)
+    db.reaction_count_today = AsyncMock(return_value=reaction_count_today)
+    db.record_reaction = AsyncMock()
     return db
 
 
@@ -172,9 +193,10 @@ def _stub_claude(
     vibe: str = "debate",
     hook: str = "x",
     post_text: str = "real take",
+    reaction: str = "",
 ) -> Any:
     claude = MagicMock()
-    claude.chimein_score = AsyncMock(return_value=(score, vibe, hook))
+    claude.chimein_score = AsyncMock(return_value=(score, vibe, hook, reaction))
     claude.chimein_post = AsyncMock(return_value=post_text)
     return claude
 
@@ -228,11 +250,15 @@ async def test_gate_skips_outside_hours_window(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_gate_skips_when_under_chill_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Chill mood: 60min cooldown. A 30min-old chime-in is still inside the window."""
+async def test_post_cooldown_blocks_post_but_still_scores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chill 60min cooldown: a 30min-old post blocks POSTING, but we still score
+    so a reaction can fill the gap (reactions ride their own separate cooldown)."""
     cog = _make_cog()
     claude = _stub_claude()
     cog.bot.claude = claude
+    cog._buffers[(1, 2)].extend([_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE)])
     _force_et_hour(monkeypatch, 12)  # ensure hours_gate passes
     # last_chimein_at must be relative to the FAKE now (the cog calls the patched
     # datetime.now), so compute it from the same source.
@@ -242,7 +268,8 @@ async def test_gate_skips_when_under_chill_cooldown(monkeypatch: pytest.MonkeyPa
         last_chimein_at=patched_datetime.now(UTC) - timedelta(minutes=30),
     )
     await cog._maybe_chime_in_one(1, 2)
-    claude.chimein_score.assert_not_called()
+    claude.chimein_score.assert_called_once()  # scored so it could react
+    claude.chimein_post.assert_not_called()    # but post is on cooldown
 
 
 @pytest.mark.asyncio
@@ -265,7 +292,8 @@ async def test_yaps_passes_cooldown_that_chill_would_block(monkeypatch: pytest.M
 
 @pytest.mark.asyncio
 async def test_chill_daily_cap_lower_than_yaps(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A count of 6 today: chill (cap 5) blocks, yaps (cap 10) doesn't."""
+    """count=6 today: chill (cap 5) blocks the post, yaps (cap 10) doesn't. Both
+    still score, chill so it can react, yaps so it can post."""
     cog = _make_cog()
     claude = _stub_claude()
     cog.bot.claude = claude
@@ -273,7 +301,8 @@ async def test_chill_daily_cap_lower_than_yaps(monkeypatch: pytest.MonkeyPatch) 
     _force_et_hour(monkeypatch, 12)
     cog.bot.db = _stub_db(mood=MoodMode.CHILL, count_today=6)
     await cog._maybe_chime_in_one(1, 2)
-    claude.chimein_score.assert_not_called()  # blocked by chill cap of 5
+    claude.chimein_score.assert_called_once()  # scores so it can react
+    claude.chimein_post.assert_not_called()    # chill cap of 5 blocks the post
 
     cog2 = _make_cog()
     claude2 = _stub_claude()
@@ -340,6 +369,237 @@ async def test_chill_threshold_higher_than_yaps(monkeypatch: pytest.MonkeyPatch)
         ev == "chimein_evaluated" and f.get("decision") == "threshold_gate"
         for ev, f in emitted_yaps
     ), f"yaps should NOT have hit threshold_gate at score 0.7, got {emitted_yaps}"
+
+
+# ---- near-miss reactions ------------------------------------------------------
+
+
+def _reactable_message() -> Any:
+    """A buffered message whose channel grants Toots add_reactions perms."""
+    msg = _stub_message()
+    channel = MagicMock(spec=discord.TextChannel)
+    channel.id = 2
+    channel.permissions_for = MagicMock(return_value=SimpleNamespace(
+        view_channel=True, read_message_history=True, add_reactions=True,
+    ))
+    msg.channel = channel
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 1
+    guild.me = MagicMock(spec=discord.Member)
+    msg.guild = guild
+    msg.id = 4242
+    msg.reactions = []
+    msg.add_reaction = AsyncMock()
+    return msg
+
+
+def _fill_buffer_ending_with(cog: ChimeIn, target: Any) -> None:
+    """Seed (1,2) buffer with enough messages to score, `target` last (react target)."""
+    cog._buffers[(1, 2)].extend(
+        [_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE - 1)] + [target]
+    )
+
+
+@pytest.mark.asyncio
+async def test_near_miss_reacts_instead_of_threshold_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Score in [0.45, threshold): react to the latest message, decision='reacted'."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    db = _stub_db(mood=MoodMode.CHILL)  # post threshold 0.8
+    cog.bot.db = db
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")  # near-miss
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+    _force_et_hour(monkeypatch, 12)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_awaited_once()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "reacted"
+        for ev, f in emitted
+    ), f"expected a 'reacted' decision, got {emitted}"
+    db.record_reaction.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_below_react_floor_stays_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Score under REACT_THRESHOLD: no reaction, falls through to threshold_gate."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    cog.bot.claude = _stub_claude(score=0.3, vibe="debate")  # below floor
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+    _force_et_hour(monkeypatch, 12)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_not_awaited()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "threshold_gate"
+        for ev, f in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_react_respects_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A recent reaction (DB-backed) in this channel blocks another within REACT_COOLDOWN."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+
+    cog = _make_cog()
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
+    _force_et_hour(monkeypatch, 12)
+    from cogs.chimein import datetime as patched_datetime
+    cog.bot.db = _stub_db(
+        mood=MoodMode.CHILL,
+        last_reaction_at=patched_datetime.now(UTC) - timedelta(minutes=5),  # within 10min
+    )
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_cooldown_still_allows_reaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Headline fix: posting on cooldown still lets a near-miss get a reaction."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    claude = _stub_claude(score=0.6, vibe="debate")  # under chill 0.8 post bar
+    cog.bot.claude = claude
+    _force_et_hour(monkeypatch, 12)
+    from cogs.chimein import datetime as patched_datetime
+    cog.bot.db = _stub_db(
+        mood=MoodMode.CHILL,
+        last_chimein_at=patched_datetime.now(UTC) - timedelta(minutes=30),  # on cooldown
+    )
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_awaited_once()
+    claude.chimein_post.assert_not_called()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "reacted"
+        for ev, f in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_skips_scoring_when_post_and_react_both_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cost-saving: post on cooldown AND reaction on its own cooldown => no score."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    claude = _stub_claude()
+    cog.bot.claude = claude
+    _force_et_hour(monkeypatch, 12)
+    from cogs.chimein import datetime as patched_datetime
+    # post on cooldown AND reaction on its own cooldown (both DB-backed), so
+    # neither can fire and we skip scoring entirely.
+    cog.bot.db = _stub_db(
+        mood=MoodMode.CHILL,
+        last_chimein_at=patched_datetime.now(UTC) - timedelta(minutes=30),
+        last_reaction_at=patched_datetime.now(UTC) - timedelta(minutes=5),
+    )
+    cog._buffers[(1, 2)].extend([_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE)])
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    claude.chimein_score.assert_not_called()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "cooldown_gate"
+        for ev, f in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_react_daily_cap_is_mood_tuned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reaction daily cap reuses the mood cap (chill 5): at the cap, no reaction;
+    the same count under the yaps cap (10) still reacts."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+    chill_cap = MOOD_TUNING[MoodMode.CHILL].daily_cap  # 5
+
+    # score 0.5: under both post thresholds (chill 0.8 / yaps 0.6) so we hit the
+    # react branch, and above REACT_THRESHOLD (0.45) so a reaction is wanted.
+    # At the chill cap -> blocked.
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL, reaction_count_today=chill_cap)
+    cog.bot.claude = _stub_claude(score=0.5, vibe="debate")
+    _force_et_hour(monkeypatch, 12)
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+    await cog._maybe_chime_in_one(1, 2)
+    target.add_reaction.assert_not_awaited()
+
+    # Same count, but yaps cap (10) is higher -> still reacts.
+    cog2 = _make_cog()
+    cog2.bot.db = _stub_db(mood=MoodMode.YAPS, reaction_count_today=chill_cap)
+    cog2.bot.claude = _stub_claude(score=0.5, vibe="debate")
+    target2 = _reactable_message()
+    _fill_buffer_ending_with(cog2, target2)
+    await cog2._maybe_chime_in_one(1, 2)
+    target2.add_reaction.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_react_piles_onto_top_existing_reaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the message already has reactions, Toots co-signs the highest-count one
+    instead of bringing her own vibe emoji."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
+    _force_et_hour(monkeypatch, 12)
+    target = _reactable_message()
+    # 💯 has more reactors than 👀, so she should pile onto 💯.
+    target.reactions = [
+        SimpleNamespace(emoji="👀", count=1, me=False),
+        SimpleNamespace(emoji="💯", count=4, me=False),
+    ]
+    _fill_buffer_ending_with(cog, target)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_awaited_once_with("💯")
+
+
+@pytest.mark.asyncio
+async def test_react_uses_scorer_emoji_on_bare_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a bare message, the scorer's stance emoji is used (not a random pick)."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    # hot take that's nonsense -> scorer returns the cap emoji.
+    cog.bot.claude = _stub_claude(score=0.6, vibe="hot_take", reaction="🧢")
+    _force_et_hour(monkeypatch, 12)
+    target = _reactable_message()  # no existing reactions
+    _fill_buffer_ending_with(cog, target)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_awaited_once_with("🧢")
 
 
 def test_skip_vibes_subset_of_known_vibes() -> None:

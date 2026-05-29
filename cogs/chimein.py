@@ -42,6 +42,7 @@ import discord
 from discord.ext import commands, tasks
 
 from models import MoodMode
+from utils import voice
 from utils.dedup import is_duplicate_of_recent
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
@@ -49,6 +50,7 @@ from utils.link_enrich import enrich_batch
 from utils.markets import MarketSnapshot
 from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
+from utils.reactions import react
 from utils.url_guardrail import extract_urls
 
 if TYPE_CHECKING:
@@ -65,6 +67,18 @@ ET = ZoneInfo("America/New_York")
 # this, we don't have enough signal to know what the room's talking about.
 BUFFER_MIN_FOR_SCORE = 5
 CHIMEIN_QUALITY_THRESHOLD = 0.6
+
+# Near-miss reaction band: when Toots can't (or won't) post but the buffer scores
+# at or above this floor (and the vibe isn't a skip), she drops a single reaction
+# instead of staying fully silent, the "I'm here, I clocked that" move. Reactions
+# never post or consume the chimein post cooldown / daily cap; they ride their own
+# light cooldown + the mood's daily cap so she doesn't pepper the room. The reaction
+# decision sits AFTER scoring, alongside the post decision, so it still fires during
+# the post-cooldown / post-cap silent gaps it's meant to fill. The per-day reaction
+# allowance reuses the mood's daily_cap (chill 5 / yaps 10), so a chattier mood
+# reacts more, same as it posts more.
+REACT_THRESHOLD = 0.45
+REACT_COOLDOWN = timedelta(minutes=10)
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
@@ -118,6 +132,12 @@ class ChimeIn(commands.Cog):
         # We track this so we only score when there's *new* signal, not just on
         # the time interval.
         self._new_since_eval: defaultdict[tuple[int, int], int] = defaultdict(int)
+        # (guild_id, channel_id) -> last reaction ATTEMPT time. In-memory and
+        # purely a transient anti-hammer for the failure path (e.g. perms
+        # revoked): durable cooldown + daily-cap pacing for SUCCESSFUL reactions
+        # lives in the DB (chimein_reactions), so losing this on redeploy is
+        # harmless (at most one extra attempt).
+        self._last_react_attempt: dict[tuple[int, int], datetime] = {}
         # guild_id -> set of discourse channel IDs. Refreshed each tick so /menu
         # edits take effect within a tick instead of needing a restart.
         self._listen_channels: dict[int, set[int]] = {}
@@ -223,27 +243,38 @@ class ChimeIn(commands.Cog):
             )
             return
 
-        # Cooldown (mood-tuned)
+        # Post cooldown + daily cap are FLAGS, not early returns: a blocked post
+        # shouldn't also block a reaction, which exists to fill exactly those
+        # silent gaps. We only skip the (Haiku) scoring call when BOTH a post and
+        # a reaction are off the table.
+        key = (guild_id, channel_id)
         last_at = await self.bot.db.last_chimein_at(guild_id, channel_id)
-        if last_at is not None and datetime.now(UTC) - last_at < tuning.cooldown:
-            emit(
-                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="cooldown_gate", mood=str(schedule.mood),
-            )
-            return
+        post_on_cooldown = (
+            last_at is not None and datetime.now(UTC) - last_at < tuning.cooldown
+        )
+        post_capped = False
+        count_today = 0
+        if not post_on_cooldown:
+            count_today = await self.bot.db.chimein_count_today(guild_id, channel_id)
+            post_capped = count_today >= tuning.daily_cap
+        post_blocked = post_on_cooldown or post_capped
 
-        # Daily cap (mood-tuned)
-        count_today = await self.bot.db.chimein_count_today(guild_id, channel_id)
-        if count_today >= tuning.daily_cap:
-            emit(
-                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="daily_cap_gate", count_today=count_today,
-                mood=str(schedule.mood),
-            )
-            return
+        # Reaction eligibility is DB-backed (survives redeploys, like the post
+        # cooldown). Check it lazily: only when posting is blocked (for the
+        # cost-saving short-circuit) or when we later fall into the react branch,
+        # never on the common about-to-post path.
+        react_ok: bool | None = None
+        if post_blocked:
+            react_ok = await self._react_eligible(guild_id, channel_id, tuning.daily_cap)
+            if not react_ok:
+                emit(
+                    "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                    decision="cooldown_gate" if post_on_cooldown else "daily_cap_gate",
+                    count_today=count_today, mood=str(schedule.mood),
+                )
+                return
 
         # ---- Score the buffer --------------------------------------------------
-        key = (guild_id, channel_id)
         msgs = list(self._buffers[key])
         buffer_blob = format_for_prompt(msgs, include_reactions=True)
 
@@ -254,7 +285,7 @@ class ChimeIn(commands.Cog):
         )
 
         try:
-            score, vibe, hook = await self.bot.claude.chimein_score(
+            score, vibe, hook, reaction = await self.bot.claude.chimein_score(
                 buffer_blob, recent_self_posts=recent_posts,
             )
         except Exception as exc:
@@ -270,11 +301,26 @@ class ChimeIn(commands.Cog):
                 decision="vibe_gate", vibe=vibe, score=score,
             )
             return
-        if score < tuning.threshold:
+        if post_blocked or score < tuning.threshold:
+            # Can't post (cooldown/cap) or it's not post-worthy: react if it's a
+            # near-miss-or-better, otherwise go dark. The reaction is the lighter
+            # acknowledgement that fills the gap a post would have left.
+            if react_ok is None:
+                react_ok = await self._react_eligible(guild_id, channel_id, tuning.daily_cap)
+            reacted = await self._maybe_react(
+                key, msgs, vibe, score, reaction, eligible=react_ok,
+            )
+            if reacted:
+                decision = "reacted"
+            elif post_on_cooldown:
+                decision = "cooldown_gate"
+            elif post_capped:
+                decision = "daily_cap_gate"
+            else:
+                decision = "threshold_gate"
             emit(
                 "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="threshold_gate", vibe=vibe, score=score,
-                mood=str(schedule.mood),
+                decision=decision, vibe=vibe, score=score, mood=str(schedule.mood),
             )
             return
 
@@ -392,6 +438,76 @@ class ChimeIn(commands.Cog):
             mood=str(schedule.mood),
             quality_score=quality_score, quality_reason=quality_reason,
         )
+
+
+    async def _react_eligible(
+        self, guild_id: int, channel_id: int, daily_cap: int,
+    ) -> bool:
+        """DB-backed gate: react cooldown elapsed AND daily cap not hit.
+
+        Durable across redeploys (unlike a purely in-memory timer), mirroring the
+        post cooldown/cap. `daily_cap` is the mood's cap (chill 5 / yaps 10), so
+        reactions pace with the same mood cadence as posts. Counts only
+        successful reactions (rows in chimein_reactions).
+        """
+        last = await self.bot.db.last_reaction_at(guild_id, channel_id)
+        if last is not None and datetime.now(UTC) - last < REACT_COOLDOWN:
+            return False
+        return await self.bot.db.reaction_count_today(guild_id, channel_id) < daily_cap
+
+    @staticmethod
+    def _pick_react_emoji(
+        message: discord.Message, vibe: str, suggested: str,
+    ) -> str | discord.Emoji | discord.PartialEmoji:
+        """Choose the emoji to react with.
+
+        Priority:
+          1. Co-sign the room: if the message already carries reactions, pile
+             onto the most-used one (highest count; ties resolve to the
+             first-added, since Discord returns reactions in insertion order and
+             max() keeps the first on ties).
+          2. The scorer's `suggested` emoji, chosen by stance (🔥 cosign vs 🧢
+             cap aren't interchangeable), when the message is bare.
+          3. A random vibe-appropriate pick, only if the scorer offered nothing.
+        """
+        if message.reactions:
+            return max(message.reactions, key=lambda r: r.count).emoji
+        return suggested or voice.pick_reaction(vibe)
+
+    async def _maybe_react(
+        self,
+        key: tuple[int, int],
+        msgs: list[discord.Message],
+        vibe: str,
+        score: float,
+        suggested: str,
+        *,
+        eligible: bool,
+    ) -> bool:
+        """React to the latest *scored* message on a near-miss-or-better score.
+
+        Cheap path: no Claude call, no post, no chimein post-cooldown/cap
+        consumption. `eligible` is the DB-backed cooldown/daily-cap result.
+        `msgs` is the same snapshot the scorer saw, so the reaction can't drift
+        onto an unrelated message that arrived during the scoring await.
+        """
+        if score < REACT_THRESHOLD or not eligible or not msgs:
+            return False
+        # Transient anti-hammer for the FAILURE path: don't re-attempt within
+        # REACT_COOLDOWN even if the last attempt failed (e.g. perms revoked).
+        # Successful reactions are paced durably by the DB cooldown above; this
+        # in-memory guard only matters when nothing got recorded, so losing it on
+        # redeploy is harmless.
+        last_attempt = self._last_react_attempt.get(key)
+        if last_attempt is not None and datetime.now(UTC) - last_attempt < REACT_COOLDOWN:
+            return False
+        target = msgs[-1]
+        emoji = self._pick_react_emoji(target, vibe, suggested)
+        self._last_react_attempt[key] = datetime.now(UTC)
+        if not await react(target, emoji, source="chimein"):
+            return False
+        await self.bot.db.record_reaction(key[0], key[1], target.id, str(emoji))
+        return True
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -211,6 +211,16 @@ CREATE TABLE IF NOT EXISTS chimein_history (
 );
 CREATE INDEX IF NOT EXISTS chimein_history_channel_ts_idx
     ON chimein_history (guild_id, channel_id, posted_at DESC);
+CREATE TABLE IF NOT EXISTS chimein_reactions (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    message_id BIGINT NOT NULL,
+    emoji TEXT,
+    reacted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS chimein_reactions_channel_ts_idx
+    ON chimein_reactions (guild_id, channel_id, reacted_at DESC);
 CREATE INDEX IF NOT EXISTS command_metrics_guild_cmd_idx ON command_metrics (guild_id, command);
 
 -- Add announced_at column if missing (idempotent migration).
@@ -813,9 +823,46 @@ class DB:
         )
         return int(row["n"]) if row else 0
 
+    async def record_reaction(
+        self, guild_id: int, channel_id: int, message_id: int, emoji: str,
+    ) -> None:
+        await self._execute(
+            """
+            INSERT INTO chimein_reactions (guild_id, channel_id, message_id, emoji)
+            VALUES ($1, $2, $3, $4)
+            """,
+            guild_id, channel_id, message_id, emoji,
+        )
+
+    async def last_reaction_at(
+        self, guild_id: int, channel_id: int,
+    ) -> datetime | None:
+        row = await self._fetchrow(
+            """
+            SELECT MAX(reacted_at) AS last_at FROM chimein_reactions
+            WHERE guild_id = $1 AND channel_id = $2
+            """,
+            guild_id, channel_id,
+        )
+        return row["last_at"] if row else None
+
+    async def reaction_count_today(self, guild_id: int, channel_id: int) -> int:
+        row = await self._fetchrow(
+            """
+            SELECT COUNT(*) AS n FROM chimein_reactions
+            WHERE guild_id = $1 AND channel_id = $2
+              AND reacted_at > NOW() - INTERVAL '24 hours'
+            """,
+            guild_id, channel_id,
+        )
+        return int(row["n"]) if row else 0
+
     async def prune_chimein_history(self) -> None:
         await self._execute(
             "DELETE FROM chimein_history WHERE posted_at < NOW() - INTERVAL '90 days'"
+        )
+        await self._execute(
+            "DELETE FROM chimein_reactions WHERE reacted_at < NOW() - INTERVAL '90 days'"
         )
 
     # ---- discourse schedule -----------------------------------------------------

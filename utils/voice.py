@@ -98,9 +98,27 @@ ABUSE_SILENCED = [
 ]
 
 
+# Reaction emoji Toots drops on a message instead of posting a full take, the
+# lighter-touch "I'm here and I clocked that" move. Keyed by the chimein vibe
+# that scored the buffer. vulnerable/catchup/other never reach here (SKIP_VIBES),
+# so they're intentionally absent; _REACTION_FALLBACK covers any drift.
+REACTION_EMOJI_BY_VIBE: dict[str, list[str]] = {
+    "debate": ["🍿", "👀", "🥊"],
+    "hot_take": ["🔥", "💀", "🧢"],
+    "question": ["🤔", "👀", "❓"],
+    "conversational": ["😭", "💀", "🫡", "🙏"],
+}
+_REACTION_FALLBACK = ["👀", "🔥", "😭"]
+
+
 def pick(pool: list[str]) -> str:
     """Random variant from a pool."""
     return random.choice(pool)
+
+
+def pick_reaction(vibe: str) -> str:
+    """An in-voice reaction emoji for a chimein vibe (random within the pool)."""
+    return random.choice(REACTION_EMOJI_BY_VIBE.get(vibe, _REACTION_FALLBACK))
 
 
 def order_in_flight(count: int, cap: int) -> str:

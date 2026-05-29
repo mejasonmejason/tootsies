@@ -20,6 +20,7 @@ from utils.feeds import (
     is_channel_dead,
     recent_image_urls,
     recent_messages,
+    resolve_reactors,
 )
 from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
@@ -116,7 +117,11 @@ class Recap(commands.Cog):
                 )
                 line = voice.pick(voice.CHANNEL_DEAD)
             else:
-                blob = format_for_prompt(msgs, include_reactions=True)
+                # Name WHO reacted with WHICH emoji on the top-reacted messages
+                # (bounded API lookup), so Toots can say "the room 🔥'd jordan's
+                # take" instead of a faceless reaction count.
+                reactors = await resolve_reactors(msgs)
+                blob = format_for_prompt(msgs, include_reactions=True, reactors=reactors)
                 # Surface recent images to recap too so Toots can name the meme that
                 # got the reactions. Now reaction-ranked, not strictly chronological.
                 image_urls = recent_image_urls(msgs, limit=8)

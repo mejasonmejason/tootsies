@@ -63,11 +63,15 @@ Known kinds (keep this list in sync with what's emitted):
         empty         : model returned blank / "EMPTY", nothing fresh to post.
   - chimein_evaluated  : chime-in considered a channel buffer and decided
       decision (mood_off_gate | hours_gate | cooldown_gate | daily_cap_gate |
-                vibe_gate | threshold_gate | empty_generation),
+                vibe_gate | threshold_gate | reacted | empty_generation),
       guild_id, channel_id, optional: score, vibe, count_today,
       local_hour_et, mood
+        reacted : below post threshold but a near-miss, so Toots dropped a
+                  reaction instead of a full take (see reaction_added).
   - chimein_posted     : chime-in actually posted a take
       guild_id, channel_id, score, vibe, hook, mood
+  - reaction_added     : Toots reacted to a message (utils/reactions.py)
+      source (e.g. `chimein`), guild_id, channel_id, message_id, emoji
   - link_enrich        : per-URL social-link enrichment attempt (utils/link_enrich.py)
       platform (twitter|tiktok|youtube|reddit|bluesky), url_host, ok,
       duration_ms, cache_hit
