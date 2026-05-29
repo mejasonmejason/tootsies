@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict, deque
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -132,12 +132,12 @@ class ChimeIn(commands.Cog):
         # We track this so we only score when there's *new* signal, not just on
         # the time interval.
         self._new_since_eval: defaultdict[tuple[int, int], int] = defaultdict(int)
-        # (guild_id, channel_id) -> last time Toots reacted here, and -> (UTC
-        # date, count) of reactions today. In-memory on purpose: a reaction is
-        # best-effort, so a redeploy resetting these (at worst a few extra
-        # reactions) isn't worth a DB table + migration.
-        self._last_react_at: dict[tuple[int, int], datetime] = {}
-        self._react_count: dict[tuple[int, int], tuple[date, int]] = {}
+        # (guild_id, channel_id) -> last reaction ATTEMPT time. In-memory and
+        # purely a transient anti-hammer for the failure path (e.g. perms
+        # revoked): durable cooldown + daily-cap pacing for SUCCESSFUL reactions
+        # lives in the DB (chimein_reactions), so losing this on redeploy is
+        # harmless (at most one extra attempt).
+        self._last_react_attempt: dict[tuple[int, int], datetime] = {}
         # guild_id -> set of discourse channel IDs. Refreshed each tick so /menu
         # edits take effect within a tick instead of needing a restart.
         self._listen_channels: dict[int, set[int]] = {}
@@ -259,13 +259,20 @@ class ChimeIn(commands.Cog):
             post_capped = count_today >= tuning.daily_cap
         post_blocked = post_on_cooldown or post_capped
 
-        if post_blocked and not self._react_eligible(key):
-            emit(
-                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="cooldown_gate" if post_on_cooldown else "daily_cap_gate",
-                count_today=count_today, mood=str(schedule.mood),
-            )
-            return
+        # Reaction eligibility is DB-backed (survives redeploys, like the post
+        # cooldown). Check it lazily: only when posting is blocked (for the
+        # cost-saving short-circuit) or when we later fall into the react branch,
+        # never on the common about-to-post path.
+        react_ok: bool | None = None
+        if post_blocked:
+            react_ok = await self._react_eligible(guild_id, channel_id)
+            if not react_ok:
+                emit(
+                    "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
+                    decision="cooldown_gate" if post_on_cooldown else "daily_cap_gate",
+                    count_today=count_today, mood=str(schedule.mood),
+                )
+                return
 
         # ---- Score the buffer --------------------------------------------------
         msgs = list(self._buffers[key])
@@ -298,7 +305,9 @@ class ChimeIn(commands.Cog):
             # Can't post (cooldown/cap) or it's not post-worthy: react if it's a
             # near-miss-or-better, otherwise go dark. The reaction is the lighter
             # acknowledgement that fills the gap a post would have left.
-            reacted = await self._maybe_react(key, msgs, vibe, score)
+            if react_ok is None:
+                react_ok = await self._react_eligible(guild_id, channel_id)
+            reacted = await self._maybe_react(key, msgs, vibe, score, eligible=react_ok)
             if reacted:
                 decision = "reacted"
             elif post_on_cooldown:
@@ -429,47 +438,50 @@ class ChimeIn(commands.Cog):
         )
 
 
-    def _reacts_today(self, key: tuple[int, int]) -> int:
-        """Reaction count for this channel so far today (UTC). 0 after a date roll."""
-        entry = self._react_count.get(key)
-        if entry is None or entry[0] != datetime.now(UTC).date():
-            return 0
-        return entry[1]
+    async def _react_eligible(self, guild_id: int, channel_id: int) -> bool:
+        """DB-backed gate: react cooldown elapsed AND daily cap not hit.
 
-    def _react_eligible(self, key: tuple[int, int]) -> bool:
-        """In-memory gate: react cooldown elapsed AND daily cap not hit. No I/O."""
-        last = self._last_react_at.get(key)
+        Durable across redeploys (unlike a purely in-memory timer), mirroring the
+        post cooldown/cap. Counts only successful reactions (rows in
+        chimein_reactions).
+        """
+        last = await self.bot.db.last_reaction_at(guild_id, channel_id)
         if last is not None and datetime.now(UTC) - last < REACT_COOLDOWN:
             return False
-        return self._reacts_today(key) < REACT_DAILY_CAP
+        return await self.bot.db.reaction_count_today(guild_id, channel_id) < REACT_DAILY_CAP
 
     async def _maybe_react(
-        self, key: tuple[int, int], msgs: list[discord.Message], vibe: str, score: float,
+        self,
+        key: tuple[int, int],
+        msgs: list[discord.Message],
+        vibe: str,
+        score: float,
+        *,
+        eligible: bool,
     ) -> bool:
         """React to the latest *scored* message on a near-miss-or-better score.
 
         Cheap path: no Claude call, no post, no chimein post-cooldown/cap
-        consumption. Gated by REACT_THRESHOLD plus its own cooldown + daily cap
-        (via _react_eligible) so Toots doesn't pepper the channel. `msgs` is the
-        same snapshot the scorer saw, so the reaction can't drift onto an
-        unrelated message that arrived during the scoring await.
+        consumption. `eligible` is the DB-backed cooldown/daily-cap result.
+        `msgs` is the same snapshot the scorer saw, so the reaction can't drift
+        onto an unrelated message that arrived during the scoring await.
         """
-        if score < REACT_THRESHOLD or not self._react_eligible(key) or not msgs:
+        if score < REACT_THRESHOLD or not eligible or not msgs:
+            return False
+        # Transient anti-hammer for the FAILURE path: don't re-attempt within
+        # REACT_COOLDOWN even if the last attempt failed (e.g. perms revoked).
+        # Successful reactions are paced durably by the DB cooldown above; this
+        # in-memory guard only matters when nothing got recorded, so losing it on
+        # redeploy is harmless.
+        last_attempt = self._last_react_attempt.get(key)
+        if last_attempt is not None and datetime.now(UTC) - last_attempt < REACT_COOLDOWN:
             return False
         target = msgs[-1]
         emoji = voice.pick_reaction(vibe)
-        # Advance the cooldown on the ATTEMPT (before the await), so a failing
-        # react (revoked perm, transient API error) backs off for REACT_COOLDOWN
-        # instead of retrying every tick.
-        self._last_react_at[key] = datetime.now(UTC)
+        self._last_react_attempt[key] = datetime.now(UTC)
         if not await react(target, emoji, source="chimein"):
             return False
-        # Count only successful reactions against the daily cap.
-        today = datetime.now(UTC).date()
-        prev = self._react_count.get(key)
-        self._react_count[key] = (
-            today, (prev[1] + 1 if prev is not None and prev[0] == today else 1),
-        )
+        await self.bot.db.record_reaction(key[0], key[1], target.id, emoji)
         return True
 
 

@@ -128,8 +128,7 @@ def _make_cog() -> ChimeIn:
     cog._buffers = defaultdict(lambda: _dq(maxlen=BUFFER_MAX))
     cog._new_since_eval = defaultdict(int)
     cog._listen_channels = {}
-    cog._last_react_at = {}
-    cog._react_count = {}
+    cog._last_react_attempt = {}
     return cog
 
 
@@ -158,6 +157,8 @@ def _stub_db(
     last_chimein_at: datetime | None = None,
     count_today: int = 0,
     mood: MoodMode = MoodMode.CHILL,
+    last_reaction_at: datetime | None = None,
+    reaction_count_today: int = 0,
 ) -> Any:
     db = MagicMock()
     db.last_chimein_at = AsyncMock(return_value=last_chimein_at)
@@ -166,6 +167,9 @@ def _stub_db(
     db.add_discourse = AsyncMock()
     db.get_schedule = AsyncMock(return_value=_stub_schedule(mood))
     db.recent_discourse_all = AsyncMock(return_value=[])
+    db.last_reaction_at = AsyncMock(return_value=last_reaction_at)
+    db.reaction_count_today = AsyncMock(return_value=reaction_count_today)
+    db.record_reaction = AsyncMock()
     return db
 
 
@@ -390,7 +394,8 @@ async def test_near_miss_reacts_instead_of_threshold_gate(
     monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
 
     cog = _make_cog()
-    cog.bot.db = _stub_db(mood=MoodMode.CHILL)  # post threshold 0.8
+    db = _stub_db(mood=MoodMode.CHILL)  # post threshold 0.8
+    cog.bot.db = db
     cog.bot.claude = _stub_claude(score=0.6, vibe="debate")  # near-miss
     target = _reactable_message()
     _fill_buffer_ending_with(cog, target)
@@ -403,7 +408,7 @@ async def test_near_miss_reacts_instead_of_threshold_gate(
         ev == "chimein_evaluated" and f.get("decision") == "reacted"
         for ev, f in emitted
     ), f"expected a 'reacted' decision, got {emitted}"
-    assert (1, 2) in cog._last_react_at
+    db.record_reaction.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -430,16 +435,19 @@ async def test_below_react_floor_stays_silent(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_react_respects_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A recent reaction in this channel blocks another within REACT_COOLDOWN."""
+    """A recent reaction (DB-backed) in this channel blocks another within REACT_COOLDOWN."""
     monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
 
     cog = _make_cog()
-    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
     cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
-    cog._last_react_at[(1, 2)] = datetime.now(UTC)  # just reacted
+    _force_et_hour(monkeypatch, 12)
+    from cogs.chimein import datetime as patched_datetime
+    cog.bot.db = _stub_db(
+        mood=MoodMode.CHILL,
+        last_reaction_at=patched_datetime.now(UTC) - timedelta(minutes=5),  # within 10min
+    )
     target = _reactable_message()
     _fill_buffer_ending_with(cog, target)
-    _force_et_hour(monkeypatch, 12)
 
     await cog._maybe_chime_in_one(1, 2)
 
@@ -489,11 +497,13 @@ async def test_skips_scoring_when_post_and_react_both_blocked(
     cog.bot.claude = claude
     _force_et_hour(monkeypatch, 12)
     from cogs.chimein import datetime as patched_datetime
+    # post on cooldown AND reaction on its own cooldown (both DB-backed), so
+    # neither can fire and we skip scoring entirely.
     cog.bot.db = _stub_db(
         mood=MoodMode.CHILL,
         last_chimein_at=patched_datetime.now(UTC) - timedelta(minutes=30),
+        last_reaction_at=patched_datetime.now(UTC) - timedelta(minutes=5),
     )
-    cog._last_react_at[(1, 2)] = patched_datetime.now(UTC)  # react also on cooldown
     cog._buffers[(1, 2)].extend([_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE)])
 
     await cog._maybe_chime_in_one(1, 2)
@@ -507,16 +517,14 @@ async def test_skips_scoring_when_post_and_react_both_blocked(
 
 @pytest.mark.asyncio
 async def test_react_respects_daily_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reactions stop once REACT_DAILY_CAP is hit for the day, even off cooldown."""
+    """Reactions stop once REACT_DAILY_CAP is hit (DB-backed count), even off cooldown."""
     monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
 
+    from cogs.chimein import REACT_DAILY_CAP
     cog = _make_cog()
-    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL, reaction_count_today=REACT_DAILY_CAP)
     cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
     _force_et_hour(monkeypatch, 12)
-    from cogs.chimein import REACT_DAILY_CAP
-    from cogs.chimein import datetime as patched_datetime
-    cog._react_count[(1, 2)] = (patched_datetime.now(UTC).date(), REACT_DAILY_CAP)
     target = _reactable_message()
     _fill_buffer_ending_with(cog, target)
 
