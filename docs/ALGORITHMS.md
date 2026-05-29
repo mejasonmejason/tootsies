@@ -53,7 +53,7 @@ Same backend, same rate limit. The mention handler in [cogs/ask.py](../cogs/ask.
 
 | What | Where | Current | Effect of changing |
 |---|---|---|---|
-| Per-user daily cap | [`utils/rate_limits.DEFAULT_PER_USER_DAILY`](../utils/rate_limits.py) | 20 | Higher = more daily usage allowed; `/menu` setting overrides per-guild |
+| Per-user daily cap | [`utils/rate_limits.DEFAULT_PER_USER_DAILY`](../utils/rate_limits.py) | 100 | Higher = more daily usage allowed; `/menu` setting overrides per-guild |
 | Channel context size | [`cogs/ask.py:_answer()`](../cogs/ask.py) `recent_messages(limit=30)` | 30 messages | Higher = richer context, more input tokens |
 | Vision images per call | [`cogs/ask.py:_answer()`](../cogs/ask.py) `recent_image_urls(limit=8)` | 8 | Higher = better visual context, more cost (~85 tokens fixed + variable per image) |
 | Vision hard cap | [`claude_client._call`](../claude_client.py) image_urls slice | 10 | Final safety cap regardless of caller |
@@ -93,7 +93,7 @@ Same backend, same rate limit. The mention handler in [cogs/ask.py](../cogs/ask.
 
 | What | Where | Current | Effect |
 |---|---|---|---|
-| Per-user daily cap | shared with /ask via `DEFAULT_PER_USER_DAILY` | 20 | Same as /ask |
+| Per-user daily cap | shared with /ask via `DEFAULT_PER_USER_DAILY` | 100 | Same as /ask |
 | Channel read limit | [`cogs/recap.py`](../cogs/recap.py) `recent_messages(limit=200, ...)` | 200 messages | Higher = more thorough recap, more input tokens |
 | Dead-channel threshold | [`utils/feeds.is_channel_dead()`](../utils/feeds.py) | 0 (only literally empty) | Raise to require N+ messages (we trust Claude to handle thin content now) |
 | Vision images for recap | [`cogs/recap.py`](../cogs/recap.py) `recent_image_urls(limit=8)` | 8 | Same trade as /ask |
@@ -277,7 +277,7 @@ The full system prompt (~1 k tokens) is sent with `cache_control: {"type": "ephe
 
 Two flavors in [`utils/rate_limits.py`](../utils/rate_limits.py):
 
-- **Per-user daily** (`/ask`, `/recap`), default 20, override via `/menu → per_user_daily_limit`.
+- **Per-user daily** (`/ask`, `/recap`), default 100, override via `/menu → per_user_daily_limit`.
 - **Per-server daily** (`/discourse` manual, `/order`), default 20, override via `/menu → per_server_daily_limit`.
 - **Cooldown**: only `/order` has one (15 min per user).
 
