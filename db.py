@@ -328,6 +328,11 @@ CREATE TABLE IF NOT EXISTS memory_notes (
 );
 CREATE INDEX IF NOT EXISTS memory_notes_guild_tier_idx
     ON memory_notes (guild_id, tier, span_end DESC);
+-- Full-text index over the note prose, for the search_memory tool (on-demand
+-- deep recall from /ask). Expression GIN index so the FTS predicate is indexed;
+-- Postgres bitmap-ands it with the guild_id btree above.
+CREATE INDEX IF NOT EXISTS memory_notes_summary_fts_idx
+    ON memory_notes USING GIN (to_tsvector('english', summary));
 
 -- Self-service erasure (/forget): a user can wipe themselves from Toots's
 -- memory. Their display name is suppressed from all FUTURE memory writes (the
@@ -1255,6 +1260,33 @@ class DB:
             guild_id, tier, limit,
         )
         return [(r["id"], r["summary"], r["span_start"], r["span_end"]) for r in rows]
+
+    async def search_memory_notes(
+        self, guild_id: int, query: str, limit: int = 6,
+    ) -> list[tuple[str, str, datetime, datetime]]:
+        """Full-text search this guild's memory notes for the `search_memory`
+        tool (on-demand deep recall). Returns (tier, summary, span_start,
+        span_end), ranked by text relevance then recency. `websearch_to_tsquery`
+        is used so arbitrary model/user input never errors on query syntax; an
+        empty / stop-word-only query just returns nothing."""
+        if not query or not query.strip():
+            return []
+        rows = await self._fetch(
+            """
+            SELECT tier, summary, span_start, span_end FROM memory_notes
+            WHERE guild_id = $1
+              AND to_tsvector('english', summary)
+                  @@ websearch_to_tsquery('english', $2)
+            ORDER BY ts_rank(
+                         to_tsvector('english', summary),
+                         websearch_to_tsquery('english', $2)
+                     ) DESC,
+                     span_end DESC
+            LIMIT $3
+            """,
+            guild_id, query, limit,
+        )
+        return [(r["tier"], r["summary"], r["span_start"], r["span_end"]) for r in rows]
 
     async def has_memory_note_overlapping(
         self, guild_id: int, tier: str, span_start: datetime, span_end: datetime,

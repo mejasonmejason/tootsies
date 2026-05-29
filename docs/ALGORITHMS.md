@@ -225,6 +225,8 @@ In [`cogs/chimein.py`](../cogs/chimein.py):
 3. If all gates pass, call **Sonnet 4.6** [`chimein_post()`](../claude_client.py) with the buffer + hook + recent image URLs (vision + web search both available) to generate the one-line take.
 4. Send the message, record in `chimein_history` for cooldown + daily cap tracking, emit `chimein_posted` event.
 
+**Reaction path (cheap, no post).** When Toots *can't* post (post on cooldown / at the daily cap) or the score is below the post threshold but still a near-miss (`>= REACT_THRESHOLD`, vibe not skipped), she drops a single emoji reaction instead of going silent, the "I clocked that" move. It's decided after scoring (so it still fires in the post-cooldown/cap silent gaps), reuses the scorer's `reaction` emoji (chosen by stance, 🔥 cosign vs 🧢 cap), piles onto the room's top existing reaction if there is one, and is one-per-message. Reactions never post or consume the post cooldown/cap; they ride their own `REACT_COOLDOWN` plus a mood-tuned `react_cap`, both DB-backed in `chimein_reactions`. Because a reaction is free (no API call, no clutter, no ping), `react_cap` sits well above the post cap.
+
 ### Tunable knobs
 
 | What | Where | Current |
@@ -232,6 +234,9 @@ In [`cogs/chimein.py`](../cogs/chimein.py):
 | Min buffer to score | `BUFFER_MIN_FOR_SCORE` in [`cogs/chimein.py`](../cogs/chimein.py) | 5 messages |
 | Buffer max | `BUFFER_MAX` | 50 messages per channel |
 | Per-mood cadence | `MOOD_TUNING` | chill: 0.8 / 5 / 40min · yaps: 0.6 / 10 / 20min |
+| Reaction floor | `REACT_THRESHOLD` | 0.45 (below the post threshold, above silence) |
+| Reaction cooldown | `REACT_COOLDOWN` | 10 min (flat, DB-backed) |
+| Reaction daily cap | `MOOD_TUNING.react_cap` | chill 15 / yaps 30 (well above the post cap; reactions are free) |
 | Hours window | `HOURS_START_ET`, `HOURS_END_ET_NEXT_DAY` | 9am to 2am ET |
 | Skip vibes | `SKIP_VIBES` | `vulnerable`, `catchup`, `other` |
 | Tick frequency | `TICK_SECONDS` | 60s (cheap, only scores buffers with new activity) |

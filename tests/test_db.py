@@ -227,3 +227,31 @@ async def test_all_four_wrappers_exist_and_route_to_correct_method() -> None:
     pool.fetch.assert_called_once()
     pool.fetchrow.assert_called_once()
     pool.fetchval.assert_called_once()
+
+
+# ---- search_memory_notes -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_memory_notes_blank_query_skips_db():
+    from db import DB
+    db = DB.__new__(DB)
+    db._fetch = AsyncMock()  # type: ignore[attr-defined,method-assign]
+    assert await db.search_memory_notes(1, "   ") == []
+    db._fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_search_memory_notes_maps_rows_and_passes_args():
+    from datetime import UTC, datetime
+
+    from db import DB
+    db = DB.__new__(DB)
+    s, e = datetime(2026, 5, 1, tzinfo=UTC), datetime(2026, 5, 7, tzinfo=UTC)
+    db._fetch = AsyncMock(return_value=[  # type: ignore[attr-defined,method-assign]
+        {"tier": "weekly", "summary": "alex stans drake", "span_start": s, "span_end": e},
+    ])
+    out = await db.search_memory_notes(42, "drake", limit=3)
+    assert out == [("weekly", "alex stans drake", s, e)]
+    args = db._fetch.call_args.args
+    assert args[1:] == (42, "drake", 3)  # guild_id, query, limit

@@ -532,16 +532,16 @@ async def test_skips_scoring_when_post_and_react_both_blocked(
 
 @pytest.mark.asyncio
 async def test_react_daily_cap_is_mood_tuned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reaction daily cap reuses the mood cap (chill 5): at the cap, no reaction;
-    the same count under the yaps cap (10) still reacts."""
+    """Reaction cap is the mood's react_cap (chill 15), decoupled from the post cap:
+    at the chill react_cap no reaction; the same count under the yaps cap (30) reacts."""
     monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
-    chill_cap = MOOD_TUNING[MoodMode.CHILL].daily_cap  # 5
+    chill_react_cap = MOOD_TUNING[MoodMode.CHILL].react_cap  # 15
 
     # score 0.5: under both post thresholds (chill 0.8 / yaps 0.6) so we hit the
     # react branch, and above REACT_THRESHOLD (0.45) so a reaction is wanted.
-    # At the chill cap -> blocked.
+    # At the chill react_cap -> blocked.
     cog = _make_cog()
-    cog.bot.db = _stub_db(mood=MoodMode.CHILL, reaction_count_today=chill_cap)
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL, reaction_count_today=chill_react_cap)
     cog.bot.claude = _stub_claude(score=0.5, vibe="debate")
     _force_et_hour(monkeypatch, 12)
     target = _reactable_message()
@@ -549,9 +549,9 @@ async def test_react_daily_cap_is_mood_tuned(monkeypatch: pytest.MonkeyPatch) ->
     await cog._maybe_chime_in_one(1, 2)
     target.add_reaction.assert_not_awaited()
 
-    # Same count, but yaps cap (10) is higher -> still reacts.
+    # Same count, but the yaps react_cap (30) is higher -> still reacts.
     cog2 = _make_cog()
-    cog2.bot.db = _stub_db(mood=MoodMode.YAPS, reaction_count_today=chill_cap)
+    cog2.bot.db = _stub_db(mood=MoodMode.YAPS, reaction_count_today=chill_react_cap)
     cog2.bot.claude = _stub_claude(score=0.5, vibe="debate")
     target2 = _reactable_message()
     _fill_buffer_ending_with(cog2, target2)

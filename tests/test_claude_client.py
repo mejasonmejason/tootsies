@@ -10,12 +10,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from claude_client import (  # noqa: F401
+    _MAX_TOOL_ITERS,
     HAIKU,
     MAX_TOKENS_DEFLECT,
+    SEARCH_MEMORY_TOOL,
     SONNET,
     ClaudeClient,
+    ClaudeResult,
     _time_context,
 )
+
+
+def _tool_use_block(name: str, tool_id: str, tool_input: dict[str, Any]) -> Any:
+    block = MagicMock()
+    block.type = "tool_use"
+    block.name = name
+    block.id = tool_id
+    block.input = tool_input
+    return block
 
 # ---- _time_context ----------------------------------------------------------------
 
@@ -384,6 +396,35 @@ async def test_discourse_uses_sonnet() -> None:
     with patch.object(client, "_call", fake):
         await client.discourse("hiphop", "sources blob")
     assert fake.call_args.kwargs["model"] == SONNET
+
+
+@pytest.mark.asyncio
+async def test_discourse_channel_topic_steers_prompt() -> None:
+    """A channel description (topic) becomes a hard theme constraint in the prompt."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.discourse(
+            None, "sources blob", channel_topic="movies, tv, and film talk only",
+        )
+    system_extra = fake.call_args.kwargs["system_extra"]
+    user_msg = fake.call_args.kwargs["user_message"]
+    assert "CHANNEL THEME" in system_extra
+    assert "movies, tv, and film talk only" in system_extra
+    assert "movies, tv, and film talk only" in user_msg
+
+
+@pytest.mark.asyncio
+async def test_discourse_explicit_category_suppresses_channel_theme() -> None:
+    """An explicit /discourse category: wins; the channel theme block stays out."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.discourse(
+            "hiphop", "sources blob", channel_topic="movies, tv, and film talk only",
+        )
+    system_extra = fake.call_args.kwargs["system_extra"]
+    assert "CHANNEL THEME" not in system_extra
 
 
 @pytest.mark.asyncio
@@ -995,3 +1036,145 @@ async def test_discourse_score_uses_haiku():
     assert reason == "strong take"
     assert fake.call_args.kwargs["model"] == HAIKU
     assert fake.call_args.kwargs["purpose"] == "discourse_score"
+
+
+# ---- client-side tool loop (search_memory) ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_runs_client_tool_loop():
+    """Model emits a search_memory tool_use; _call runs the handler, feeds the
+    result back, and returns the model's follow-up text."""
+    client = ClaudeClient(api_key="test")
+    first = _FakeResponse(
+        content=[_tool_use_block("search_memory", "tu_1", {"query": "drake"})],
+        stop_reason="tool_use",
+    )
+    second = _FakeResponse(
+        content=[_text_block("you call every drake album a classic")],
+        stop_reason="end_turn",
+    )
+    client.client.messages.create = AsyncMock(side_effect=[first, second])  # type: ignore[method-assign]
+
+    seen: list[dict[str, Any]] = []
+
+    async def handler(inp: dict[str, Any]) -> str:
+        seen.append(inp)
+        return "note: alex stans drake"
+
+    result = await client._call(
+        model=SONNET,
+        user_message="what do i think of drake",
+        tools=[SEARCH_MEMORY_TOOL],
+        tool_handlers={"search_memory": handler},
+        purpose="ask",
+    )
+
+    assert result.text == "you call every drake album a classic"
+    assert seen == [{"query": "drake"}]
+    assert client.client.messages.create.call_count == 2
+    # The continuation call carries the assistant tool_use turn + our tool_result.
+    second_messages = client.client.messages.create.call_args_list[1].kwargs["messages"]
+    assert second_messages[-2]["role"] == "assistant"
+    tr = second_messages[-1]
+    assert tr["role"] == "user"
+    assert tr["content"][0]["type"] == "tool_result"
+    assert tr["content"][0]["tool_use_id"] == "tu_1"
+    assert "alex stans drake" in tr["content"][0]["content"]
+    # Token usage accumulates across both turns.
+    assert result.input_tokens == 20  # 10 per turn * 2
+
+
+@pytest.mark.asyncio
+async def test_call_tool_loop_is_bounded():
+    """A model that keeps asking to search is cut off after _MAX_TOOL_ITERS;
+    we take whatever text the last turn carried instead of looping forever."""
+    client = ClaudeClient(api_key="test")
+
+    def always_searches() -> Any:
+        return _FakeResponse(
+            content=[
+                _tool_use_block("search_memory", "x", {"query": "q"}),
+                _text_block("partial answer"),
+            ],
+            stop_reason="tool_use",
+        )
+
+    client.client.messages.create = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[always_searches() for _ in range(_MAX_TOOL_ITERS + 5)]
+    )
+
+    async def handler(inp: dict[str, Any]) -> str:
+        return "hit"
+
+    result = await client._call(
+        model=SONNET,
+        user_message="q",
+        tools=[SEARCH_MEMORY_TOOL],
+        tool_handlers={"search_memory": handler},
+        purpose="ask",
+    )
+    assert client.client.messages.create.call_count == _MAX_TOOL_ITERS + 1
+    assert result.text == "partial answer"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_handler_failure_is_soft():
+    """A throwing handler must not crash the loop; the model gets a soft result."""
+    client = ClaudeClient(api_key="test")
+    first = _FakeResponse(
+        content=[_tool_use_block("search_memory", "tu_1", {"query": "x"})],
+        stop_reason="tool_use",
+    )
+    second = _FakeResponse(content=[_text_block("ok then")], stop_reason="end_turn")
+    client.client.messages.create = AsyncMock(side_effect=[first, second])  # type: ignore[method-assign]
+
+    async def handler(inp: dict[str, Any]) -> str:
+        raise RuntimeError("db down")
+
+    result = await client._call(
+        model=SONNET, user_message="x",
+        tools=[SEARCH_MEMORY_TOOL], tool_handlers={"search_memory": handler},
+        purpose="ask",
+    )
+    assert result.text == "ok then"
+    tr = client.client.messages.create.call_args_list[1].kwargs["messages"][-1]
+    assert "failed" in tr["content"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_ask_offers_search_memory_when_handler_present():
+    client = ClaudeClient(api_key="test")
+    captured: dict[str, Any] = {}
+
+    async def fake_call(**kwargs: Any) -> ClaudeResult:
+        captured.update(kwargs)
+        return ClaudeResult(text="ans", stop_reason="end_turn", input_tokens=1, output_tokens=1)
+
+    async def mem(q: str) -> str:
+        return "hit"
+
+    with patch.object(client, "_call", fake_call):
+        await client.ask("what's up", use_web=True, memory_search=mem)
+
+    tool_names = {t.get("name") for t in captured["tools"]}
+    assert "search_memory" in tool_names
+    assert "search_memory" in captured["tool_handlers"]
+    assert "SEARCH_MEMORY TOOL" in captured["system_extra"]
+
+
+@pytest.mark.asyncio
+async def test_ask_no_search_memory_without_handler():
+    client = ClaudeClient(api_key="test")
+    captured: dict[str, Any] = {}
+
+    async def fake_call(**kwargs: Any) -> ClaudeResult:
+        captured.update(kwargs)
+        return ClaudeResult(text="ans", stop_reason="end_turn", input_tokens=1, output_tokens=1)
+
+    with patch.object(client, "_call", fake_call):
+        await client.ask("what's up", use_web=True)
+
+    assert captured["tool_handlers"] is None
+    assert all(t.get("name") != "search_memory" for t in (captured.get("tools") or []))
+    assert "SEARCH_MEMORY TOOL" not in captured["system_extra"]

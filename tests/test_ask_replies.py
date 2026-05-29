@@ -59,3 +59,24 @@ def test_deleted_referenced_message_returns_none() -> None:
 def test_uncached_reference_returns_none() -> None:
     msg = _msg(_ref(None))
     assert _reply_quote(msg, ME) is None
+
+
+# ---- _format_memory_hits -----------------------------------------------------
+
+
+def test_format_memory_hits_empty():
+    from cogs.ask import _format_memory_hits
+    assert "nothing specific" in _format_memory_hits([])
+
+
+def test_format_memory_hits_renders_tier_and_date_range():
+    from datetime import UTC, datetime
+
+    from cogs.ask import _format_memory_hits
+    hits = [(
+        "weekly", "alex drove the drake debate",
+        datetime(2026, 5, 1, tzinfo=UTC), datetime(2026, 5, 7, tzinfo=UTC),
+    )]
+    out = _format_memory_hits(hits)
+    assert "[weekly | May 01-May 07]" in out
+    assert "alex drove the drake debate" in out
