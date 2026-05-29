@@ -103,10 +103,10 @@ ABUSE_SILENCED = [
 # that scored the buffer. vulnerable/catchup/other never reach here (SKIP_VIBES),
 # so they're intentionally absent; _REACTION_FALLBACK covers any drift.
 REACTION_EMOJI_BY_VIBE: dict[str, list[str]] = {
-    "debate": ["🍿", "👀", "🥊"],
+    "debate": ["👀", "🤔"],
     "hot_take": ["🔥", "💀", "🧢"],
-    "question": ["🤔", "👀", "❓"],
-    "conversational": ["😭", "💀", "🫡", "🙏"],
+    "question": ["🤔", "👀"],
+    "conversational": ["😭", "💀", "🫡", "😂"],
 }
 _REACTION_FALLBACK = ["👀", "🔥", "😭"]
 
