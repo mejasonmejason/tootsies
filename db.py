@@ -506,6 +506,30 @@ class DB:
         )
         return [r["role_id"] for r in rows]
 
+    # ---- "the girls" roles ------------------------------------------------------
+    # The patrons Toots treats as her girls (e.g. an @Habibtis role). She's extra
+    # warm/feminine with anyone wearing one of these. Stored in the settings KV
+    # table (no schema change needed); it's a small per-guild list of role ids.
+
+    async def get_girls_roles(self, guild_id: int) -> list[int]:
+        val = await self.get_setting(guild_id, "girls_role_ids")
+        if isinstance(val, list):
+            return [int(r) for r in val]
+        return []
+
+    async def set_girls_roles(
+        self, guild_id: int, role_ids: list[int], actor_id: int | None = None
+    ) -> None:
+        # Dedup while preserving order so the stored list stays tidy.
+        seen: set[int] = set()
+        cleaned: list[int] = []
+        for r in role_ids:
+            ri = int(r)
+            if ri not in seen:
+                seen.add(ri)
+                cleaned.append(ri)
+        await self.set_setting(guild_id, "girls_role_ids", cleaned, actor_id)
+
     # ---- feed channels ----------------------------------------------------------
 
     async def set_feed_channels(

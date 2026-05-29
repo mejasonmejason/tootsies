@@ -43,6 +43,7 @@ class Help(commands.Cog):
                 "👮 **mods only**\n"
                 "`/order new|status|retry|cancel`: ship new features\n"
                 "`/menu`: channels, roles, mood\n"
+                "`/squad`: name the girls i'm extra warm with\n"
                 "`/logs`: order status + errors channel\n"
                 "`/close` `/open`: pause/resume orders\n"
                 "`/undo`: roll me back\n\n"
