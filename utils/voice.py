@@ -106,7 +106,7 @@ REACTION_EMOJI_BY_VIBE: dict[str, list[str]] = {
     "debate": ["👀", "🤔", "🙄"],
     "hot_take": ["🔥", "💀", "🧢"],
     "question": ["🤔", "👀"],
-    "conversational": ["😭", "💀", "🫡", "😂", "🙏"],
+    "conversational": ["😭", "💀", "🙏"],
 }
 _REACTION_FALLBACK = ["👀", "🔥", "😭"]
 
