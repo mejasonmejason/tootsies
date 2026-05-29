@@ -77,7 +77,7 @@ class GirlsView(discord.ui.View):
         self.actor_id = actor_id
         self.selected: list[int] = list(role_ids)
         self.add_item(_GirlsRoleSelect(self, _role_defaults(guild, role_ids)))
-        self._refresh()
+        self._sync_select()
 
     def embed(self) -> discord.Embed:
         if self.selected:
@@ -98,9 +98,10 @@ class GirlsView(discord.ui.View):
             color=0x9b59b6,
         )
 
-    def _refresh(self) -> None:
+    def _sync_select(self) -> None:
         """Re-sync the select's default_values + placeholder to self.selected
-        before any edit_message, or the view visually clears on re-render."""
+        before any edit_message, or the view visually clears on re-render.
+        (Not named _refresh: discord.ui.View already has a private _refresh.)"""
         for child in self.children:
             if isinstance(child, _GirlsRoleSelect):
                 child.default_values = _role_defaults(self.guild, self.selected)
@@ -129,7 +130,7 @@ class GirlsView(discord.ui.View):
                 guild_id, self.actor_id, "girls_set",
                 after={"role_ids": self.selected},
             )
-        self._refresh()
+        self._sync_select()
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
 

@@ -180,14 +180,14 @@ def _fake_bot() -> MagicMock:
 async def test_girls_view_embed_lists_current_roles() -> None:
     guild = _fake_guild({20: "Habibtis"})
     view = GirlsView(_fake_bot(), guild, [20], actor_id=1)
-    assert "@Habibtis" in view.embed().description
+    assert "@Habibtis" in (view.embed().description or "")
 
 
 @pytest.mark.asyncio
 async def test_girls_view_embed_when_empty() -> None:
     guild = _fake_guild({})
     view = GirlsView(_fake_bot(), guild, [], actor_id=1)
-    assert "no girls picked yet" in view.embed().description
+    assert "no girls picked yet" in (view.embed().description or "")
 
 
 @pytest.mark.asyncio
