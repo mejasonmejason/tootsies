@@ -112,6 +112,16 @@ async def test_react_idempotent_when_already_reacted_by_bot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_react_skips_when_already_reacted_with_different_emoji() -> None:
+    """One reaction per message: a prior bot reaction (any emoji) blocks another."""
+    already = SimpleNamespace(emoji="👀", me=True)
+    msg = _fake_message(existing_reactions=[already])
+    ok = await react(msg, "🔥", source="chimein")
+    assert ok is False
+    msg.add_reaction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_react_still_adds_when_others_reacted_with_same_emoji() -> None:
     """Another user's 🔥 (r.me False) shouldn't block Toots from adding hers."""
     others = SimpleNamespace(emoji="🔥", me=False)

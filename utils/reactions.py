@@ -35,8 +35,9 @@ async def react(
 
     Guards:
       - guild context + add_reactions/read perms (via can_react)
-      - idempotent: skips if Toots already reacted to this message with `emoji`,
-        so repeated chimein ticks on the same buffered message don't double-react.
+      - one reaction per message: skips if Toots has already reacted to this
+        message with ANY emoji, so she never stacks a second reaction on the
+        same message across ticks.
 
     Emits a `reaction_added` event on success.
     """
@@ -50,12 +51,12 @@ async def react(
     if me is None or not can_react(channel, me):
         return False
 
+    # Already reacted to this message at all? `r.me` is True when the bot is
+    # among the reactors. One reaction per message, regardless of emoji.
+    if any(r.me for r in message.reactions):
+        return False
+
     emoji_key = str(emoji)
-    # Already reacted with this emoji? `r.me` is True when the bot is among the
-    # reactors. Avoids stacking the same emoji across ticks.
-    for r in message.reactions:
-        if r.me and str(r.emoji) == emoji_key:
-            return False
 
     try:
         await message.add_reaction(emoji)
