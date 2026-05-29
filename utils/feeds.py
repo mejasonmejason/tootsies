@@ -249,13 +249,79 @@ def _relative_time(dt: datetime) -> str:
     return f"{days}d ago"
 
 
-def format_for_prompt(messages: list[discord.Message], include_reactions: bool = False) -> str:
+def _emoji_label(emoji: object) -> str:
+    """Prompt-friendly label for a reaction emoji.
+
+    Unicode emoji render as-is; custom guild emoji come through as Emoji/
+    PartialEmoji objects whose str() is the ugly `<:name:id>` form, so we
+    collapse those to `:name:`.
+    """
+    if isinstance(emoji, str):
+        return emoji
+    name = getattr(emoji, "name", None)
+    return f":{name}:" if name else "?"
+
+
+async def resolve_reactors(
+    messages: list[discord.Message],
+    *,
+    max_messages: int = 8,
+    max_users_per_emoji: int = 8,
+) -> dict[int, str]:
+    """Resolve WHO reacted (display names) per emoji on the most-reacted messages.
+
+    Returns a mapping of message id -> compact reactor string, e.g.
+    `"🔥 alice, bob; 👀 carol +3 more"`. `discord.Reaction.count` (already on the
+    fetched message) only tells us how many reacted; the reactor identities live
+    behind `reaction.users()`, a paginated API call per emoji. A 200-message
+    /recap would fan out hundreds of those, so we bound to the top `max_messages`
+    by total reaction count, the ones actually worth naming. Per-message API
+    failures fall back silently; the caller still shows the aggregate count.
+    """
+    ranked = sorted(
+        (m for m in messages if m.reactions),
+        key=lambda m: sum(r.count for r in m.reactions),
+        reverse=True,
+    )[:max_messages]
+    out: dict[int, str] = {}
+    for msg in ranked:
+        try:
+            parts: list[str] = []
+            for reaction in msg.reactions:
+                names = [
+                    str(getattr(u, "display_name", None) or getattr(u, "name", "?"))
+                    async for u in reaction.users(limit=max_users_per_emoji)
+                ]
+                if not names:
+                    continue
+                joined = ", ".join(names)
+                extra = reaction.count - len(names)
+                if extra > 0:
+                    joined += f" +{extra} more"
+                parts.append(f"{_emoji_label(reaction.emoji)} {joined}")
+            if parts:
+                out[msg.id] = "; ".join(parts)
+        except discord.DiscordException:
+            continue
+    return out
+
+
+def format_for_prompt(
+    messages: list[discord.Message],
+    include_reactions: bool = False,
+    reactors: dict[int, str] | None = None,
+) -> str:
     """Render a message list for inclusion in a Claude prompt.
 
     Uses display names (no IDs) and truncates content. Media (embeds, attachments,
     GIFs) is inlined as `[<kind>: <label>]` tags so Claude sees what was posted
     even when we don't fan out a separate vision block for the image itself.
-    Reactions optionally appended so /recap can weight popular messages.
+
+    Reaction context, when requested, is appended per message:
+    - `reactors` (from `resolve_reactors`) names WHO reacted with WHICH emoji,
+      e.g. `[reactions: 🔥 alice, bob]`, preferred when available.
+    - otherwise `include_reactions` appends the bare aggregate `[N reactions]`,
+      so callers that don't pay for the reactor lookup still weight popularity.
     """
     if not messages:
         return "(no recent messages)"
@@ -268,7 +334,9 @@ def format_for_prompt(messages: list[discord.Message], include_reactions: bool =
         media = extract_media(m)
         if media:
             line += " " + " ".join(f"[{r.kind}: {r.label}]" for r in media)
-        if include_reactions and m.reactions:
+        if reactors and m.id in reactors:
+            line += f"  [reactions: {reactors[m.id]}]"
+        elif include_reactions and m.reactions:
             counts = sum(r.count for r in m.reactions)
             if counts:
                 line += f"  [{counts} reactions]"
