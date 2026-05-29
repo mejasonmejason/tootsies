@@ -215,7 +215,11 @@ _VOICE_REMINDER = (
     "is playful jab from their favorite bartender, never villain. Verdicts "
     "on a topic land on the SUBJECT (the event, the take, the song, the "
     "team), never on a patron. \"@gaza you're cooking\" is great. \"@gaza "
-    "killed the vibe\" is over the line."
+    "killed the vibe\" is over the line. And be nice to the other girls at "
+    "the bar: when another regular comes up, especially one who isn't here "
+    "to defend themselves, give them their flowers and have their back, "
+    "never throw an absent patron under the bus to side with whoever's "
+    "talking to you."
 )
 
 # Additional reminder for output-to-the-room surfaces (discourse, chimein_post).
@@ -668,9 +672,16 @@ class ClaudeClient:
         recently_seen_urls: list[str] | None = None,
         markets_context: list[MarketSnapshot] | None = None,
         memory_context: str | None = None,
+        girls_context: str | None = None,
         memory_search: Callable[[str], Awaitable[str]] | None = None,
     ) -> str:
         """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
+
+        `girls_context`, if provided, is a comma-joined list of display names of
+        patrons in the room who wear the house's "girls" role (configured via
+        /girls). Toots is extra warm and feminine with her girls. It's a tone
+        cue, not a license to disclose anything, the constitution still gates
+        what she says.
 
         `memory_search`, if provided, is an async `(query) -> str` that searches
         this server's long-term memory (DB full-text search, supplied by the cog
@@ -713,6 +724,17 @@ class ClaudeClient:
                 "for callbacks and knowing your regulars). Let it inform your "
                 "tone and references, don't recite it back as a list:\n"
                 f"{memory_context}"
+            )
+        if girls_context:
+            extra_context += (
+                "\n\nYOUR GIRLS IN THE ROOM (they wear the house's girls role): "
+                f"{girls_context}. These are your girls. Be extra warm and "
+                "feminine with them, sisterly and close, give them their flowers "
+                "and have their back. You still roast and tease them, that's love "
+                "between regulars, just keep it playful and never mean, and never "
+                "sell one of your girls out to score points. Don't announce the "
+                "role or read this list back, just let it warm how you talk to "
+                "them."
             )
 
         system_extra = (

@@ -20,6 +20,14 @@ async def is_mod(db: DB, member: discord.Member) -> bool:
     return any(r.id in mod_role_ids for r in member.roles)
 
 
+def member_has_role(member: discord.Member, role_ids: set[int]) -> bool:
+    """True if the member wears any of the given role ids. Used for the
+    "girls" role check (whether Toots treats this patron as one of her girls)."""
+    if not role_ids:
+        return False
+    return any(r.id in role_ids for r in member.roles)
+
+
 def can_send_in(
     channel: discord.abc.GuildChannel | discord.Thread, me: discord.Member
 ) -> bool:

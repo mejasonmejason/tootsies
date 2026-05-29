@@ -25,6 +25,7 @@ from utils.gates import require_configured
 from utils.link_enrich import enrich_batch
 from utils.markets import MarketSnapshot
 from utils.metrics import track_command
+from utils.permissions import member_has_role
 from utils.perplexity import build_search_query
 from utils.rate_limits import check_user_limit, consume_user
 from utils.url_guardrail import extract_urls
@@ -121,8 +122,9 @@ class Ask(commands.Cog):
 
         await interaction.response.defer(thinking=True)
         me = interaction.guild.me if interaction.guild else None
+        asker = interaction.user if isinstance(interaction.user, discord.Member) else None
         try:
-            answer = await self._answer(interaction.channel, me, question)
+            answer = await self._answer(interaction.channel, me, question, asker=asker)
         except Exception as exc:
             log.exception("ask failed")
             emit_error(
@@ -154,9 +156,11 @@ class Ask(commands.Cog):
         channel: object,
         me: discord.Member | None,
         question: str,
+        asker: discord.Member | None = None,
     ) -> str:
         context = ""
         image_urls: list[str] = []
+        msgs: list[discord.Message] = []
         memory_context = await self._memory_context(channel)
         if (
             isinstance(channel, discord.TextChannel | discord.Thread)
@@ -168,6 +172,8 @@ class Ask(commands.Cog):
             # Bumped from 3 to 8, lean toward accuracy / "she sees what we see" since
             # cost is still bounded by the hard cap inside _call().
             image_urls = recent_image_urls(msgs, limit=8)
+
+        girls_context = await self._girls_context(channel, msgs, asker)
 
         # Pre-enrich any social URLs that appear in the user's question OR in
         # the recent channel chatter we just pulled. This is the same pattern
@@ -217,6 +223,7 @@ class Ask(commands.Cog):
             recently_seen_urls=raw_urls if raw_urls else None,
             markets_context=markets_result,
             memory_context=memory_context,
+            girls_context=girls_context,
             memory_search=self._make_memory_search(channel),
         )
         # Never hand an empty string to Discord (followup.send("") raises). The
@@ -246,6 +253,43 @@ class Ask(commands.Cog):
             return _format_memory_hits(hits)
 
         return search
+
+    async def _girls_context(
+        self,
+        channel: object,
+        msgs: list[discord.Message],
+        asker: discord.Member | None,
+    ) -> str | None:
+        """Names of patrons in the room who wear the guild's configured "girls"
+        role (set via /girls), so Toots is extra warm with her girls. Built from
+        the asker plus recent posters. Fail-open: a lookup error never blocks an
+        answer, it just drops the warmth cue.
+        """
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return None
+        try:
+            role_ids = set(await self.bot.db.get_girls_roles(guild.id))
+        except Exception:
+            log.exception("girls roles fetch failed")
+            return None
+        if not role_ids:
+            return None
+        candidates: list[discord.Member] = []
+        if asker is not None:
+            candidates.append(asker)
+        candidates += [m.author for m in msgs]  # type: ignore[misc]
+        names: list[str] = []
+        seen: set[int] = set()
+        for member in candidates:
+            if not isinstance(member, discord.Member) or member.id in seen:
+                continue
+            seen.add(member.id)
+            if member_has_role(member, role_ids):
+                names.append(member.display_name)
+        if not names:
+            return None
+        return ", ".join(names[:10])
 
     async def _memory_context(self, channel: object) -> str | None:
         """Toots's distilled long-term memory of this server (from the memory
@@ -366,9 +410,10 @@ class Ask(commands.Cog):
                 return
             # First violation: let Claude handle via the constitution; fall through.
 
+        asker = message.author if isinstance(message.author, discord.Member) else None
         async with message.channel.typing():
             try:
-                answer = await self._answer(message.channel, me, prompt_question)
+                answer = await self._answer(message.channel, me, prompt_question, asker=asker)
             except Exception as exc:
                 log.exception("mention answer failed")
                 emit_error(

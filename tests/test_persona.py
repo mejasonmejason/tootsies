@@ -63,6 +63,20 @@ def test_persona_voice_markers() -> None:
     assert "200" in PERSONA_CORE  # length cap reminder
 
 
+def test_regulars_rule_covers_warmth_to_other_patrons() -> None:
+    """The REGULARS RULE isn't just "don't villainize"; Toots should be
+    proactively warm to the OTHER girls at the bar (regulars who get talked
+    about, not just the one in front of her). Pins the warmth clause against
+    drift back to a purely defensive rule."""
+    core = PERSONA_CORE.lower()
+    assert "other girls at the bar" in core
+    assert "flowers" in core or "have their back" in core
+    # The per-call reminder must carry the same cue (recency-weighted).
+    from claude_client import _VOICE_REMINDER
+
+    assert "other girls at the bar" in _VOICE_REMINDER.lower()
+
+
 def test_system_prompt_composes_all_layers() -> None:
     sp = system_prompt()
     assert "HARD RULES" in sp
