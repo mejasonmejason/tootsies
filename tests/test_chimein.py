@@ -412,7 +412,8 @@ async def test_near_miss_reacts_instead_of_threshold_gate(
     cog = _make_cog()
     db = _stub_db(mood=MoodMode.CHILL)  # post threshold 0.8
     cog.bot.db = db
-    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")  # near-miss
+    # near-miss; scorer names an emoji but no index -> lands on the freshest line
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate", reaction="🔥")
     target = _reactable_message()
     _fill_buffer_ending_with(cog, target)
     _force_et_hour(monkeypatch, 12)
@@ -479,7 +480,7 @@ async def test_post_cooldown_still_allows_reaction(
     monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
 
     cog = _make_cog()
-    claude = _stub_claude(score=0.6, vibe="debate")  # under chill 0.8 post bar
+    claude = _stub_claude(score=0.6, vibe="debate", reaction="🔥")  # under chill 0.8 post bar
     cog.bot.claude = claude
     _force_et_hour(monkeypatch, 12)
     from cogs.chimein import datetime as patched_datetime
@@ -543,7 +544,7 @@ async def test_react_daily_cap_is_mood_tuned(monkeypatch: pytest.MonkeyPatch) ->
     # At the chill react_cap -> blocked.
     cog = _make_cog()
     cog.bot.db = _stub_db(mood=MoodMode.CHILL, reaction_count_today=chill_react_cap)
-    cog.bot.claude = _stub_claude(score=0.5, vibe="debate")
+    cog.bot.claude = _stub_claude(score=0.5, vibe="debate", reaction="🔥")
     _force_et_hour(monkeypatch, 12)
     target = _reactable_message()
     _fill_buffer_ending_with(cog, target)
@@ -553,7 +554,7 @@ async def test_react_daily_cap_is_mood_tuned(monkeypatch: pytest.MonkeyPatch) ->
     # Same count, but the yaps react_cap (30) is higher -> still reacts.
     cog2 = _make_cog()
     cog2.bot.db = _stub_db(mood=MoodMode.YAPS, reaction_count_today=chill_react_cap)
-    cog2.bot.claude = _stub_claude(score=0.5, vibe="debate")
+    cog2.bot.claude = _stub_claude(score=0.5, vibe="debate", reaction="🔥")
     target2 = _reactable_message()
     _fill_buffer_ending_with(cog2, target2)
     await cog2._maybe_chime_in_one(1, 2)
@@ -564,12 +565,14 @@ async def test_react_daily_cap_is_mood_tuned(monkeypatch: pytest.MonkeyPatch) ->
 async def test_react_piles_onto_top_existing_reaction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the message already has reactions, Toots co-signs the highest-count one
-    instead of bringing her own vibe emoji."""
+    """When the message the scorer picked already has reactions, Toots co-signs
+    the highest-count one instead of her own stance emoji."""
     monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
     cog = _make_cog()
     cog.bot.db = _stub_db(mood=MoodMode.CHILL)
-    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
+    # scorer points at index 0 with stance 🔥, but that message already has
+    # reactions -> she co-signs the top one (💯) rather than adding 🔥.
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate", reaction="🔥", target=0)
     _force_et_hour(monkeypatch, 12)
     target = _reactable_message()
     # 💯 has more reactors than 👀, so she should pile onto 💯.
@@ -577,7 +580,7 @@ async def test_react_piles_onto_top_existing_reaction(
         SimpleNamespace(emoji="👀", count=1, me=False),
         SimpleNamespace(emoji="💯", count=4, me=False),
     ]
-    _fill_buffer_ending_with(cog, target)
+    cog._buffers[(1, 2)].append(target)
 
     await cog._maybe_chime_in_one(1, 2)
 
