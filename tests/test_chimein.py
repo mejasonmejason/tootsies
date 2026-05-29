@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
 
 from claude_client import _parse_chimein_score
@@ -127,6 +128,7 @@ def _make_cog() -> ChimeIn:
     cog._buffers = defaultdict(lambda: _dq(maxlen=BUFFER_MAX))
     cog._new_since_eval = defaultdict(int)
     cog._listen_channels = {}
+    cog._last_react_at = {}
     return cog
 
 
@@ -340,6 +342,100 @@ async def test_chill_threshold_higher_than_yaps(monkeypatch: pytest.MonkeyPatch)
         ev == "chimein_evaluated" and f.get("decision") == "threshold_gate"
         for ev, f in emitted_yaps
     ), f"yaps should NOT have hit threshold_gate at score 0.7, got {emitted_yaps}"
+
+
+# ---- near-miss reactions ------------------------------------------------------
+
+
+def _reactable_message() -> Any:
+    """A buffered message whose channel grants Toots add_reactions perms."""
+    msg = _stub_message()
+    channel = MagicMock(spec=discord.TextChannel)
+    channel.id = 2
+    channel.permissions_for = MagicMock(return_value=SimpleNamespace(
+        view_channel=True, read_message_history=True, add_reactions=True,
+    ))
+    msg.channel = channel
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 1
+    guild.me = MagicMock(spec=discord.Member)
+    msg.guild = guild
+    msg.id = 4242
+    msg.reactions = []
+    msg.add_reaction = AsyncMock()
+    return msg
+
+
+def _fill_buffer_ending_with(cog: ChimeIn, target: Any) -> None:
+    """Seed (1,2) buffer with enough messages to score, `target` last (react target)."""
+    cog._buffers[(1, 2)].extend(
+        [_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE - 1)] + [target]
+    )
+
+
+@pytest.mark.asyncio
+async def test_near_miss_reacts_instead_of_threshold_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Score in [0.45, threshold): react to the latest message, decision='reacted'."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)  # post threshold 0.8
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")  # near-miss
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+    _force_et_hour(monkeypatch, 12)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_awaited_once()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "reacted"
+        for ev, f in emitted
+    ), f"expected a 'reacted' decision, got {emitted}"
+    assert (1, 2) in cog._last_react_at
+
+
+@pytest.mark.asyncio
+async def test_below_react_floor_stays_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Score under REACT_THRESHOLD: no reaction, falls through to threshold_gate."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    cog.bot.claude = _stub_claude(score=0.3, vibe="debate")  # below floor
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+    _force_et_hour(monkeypatch, 12)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_not_awaited()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "threshold_gate"
+        for ev, f in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_react_respects_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A recent reaction in this channel blocks another within REACT_COOLDOWN."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
+    cog._last_react_at[(1, 2)] = datetime.now(UTC)  # just reacted
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+    _force_et_hour(monkeypatch, 12)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_not_awaited()
 
 
 def test_skip_vibes_subset_of_known_vibes() -> None:

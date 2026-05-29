@@ -37,3 +37,18 @@ def can_read(
         return False
     perms = channel.permissions_for(me)
     return perms.view_channel and perms.read_message_history
+
+
+def can_react(
+    channel: discord.abc.GuildChannel | discord.Thread, me: discord.Member
+) -> bool:
+    """Check whether the bot can add a reaction to a message in this channel.
+
+    Needs add_reactions plus the read perms: you can't react to a message you
+    can't see, and Discord requires read_message_history to react to anything
+    that isn't brand-new in cache.
+    """
+    if not isinstance(channel, discord.TextChannel | discord.Thread):
+        return False
+    perms = channel.permissions_for(me)
+    return perms.view_channel and perms.read_message_history and perms.add_reactions

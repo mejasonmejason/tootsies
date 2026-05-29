@@ -42,6 +42,7 @@ import discord
 from discord.ext import commands, tasks
 
 from models import MoodMode
+from utils import voice
 from utils.dedup import is_duplicate_of_recent
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
@@ -49,6 +50,7 @@ from utils.link_enrich import enrich_batch
 from utils.markets import MarketSnapshot
 from utils.permissions import can_send_in
 from utils.perplexity import build_search_query
+from utils.reactions import react
 from utils.url_guardrail import extract_urls
 
 if TYPE_CHECKING:
@@ -65,6 +67,14 @@ ET = ZoneInfo("America/New_York")
 # this, we don't have enough signal to know what the room's talking about.
 BUFFER_MIN_FOR_SCORE = 5
 CHIMEIN_QUALITY_THRESHOLD = 0.6
+
+# Near-miss reaction band: when the buffer scores below the post threshold but at
+# or above this floor (and the vibe isn't a skip), Toots drops a single reaction
+# instead of staying fully silent, the "I'm here, I clocked that" move. Reactions
+# never post or consume the chimein daily cap; they ride a light separate cooldown
+# so she doesn't pepper the room.
+REACT_THRESHOLD = 0.45
+REACT_COOLDOWN = timedelta(minutes=10)
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
@@ -118,6 +128,10 @@ class ChimeIn(commands.Cog):
         # We track this so we only score when there's *new* signal, not just on
         # the time interval.
         self._new_since_eval: defaultdict[tuple[int, int], int] = defaultdict(int)
+        # (guild_id, channel_id) -> last time Toots reacted here. In-memory on
+        # purpose: a reaction is best-effort, so a redeploy resetting this (at
+        # worst one extra reaction) isn't worth a DB table + migration.
+        self._last_react_at: dict[tuple[int, int], datetime] = {}
         # guild_id -> set of discourse channel IDs. Refreshed each tick so /menu
         # edits take effect within a tick instead of needing a restart.
         self._listen_channels: dict[int, set[int]] = {}
@@ -271,10 +285,13 @@ class ChimeIn(commands.Cog):
             )
             return
         if score < tuning.threshold:
+            # Not post-worthy, but if it's a near-miss Toots reacts instead of
+            # going dark, a lighter acknowledgement than a full take.
+            reacted = await self._maybe_react(guild_id, channel_id, vibe, score)
             emit(
                 "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="threshold_gate", vibe=vibe, score=score,
-                mood=str(schedule.mood),
+                decision="reacted" if reacted else "threshold_gate",
+                vibe=vibe, score=score, mood=str(schedule.mood),
             )
             return
 
@@ -392,6 +409,33 @@ class ChimeIn(commands.Cog):
             mood=str(schedule.mood),
             quality_score=quality_score, quality_reason=quality_reason,
         )
+
+
+    async def _maybe_react(
+        self, guild_id: int, channel_id: int, vibe: str, score: float,
+    ) -> bool:
+        """React to the latest buffered message on a near-miss score. Returns True if it landed.
+
+        Cheap path: no Claude call, no post, no daily-cap consumption. Gated by
+        REACT_THRESHOLD (must clear the floor) and a light in-memory cooldown so
+        Toots doesn't pepper the channel. The target is the most recent buffered
+        message, the freshest signal of what the room's on.
+        """
+        if score < REACT_THRESHOLD:
+            return False
+        key = (guild_id, channel_id)
+        last = self._last_react_at.get(key)
+        if last is not None and datetime.now(UTC) - last < REACT_COOLDOWN:
+            return False
+        msgs = self._buffers.get(key)
+        if not msgs:
+            return False
+        target = msgs[-1]
+        emoji = voice.pick_reaction(vibe)
+        if not await react(target, emoji, source="chimein"):
+            return False
+        self._last_react_at[key] = datetime.now(UTC)
+        return True
 
 
 async def setup(bot: commands.Bot) -> None:
