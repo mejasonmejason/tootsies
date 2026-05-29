@@ -1232,6 +1232,23 @@ class DB:
         )
         return [(r["id"], r["summary"], r["span_start"], r["span_end"]) for r in rows]
 
+    async def has_memory_note_overlapping(
+        self, guild_id: int, tier: str, span_start: datetime, span_end: datetime,
+    ) -> bool:
+        """True if a note of this tier already overlaps [span_start, span_end).
+        Used by the /remember backfill to stay idempotent, so a re-run doesn't
+        write a second note covering a window it already covered."""
+        val = await self._fetchval(
+            """
+            SELECT 1 FROM memory_notes
+            WHERE guild_id = $1 AND tier = $2
+              AND span_start < $4 AND span_end > $3
+            LIMIT 1
+            """,
+            guild_id, tier, span_start, span_end,
+        )
+        return val is not None
+
     async def last_memory_note_at(self, guild_id: int, tier: str) -> datetime | None:
         """span_end of the most recent note of a tier, used to gate the writer."""
         return await self._fetchval(

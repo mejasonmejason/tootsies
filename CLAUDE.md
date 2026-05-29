@@ -59,7 +59,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 
 **Entrypoint:** `bot.py`, boots Discord client, opens DB pool, exposes `/health`, loads cogs, syncs slash commands per guild on every startup.
 
-**Claude API layer:** `claude_client.py` wraps the Anthropic SDK. Model routing: Haiku for `/ask`, `/recap`, deflections (fast/cheap); Sonnet for `/discourse` and `/order` pre-flight (needs judgment). System prompt is cached via `cache_control: ephemeral`. Every API call gets the full constitution + persona prepended (~120 tokens).
+**Claude API layer:** `claude_client.py` wraps the Anthropic SDK. Model routing: Haiku for `/ask`, `/recap`, deflections, and the hourly memory writer + `/remember` backfill (fast/cheap, high-volume summarization); Sonnet for `/discourse`, `/order` pre-flight, and the daily/weekly memory rollups (need judgment; rollups are low-volume but produce the durable memory tiers and must honor the fence while compacting). System prompt is cached via `cache_control: ephemeral`. Every API call gets the full constitution + persona prepended (~120 tokens).
 
 **Persona:** `persona.py` composes the system prompt from `constitution.py` (hard rules, house rules, calibration) + persona core + voice examples. `constitution.py` is non-negotiable and cannot be loosened by `/order`.
 
@@ -75,7 +75,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 - `music.py`, `/music setup` (channel picker) + `/music drop` (manual post) + scheduled music-lounge posts (track recs with Apple Music links). Sources: feed channels (Twitter/social), Perplexity (music news/trends), channel activity, web_search. Links-only channel. Rides on the existing mood schedule.
 - `admin.py`, `/close`, `/open`, `/undo`
 - `settings.py`, `/menu` interactive wizard
-- `memory.py`, long-term memory: an hourly writer (200 msgs/1h, same fetch as `/recap`) + daily + weekly rollups that distill a guild's discourse-channel activity into attributed memory notes (the decay pyramid: `hourly` notes roll up into `daily`, `daily` into `weekly`, lower tier deleted on rollup), read back into `/ask`/mention context as a tier mix (recent hourly + this week's daily + the weekly arc) so Toots does callbacks and knows her regulars. Plus `/forget` (self-service erasure, no parameter, you can only forget yourself). The write prompt is fenced (observed public behavior only, never inferred private traits, no transcripts) to keep attributed "who did what" memory inside the constitution.
+- `memory.py`, long-term memory: an hourly writer (200 msgs/1h, same fetch as `/recap`) + daily + weekly rollups that distill a guild's discourse-channel activity into attributed memory notes (the decay pyramid: `hourly` notes roll up into `daily`, `daily` into `weekly`, lower tier deleted on rollup), read back into `/ask`/mention context as a tier mix (recent hourly + this week's daily + the weekly arc) so Toots does callbacks and knows her regulars. Plus `/forget` (self-service erasure, no parameter, you can only forget yourself) and `/remember period:[week|month|2months]` (mod-only one-time backfill that seeds memory from channel history: per-day `daily` notes for the recent week, per-week `weekly` notes for older spans; idempotent per span). The write prompt is fenced (observed public behavior only, never inferred private traits, no transcripts) to keep attributed "who did what" memory inside the constitution.
 
 **Utils** (in `utils/`):
 - `rate_limits.py`, per-user daily limits (`/ask`, `/recap`) and server-wide daily limits (`/discourse`, `/order`) + cooldowns

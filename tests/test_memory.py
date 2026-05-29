@@ -201,19 +201,63 @@ async def test_memory_note_passes_forgotten_names_into_prompt(
     ("period", "lower_word"),
     [("daily", "hourly"), ("weekly", "daily")],
 )
-async def test_memory_rollup_uses_haiku_and_period(
+async def test_memory_rollup_uses_sonnet_and_period(
     client: ClaudeClient, period: str, lower_word: str,
 ) -> None:
-    from claude_client import HAIKU
+    # Rollups run on Sonnet (not Haiku like the hourly writer): far fewer of
+    # them, they produce the durable daily/weekly tiers, and compacting many
+    # notes while honoring the fence wants the stronger judgment.
+    from claude_client import SONNET
 
     fake = AsyncMock(return_value=_FakeResult(text="arc"))
     with patch.object(client, "_call", fake):
         await client.memory_rollup("note 1\n\nnote 2", period=period)
     kwargs = fake.call_args.kwargs
-    assert kwargs["model"] == HAIKU
+    assert kwargs["model"] == SONNET
     assert kwargs["purpose"] == f"memory_{period}"
     # The rollup prompt compacts the tier BELOW it.
     assert lower_word in kwargs["system_extra"].lower()
+
+
+@pytest.mark.asyncio
+async def test_memory_note_span_label_flows_into_prompt(client: ClaudeClient) -> None:
+    # The backfill reuses memory_note with a span label other than the hourly
+    # default; it must reach the prompt so the model frames the window right.
+    fake = AsyncMock(return_value=_FakeResult(text="note"))
+    with patch.object(client, "_call", fake):
+        await client.memory_note("blob", span_label="this week")
+    system = fake.call_args.kwargs["system_extra"]
+    assert "this week" in system
+
+
+def test_remember_ranges_cover_the_choices() -> None:
+    from cogs.memory import REMEMBER_RANGES
+
+    assert REMEMBER_RANGES == {"week": 7, "month": 30, "2months": 60}
+
+
+@pytest.mark.asyncio
+async def test_backfill_window_skips_when_span_already_covered() -> None:
+    # Idempotency: if a note already overlaps the span, the backfill must skip
+    # without spending a Claude call or writing a duplicate.
+    from datetime import datetime as _dt
+
+    from cogs.memory import Memory
+
+    cog = Memory.__new__(Memory)  # bypass __init__ so no scheduler loop starts
+    cog.bot = MagicMock()
+    cog.bot.db.has_memory_note_overlapping = AsyncMock(return_value=True)
+    cog.bot.db.add_memory_note = AsyncMock()
+    cog.bot.claude.memory_note = AsyncMock()
+
+    start = _dt(2026, 5, 1, tzinfo=ET)
+    end = _dt(2026, 5, 2, tzinfo=ET)
+    wrote = await cog._backfill_window(
+        MagicMock(), [1], MagicMock(), "daily", start, end, 200, "this day", [],
+    )
+    assert wrote is False
+    cog.bot.claude.memory_note.assert_not_called()
+    cog.bot.db.add_memory_note.assert_not_called()
 
 
 @pytest.mark.asyncio
