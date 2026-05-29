@@ -1028,7 +1028,10 @@ class ClaudeClient:
         """Compact a tier of memory notes up one level (the decay pyramid):
         `period="daily"` compacts a day of hourly notes into one daily note;
         `period="weekly"` compacts a week of daily notes into one weekly note.
-        Same fence. Keeps the throughlines, drops one-off noise."""
+        Same fence. Keeps the throughlines, drops one-off noise. Runs on Sonnet
+        (the hourly writer is Haiku): rollups are low-volume but produce the
+        durable daily/weekly tiers, and compacting many notes while honoring the
+        fence wants the stronger judgment."""
         if period == "daily":
             lower, span = "hourly", "day"
             keep = (
@@ -1054,7 +1057,7 @@ class ClaudeClient:
             + self._forget_clause(forgotten_names)
         )
         result = await self._call(
-            model=HAIKU,
+            model=SONNET,
             user_message=f"{lower.capitalize()} notes from the past {span} (oldest first):\n{notes_blob}",
             system_extra=system_extra,
             max_tokens=MAX_TOKENS_REPLY,

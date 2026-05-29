@@ -201,16 +201,19 @@ async def test_memory_note_passes_forgotten_names_into_prompt(
     ("period", "lower_word"),
     [("daily", "hourly"), ("weekly", "daily")],
 )
-async def test_memory_rollup_uses_haiku_and_period(
+async def test_memory_rollup_uses_sonnet_and_period(
     client: ClaudeClient, period: str, lower_word: str,
 ) -> None:
-    from claude_client import HAIKU
+    # Rollups run on Sonnet (not Haiku like the hourly writer): far fewer of
+    # them, they produce the durable daily/weekly tiers, and compacting many
+    # notes while honoring the fence wants the stronger judgment.
+    from claude_client import SONNET
 
     fake = AsyncMock(return_value=_FakeResult(text="arc"))
     with patch.object(client, "_call", fake):
         await client.memory_rollup("note 1\n\nnote 2", period=period)
     kwargs = fake.call_args.kwargs
-    assert kwargs["model"] == HAIKU
+    assert kwargs["model"] == SONNET
     assert kwargs["purpose"] == f"memory_{period}"
     # The rollup prompt compacts the tier BELOW it.
     assert lower_word in kwargs["system_extra"].lower()
