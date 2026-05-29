@@ -148,7 +148,7 @@ async def main() -> None:
             print(f"  judge: {v['notes']}")
     n = len(rows)
     print("\n" + "=" * 78)
-    print(f"RESULT: {n - fails}/{n} clean, {fails}/{n} fence violations (Haiku writer)")
+    print(f"RESULT: {n - fails}/{n} clean, {fails}/{n} fence violations (hourly writer)")
 
 
 if __name__ == "__main__":

@@ -164,23 +164,28 @@ def client() -> ClaudeClient:
 
 
 @pytest.mark.asyncio
-async def test_memory_note_uses_haiku_and_fences_inference(
+async def test_memory_note_uses_sonnet_and_fences_inference(
     client: ClaudeClient,
 ) -> None:
-    from claude_client import HAIKU
+    # The writer runs on Sonnet, not Haiku: the fence eval showed Haiku leaked
+    # stated sensitive disclosures (health, coming-out) past the fence even after
+    # the wording was tightened; Sonnet holds it. See scripts/eval_memory_fence.py.
+    from claude_client import SONNET
 
     fake = AsyncMock(return_value=_FakeResult(text="alex drove the knicks debate."))
     with patch.object(client, "_call", fake):
         out = await client.memory_note("#general:\n[2h ago] alex: knicks in 6")
     kwargs = fake.call_args.kwargs
-    assert kwargs["model"] == HAIKU
+    assert kwargs["model"] == SONNET
     assert kwargs["purpose"] == "memory_hourly"
     # No web_search / tools for a private memory pass.
     assert kwargs.get("tools") is None
     system = kwargs["system_extra"].lower()
-    # The fence is load-bearing: it must forbid trait inference and transcripts.
+    # The fence is load-bearing: it must forbid trait inference and transcripts,
+    # AND refuse to retain sensitive disclosures even when stated outright.
     assert "infer" in system or "guess" in system
     assert "transcript" in system or "quoting full messages" in system
+    assert "even if stated" in system
     assert out == "alex drove the knicks debate."
 
 
