@@ -209,7 +209,7 @@ class Ask(commands.Cog):
 
         enriched = [e for e in enriched_map.values() if e is not None]
 
-        return await self.bot.claude.ask(
+        answer = await self.bot.claude.ask(
             question, channel_context=context, use_web=True,
             image_urls=image_urls,
             enriched_links=enriched if enriched else None,
@@ -219,6 +219,10 @@ class Ask(commands.Cog):
             memory_context=memory_context,
             memory_search=self._make_memory_search(channel),
         )
+        # Never hand an empty string to Discord (followup.send("") raises). The
+        # tool loop can, in the worst case, exhaust its budget on a turn that's
+        # all tool_use and no text; cover that (and any other empty) with a quip.
+        return answer.strip() or "lost my train of thought there. ask me again?"
 
     def _make_memory_search(
         self, channel: object,
