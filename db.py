@@ -311,16 +311,16 @@ CREATE INDEX IF NOT EXISTS abuse_silenced_idx
     WHERE silenced_at IS NOT NULL AND lifted_at IS NULL;
 
 -- Long-term memory: distilled, attributed notes about what happened in a
--- guild's discourse channels. Written twice-daily (tier='halfday'), rolled up
--- weekly (tier='weekly') and the rolled-up halfdays deleted, so the store stays
--- bounded (the decay pyramid). Read at /ask + @mention time so Toots can do
--- callbacks and know her regulars. Notes are distilled prose (vibes + observed
--- public behavior, no transcripts), never raw message content, per the
--- constitution's data-minimization rule.
+-- guild's discourse channels. The decay pyramid: written hourly (tier='hourly'),
+-- rolled up daily (tier='daily', rolled-up hourlies deleted) and weekly
+-- (tier='weekly', rolled-up dailies deleted), so the store stays bounded. Read
+-- at /ask + @mention time so Toots can do callbacks and know her regulars.
+-- Notes are distilled prose (vibes + observed public behavior, no transcripts),
+-- never raw message content, per the constitution's data-minimization rule.
 CREATE TABLE IF NOT EXISTS memory_notes (
     id          BIGSERIAL PRIMARY KEY,
     guild_id    BIGINT NOT NULL,
-    tier        TEXT NOT NULL,              -- 'halfday' | 'weekly'
+    tier        TEXT NOT NULL,              -- 'hourly' | 'daily' | 'weekly'
     summary     TEXT NOT NULL,
     span_start  TIMESTAMPTZ NOT NULL,
     span_end    TIMESTAMPTZ NOT NULL,
@@ -1297,12 +1297,17 @@ class DB:
         return len(to_delete)
 
     async def prune_memory(self) -> None:
-        """Backstop pruning. The weekly rollup normally deletes halfday notes,
-        but if a guild's rollup never fires (mood-off, low activity), halfdays
-        would accumulate, so hard-cap their age. Weeklies keep ~6 months."""
+        """Backstop pruning for the decay pyramid. Rollups normally delete the
+        tier below them, but if a guild's rollup never fires (low activity), the
+        lower tiers would accumulate, so hard-cap each tier's age well past its
+        rollup horizon: hourly ~2d, daily ~30d, weekly ~180d."""
         await self._execute(
-            "DELETE FROM memory_notes WHERE tier = 'halfday' "
-            "AND span_end < NOW() - INTERVAL '14 days'"
+            "DELETE FROM memory_notes WHERE tier = 'hourly' "
+            "AND span_end < NOW() - INTERVAL '2 days'"
+        )
+        await self._execute(
+            "DELETE FROM memory_notes WHERE tier = 'daily' "
+            "AND span_end < NOW() - INTERVAL '30 days'"
         )
         await self._execute(
             "DELETE FROM memory_notes WHERE tier = 'weekly' "

@@ -75,7 +75,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 - `music.py`, `/music setup` (channel picker) + `/music drop` (manual post) + scheduled music-lounge posts (track recs with Apple Music links). Sources: feed channels (Twitter/social), Perplexity (music news/trends), channel activity, web_search. Links-only channel. Rides on the existing mood schedule.
 - `admin.py`, `/close`, `/open`, `/undo`
 - `settings.py`, `/menu` interactive wizard
-- `memory.py`, long-term memory: a twice-daily writer + weekly rollup that distill a guild's discourse-channel activity into attributed memory notes (the decay pyramid: `halfday` notes roll up into `weekly` notes, rolled-up halfdays deleted), read back into `/ask`/mention context so Toots does callbacks and knows her regulars. Plus `/forget` (self-service erasure, no parameter, you can only forget yourself). The write prompt is fenced (observed public behavior only, never inferred private traits, no transcripts) to keep attributed "who did what" memory inside the constitution.
+- `memory.py`, long-term memory: an hourly writer (200 msgs/1h, same fetch as `/recap`) + daily + weekly rollups that distill a guild's discourse-channel activity into attributed memory notes (the decay pyramid: `hourly` notes roll up into `daily`, `daily` into `weekly`, lower tier deleted on rollup), read back into `/ask`/mention context as a tier mix (recent hourly + this week's daily + the weekly arc) so Toots does callbacks and knows her regulars. Plus `/forget` (self-service erasure, no parameter, you can only forget yourself). The write prompt is fenced (observed public behavior only, never inferred private traits, no transcripts) to keep attributed "who did what" memory inside the constitution.
 
 **Utils** (in `utils/`):
 - `rate_limits.py`, per-user daily limits (`/ask`, `/recap`) and server-wide daily limits (`/discourse`, `/order`) + cooldowns
@@ -143,7 +143,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `abuse_warned` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `abuse_silenced` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `reaction_added` | utils/reactions.py | source, guild_id, channel_id, message_id, emoji |
-| `memory_write` | cogs/memory.py | guild_id, tier (halfday\|weekly), ok, chars\|skipped, message_count, channel_count, rolled_up |
+| `memory_write` | cogs/memory.py | guild_id, tier (hourly\|daily\|weekly), ok, chars\|skipped, message_count, channel_count, rolled_up |
 | `memory_forget` | cogs/memory.py | guild_id, user_id, notes_deleted |
 
 **Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to

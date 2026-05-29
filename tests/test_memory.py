@@ -17,8 +17,10 @@ import pytest
 
 from claude_client import ClaudeClient
 from cogs.memory import (
-    MEMORY_WEEKLY_WEEKDAY,
-    halfday_due,
+    WEEKLY_ROLLUP_WEEKDAY,
+    daily_due,
+    hourly_due,
+    hourly_window,
     weekly_due,
 )
 from db import _name_in_text
@@ -33,48 +35,67 @@ def _et(year: int, month: int, day: int, hour: int, minute: int = 0) -> datetime
     return datetime(year, month, day, hour, minute, tzinfo=ET)
 
 
-def test_halfday_not_due_before_first_slot() -> None:
-    # 02:00 ET is before the 04:00 slot.
-    assert halfday_due(_et(2026, 5, 29, 2, 0), None) is False
+def test_hourly_due_with_no_prior_note() -> None:
+    assert hourly_due(_et(2026, 5, 29, 4, 30), None) is True
 
 
-def test_halfday_due_after_slot_with_no_prior_note() -> None:
-    assert halfday_due(_et(2026, 5, 29, 4, 30), None) is True
-
-
-def test_halfday_not_due_when_recent_note_exists() -> None:
+def test_hourly_not_due_when_recent() -> None:
     now = _et(2026, 5, 29, 16, 30)
-    # A note written 2h ago is well inside the 11h min-gap.
-    recent = now - timedelta(hours=2)
-    assert halfday_due(now, recent) is False
+    # Written 20 min ago, inside the ~hour min-gap.
+    assert hourly_due(now, now - timedelta(minutes=20)) is False
 
 
-def test_halfday_due_when_last_note_is_old() -> None:
+def test_hourly_due_after_an_hour() -> None:
     now = _et(2026, 5, 29, 16, 30)
-    # ~12h ago (the previous slot) clears the 11h gap.
-    old = now - timedelta(hours=12)
-    assert halfday_due(now, old) is True
+    # ~1h ago clears the 55-min gap.
+    assert hourly_due(now, now - timedelta(minutes=60)) is True
+
+
+def test_hourly_window_defaults_to_one_hour() -> None:
+    now = _et(2026, 5, 29, 16, 0)
+    # No prior note, or a sub-hour gap, floors at the nominal hour.
+    assert hourly_window(now, None) == timedelta(hours=1)
+    assert hourly_window(now, now - timedelta(minutes=30)) == timedelta(hours=1)
+
+
+def test_hourly_window_tiles_the_gap_and_caps() -> None:
+    now = _et(2026, 5, 29, 16, 0)
+    # A 90-min gap (a missed tick) is covered with no hole.
+    assert hourly_window(now, now - timedelta(minutes=90)) == timedelta(minutes=90)
+    # A long outage is capped, not unbounded.
+    assert hourly_window(now, now - timedelta(hours=10)) == timedelta(hours=3)
+
+
+def test_daily_due_after_rollup_time_no_prior() -> None:
+    assert daily_due(_et(2026, 5, 29, 5, 30), None) is True
+
+
+def test_daily_not_due_before_rollup_time() -> None:
+    assert daily_due(_et(2026, 5, 29, 3, 0), None) is False
+
+
+def test_daily_not_due_when_just_rolled() -> None:
+    now = _et(2026, 5, 29, 6, 0)
+    assert daily_due(now, now - timedelta(hours=2)) is False
 
 
 def test_weekly_only_on_rollup_weekday() -> None:
-    # Find a date that is NOT the rollup weekday and assert it's never due.
     d = _et(2026, 5, 25, 6, 0)  # Monday
-    while d.weekday() == MEMORY_WEEKLY_WEEKDAY:
+    while d.weekday() == WEEKLY_ROLLUP_WEEKDAY:
         d += timedelta(days=1)
     assert weekly_due(d, None) is False
 
 
 def test_weekly_due_on_rollup_weekday_after_time() -> None:
-    # Walk to the rollup weekday, after the rollup time, no prior weekly.
     d = _et(2026, 5, 25, 6, 0)
-    while d.weekday() != MEMORY_WEEKLY_WEEKDAY:
+    while d.weekday() != WEEKLY_ROLLUP_WEEKDAY:
         d += timedelta(days=1)
     assert weekly_due(d, None) is True
 
 
 def test_weekly_not_due_before_rollup_time() -> None:
-    d = _et(2026, 5, 25, 1, 0)  # 01:00, before the 05:00 rollup time
-    while d.weekday() != MEMORY_WEEKLY_WEEKDAY:
+    d = _et(2026, 5, 25, 1, 0)  # 01:00, before the rollup time
+    while d.weekday() != WEEKLY_ROLLUP_WEEKDAY:
         d += timedelta(days=1)
     d = d.replace(hour=1, minute=0)
     assert weekly_due(d, None) is False
@@ -82,10 +103,9 @@ def test_weekly_not_due_before_rollup_time() -> None:
 
 def test_weekly_not_due_when_just_rolled() -> None:
     d = _et(2026, 5, 25, 6, 0)
-    while d.weekday() != MEMORY_WEEKLY_WEEKDAY:
+    while d.weekday() != WEEKLY_ROLLUP_WEEKDAY:
         d += timedelta(days=1)
-    just_now = d - timedelta(hours=1)
-    assert weekly_due(d, just_now) is False
+    assert weekly_due(d, d - timedelta(hours=1)) is False
 
 
 # ---- /forget redaction matcher ----------------------------------------------
@@ -154,7 +174,7 @@ async def test_memory_note_uses_haiku_and_fences_inference(
         out = await client.memory_note("#general:\n[2h ago] alex: knicks in 6")
     kwargs = fake.call_args.kwargs
     assert kwargs["model"] == HAIKU
-    assert kwargs["purpose"] == "memory_halfday"
+    assert kwargs["purpose"] == "memory_hourly"
     # No web_search / tools for a private memory pass.
     assert kwargs.get("tools") is None
     system = kwargs["system_extra"].lower()
@@ -177,15 +197,23 @@ async def test_memory_note_passes_forgotten_names_into_prompt(
 
 
 @pytest.mark.asyncio
-async def test_memory_rollup_uses_haiku(client: ClaudeClient) -> None:
+@pytest.mark.parametrize(
+    ("period", "lower_word"),
+    [("daily", "hourly"), ("weekly", "daily")],
+)
+async def test_memory_rollup_uses_haiku_and_period(
+    client: ClaudeClient, period: str, lower_word: str,
+) -> None:
     from claude_client import HAIKU
 
-    fake = AsyncMock(return_value=_FakeResult(text="weekly arc"))
+    fake = AsyncMock(return_value=_FakeResult(text="arc"))
     with patch.object(client, "_call", fake):
-        await client.memory_rollup("note 1\n\nnote 2")
+        await client.memory_rollup("note 1\n\nnote 2", period=period)
     kwargs = fake.call_args.kwargs
     assert kwargs["model"] == HAIKU
-    assert kwargs["purpose"] == "memory_weekly"
+    assert kwargs["purpose"] == f"memory_{period}"
+    # The rollup prompt compacts the tier BELOW it.
+    assert lower_word in kwargs["system_extra"].lower()
 
 
 @pytest.mark.asyncio

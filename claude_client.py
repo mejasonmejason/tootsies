@@ -988,20 +988,20 @@ class ClaudeClient:
         *,
         forgotten_names: list[str] | None = None,
     ) -> str:
-        """Distill a half-day window of discourse-channel activity into one
-        attributed memory note. Returns "" / "EMPTY" when nothing's worth
-        keeping (the caller skips the write)."""
+        """Distill the last hour of discourse-channel activity into one
+        attributed memory note (the fine `hourly` tier). Returns "" / "EMPTY"
+        when nothing's worth keeping (the caller skips the write)."""
         system_extra = (
             "TASK: Write a private memory note about what happened in these "
-            "channels over the window. This is Toots's own long-term memory so "
-            "she can do callbacks later and know her regulars. Attribute by "
+            "channels over the last hour. This is Toots's own long-term memory "
+            "so she can do callbacks later and know her regulars. Attribute by "
             "display name.\n"
             "\n"
             "Capture: who drove which topics, the stances people took, running "
             "bits, debates, notable moments, what the room cared about. A few "
             "tight lines, past tense, in your voice but factual.\n"
             "\n"
-            "If the window was basically dead (nothing worth remembering), "
+            "If the hour was basically dead (nothing worth remembering), "
             "return the single word EMPTY and nothing else."
             + self._MEMORY_FENCE
             + self._forget_clause(forgotten_names)
@@ -1011,7 +1011,7 @@ class ClaudeClient:
             user_message=f"Activity to remember (most recent last):\n{channels_blob}",
             system_extra=system_extra,
             max_tokens=MAX_TOKENS_REPLY,
-            purpose="memory_halfday",
+            purpose="memory_hourly",
         )
         return result.text
 
@@ -1019,17 +1019,31 @@ class ClaudeClient:
         self,
         notes_blob: str,
         *,
+        period: str,
         forgotten_names: list[str] | None = None,
     ) -> str:
-        """Compact a week of half-day notes into one weekly memory note. Same
-        fence. Keeps the throughlines, drops one-off noise."""
+        """Compact a tier of memory notes up one level (the decay pyramid):
+        `period="daily"` compacts a day of hourly notes into one daily note;
+        `period="weekly"` compacts a week of daily notes into one weekly note.
+        Same fence. Keeps the throughlines, drops one-off noise."""
+        if period == "daily":
+            lower, span = "hourly", "day"
+            keep = (
+                "the day's real throughlines: who drove what, the running bits, "
+                "the debates, the moments that landed. Drop minute-to-minute "
+                "chatter that didn't matter past the hour it happened in."
+            )
+        else:
+            lower, span = "daily", "week"
+            keep = (
+                "the week's arcs: the throughlines that spanned days, who drove "
+                "what, the running bits that stuck, the debates that kept coming "
+                "back. Drop one-off noise that didn't matter past a single day."
+            )
         system_extra = (
-            "TASK: Compact these half-day memory notes into ONE weekly memory "
-            "note. Keep the throughlines: the arcs that spanned days, who drove "
-            "what, the running bits that stuck, the debates that kept coming "
-            "back. Drop one-off noise that didn't matter past a single day. "
-            "Attribute by display name. A short paragraph or a few tight lines, "
-            "past tense, in your voice.\n"
+            f"TASK: Compact these {lower} memory notes into ONE {period} memory "
+            f"note covering the {span}. Keep {keep} Attribute by display name. A "
+            "short paragraph or a few tight lines, past tense, in your voice.\n"
             "\n"
             "If there's genuinely nothing worth keeping, return the single word "
             "EMPTY and nothing else."
@@ -1038,10 +1052,10 @@ class ClaudeClient:
         )
         result = await self._call(
             model=HAIKU,
-            user_message=f"Half-day notes from the past week (oldest first):\n{notes_blob}",
+            user_message=f"{lower.capitalize()} notes from the past {span} (oldest first):\n{notes_blob}",
             system_extra=system_extra,
             max_tokens=MAX_TOKENS_REPLY,
-            purpose="memory_weekly",
+            purpose=f"memory_{period}",
         )
         return result.text
 

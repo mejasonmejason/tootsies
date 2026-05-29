@@ -107,9 +107,9 @@ Known kinds (keep this list in sync with what's emitted):
   - abuse_silenced     : user hit ABUSE_THRESHOLD and is silenced for the session
       guild_id, user_id, violations
   - memory_write       : long-term memory writer ran (cogs/memory.py)
-      guild_id, tier (halfday|weekly), ok
-      On a written note: chars, plus message_count + channel_count (halfday)
-        or rolled_up (weekly, # of half-day notes compacted).
+      guild_id, tier (hourly|daily|weekly), ok
+      On a written note: chars, plus message_count + channel_count (hourly)
+        or rolled_up (daily/weekly, # of lower-tier notes compacted).
       On a skip: skipped (low_activity|empty) instead of chars.
   - memory_forget      : a user wiped themselves from memory via /forget (cogs/memory.py)
       guild_id, user_id, notes_deleted
