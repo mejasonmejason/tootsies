@@ -52,6 +52,23 @@ def test_build_query_discourse_no_context_gets_trending():
     assert "trending" in q.lower()
 
 
+def test_build_query_discourse_channel_topic_preferred_over_name():
+    q = build_search_query(
+        "", surface="discourse",
+        channel_name="screening-room", channel_topic="movies, tv, film talk",
+    )
+    assert "movies, tv, film talk" in q.lower()
+    assert "screening-room" not in q.lower()
+
+
+def test_build_query_discourse_explicit_category_beats_channel_topic():
+    q = build_search_query(
+        "", surface="discourse",
+        category="nba", channel_topic="movies, tv, film talk",
+    )
+    assert "film talk" not in q.lower()
+
+
 def test_build_query_recap():
     q = build_search_query("lebron trade rumors", surface="recap")
     assert "lebron" in q.lower()

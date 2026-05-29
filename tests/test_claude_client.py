@@ -399,6 +399,35 @@ async def test_discourse_uses_sonnet() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discourse_channel_topic_steers_prompt() -> None:
+    """A channel description (topic) becomes a hard theme constraint in the prompt."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.discourse(
+            None, "sources blob", channel_topic="movies, tv, and film talk only",
+        )
+    system_extra = fake.call_args.kwargs["system_extra"]
+    user_msg = fake.call_args.kwargs["user_message"]
+    assert "CHANNEL THEME" in system_extra
+    assert "movies, tv, and film talk only" in system_extra
+    assert "movies, tv, and film talk only" in user_msg
+
+
+@pytest.mark.asyncio
+async def test_discourse_explicit_category_suppresses_channel_theme() -> None:
+    """An explicit /discourse category: wins; the channel theme block stays out."""
+    client = ClaudeClient(api_key="test")
+    fake = AsyncMock(return_value=MagicMock(text="post"))
+    with patch.object(client, "_call", fake):
+        await client.discourse(
+            "hiphop", "sources blob", channel_topic="movies, tv, and film talk only",
+        )
+    system_extra = fake.call_args.kwargs["system_extra"]
+    assert "CHANNEL THEME" not in system_extra
+
+
+@pytest.mark.asyncio
 async def test_discourse_enables_thinking() -> None:
     client = ClaudeClient(api_key="test")
     fake = AsyncMock(return_value=MagicMock(text="post"))

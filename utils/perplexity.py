@@ -246,6 +246,7 @@ def build_search_query(
     surface: str,
     category: str | None = None,
     channel_name: str | None = None,
+    channel_topic: str | None = None,
 ) -> str:
     """Build a Perplexity search query tailored to the surface.
 
@@ -272,7 +273,9 @@ def build_search_query(
     if surface == "discourse":
         if category and category in _CATEGORY_QUERIES:
             return _CATEGORY_QUERIES[category]
-        topic = category or channel_name or ""
+        # Prefer the channel's description (theme) over its bare name: "movies,
+        # tv, film talk" steers the search far better than "screening-room".
+        topic = category or (channel_topic or "").strip() or channel_name or ""
         if topic:
             return (
                 f"What's trending right now that's relevant to '{topic}'? "
