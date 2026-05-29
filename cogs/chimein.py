@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict, deque
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -68,13 +68,17 @@ ET = ZoneInfo("America/New_York")
 BUFFER_MIN_FOR_SCORE = 5
 CHIMEIN_QUALITY_THRESHOLD = 0.6
 
-# Near-miss reaction band: when the buffer scores below the post threshold but at
-# or above this floor (and the vibe isn't a skip), Toots drops a single reaction
+# Near-miss reaction band: when Toots can't (or won't) post but the buffer scores
+# at or above this floor (and the vibe isn't a skip), she drops a single reaction
 # instead of staying fully silent, the "I'm here, I clocked that" move. Reactions
-# never post or consume the chimein daily cap; they ride a light separate cooldown
-# so she doesn't pepper the room.
+# never post or consume the chimein post cooldown / daily cap; they ride their own
+# light cooldown + daily cap so she doesn't pepper the room. The reaction decision
+# sits AFTER scoring, alongside the post decision, so it still fires during the
+# post-cooldown / post-cap silent gaps it's meant to fill.
 REACT_THRESHOLD = 0.45
 REACT_COOLDOWN = timedelta(minutes=10)
+# Mood-independent: a reaction is the same low-cost gesture however chatty she is.
+REACT_DAILY_CAP = 8
 # In-memory buffer cap per channel. We don't need infinite history; the cheap
 # Haiku scoring pass works fine on the most recent 50 messages.
 BUFFER_MAX = 50
@@ -128,10 +132,12 @@ class ChimeIn(commands.Cog):
         # We track this so we only score when there's *new* signal, not just on
         # the time interval.
         self._new_since_eval: defaultdict[tuple[int, int], int] = defaultdict(int)
-        # (guild_id, channel_id) -> last time Toots reacted here. In-memory on
-        # purpose: a reaction is best-effort, so a redeploy resetting this (at
-        # worst one extra reaction) isn't worth a DB table + migration.
+        # (guild_id, channel_id) -> last time Toots reacted here, and -> (UTC
+        # date, count) of reactions today. In-memory on purpose: a reaction is
+        # best-effort, so a redeploy resetting these (at worst a few extra
+        # reactions) isn't worth a DB table + migration.
         self._last_react_at: dict[tuple[int, int], datetime] = {}
+        self._react_count: dict[tuple[int, int], tuple[date, int]] = {}
         # guild_id -> set of discourse channel IDs. Refreshed each tick so /menu
         # edits take effect within a tick instead of needing a restart.
         self._listen_channels: dict[int, set[int]] = {}
@@ -237,27 +243,31 @@ class ChimeIn(commands.Cog):
             )
             return
 
-        # Cooldown (mood-tuned)
+        # Post cooldown + daily cap are FLAGS, not early returns: a blocked post
+        # shouldn't also block a reaction, which exists to fill exactly those
+        # silent gaps. We only skip the (Haiku) scoring call when BOTH a post and
+        # a reaction are off the table.
+        key = (guild_id, channel_id)
         last_at = await self.bot.db.last_chimein_at(guild_id, channel_id)
-        if last_at is not None and datetime.now(UTC) - last_at < tuning.cooldown:
-            emit(
-                "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="cooldown_gate", mood=str(schedule.mood),
-            )
-            return
+        post_on_cooldown = (
+            last_at is not None and datetime.now(UTC) - last_at < tuning.cooldown
+        )
+        post_capped = False
+        count_today = 0
+        if not post_on_cooldown:
+            count_today = await self.bot.db.chimein_count_today(guild_id, channel_id)
+            post_capped = count_today >= tuning.daily_cap
+        post_blocked = post_on_cooldown or post_capped
 
-        # Daily cap (mood-tuned)
-        count_today = await self.bot.db.chimein_count_today(guild_id, channel_id)
-        if count_today >= tuning.daily_cap:
+        if post_blocked and not self._react_eligible(key):
             emit(
                 "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="daily_cap_gate", count_today=count_today,
-                mood=str(schedule.mood),
+                decision="cooldown_gate" if post_on_cooldown else "daily_cap_gate",
+                count_today=count_today, mood=str(schedule.mood),
             )
             return
 
         # ---- Score the buffer --------------------------------------------------
-        key = (guild_id, channel_id)
         msgs = list(self._buffers[key])
         buffer_blob = format_for_prompt(msgs, include_reactions=True)
 
@@ -284,14 +294,22 @@ class ChimeIn(commands.Cog):
                 decision="vibe_gate", vibe=vibe, score=score,
             )
             return
-        if score < tuning.threshold:
-            # Not post-worthy, but if it's a near-miss Toots reacts instead of
-            # going dark, a lighter acknowledgement than a full take.
-            reacted = await self._maybe_react(guild_id, channel_id, vibe, score)
+        if post_blocked or score < tuning.threshold:
+            # Can't post (cooldown/cap) or it's not post-worthy: react if it's a
+            # near-miss-or-better, otherwise go dark. The reaction is the lighter
+            # acknowledgement that fills the gap a post would have left.
+            reacted = await self._maybe_react(key, msgs, vibe, score)
+            if reacted:
+                decision = "reacted"
+            elif post_on_cooldown:
+                decision = "cooldown_gate"
+            elif post_capped:
+                decision = "daily_cap_gate"
+            else:
+                decision = "threshold_gate"
             emit(
                 "chimein_evaluated", guild_id=guild_id, channel_id=channel_id,
-                decision="reacted" if reacted else "threshold_gate",
-                vibe=vibe, score=score, mood=str(schedule.mood),
+                decision=decision, vibe=vibe, score=score, mood=str(schedule.mood),
             )
             return
 
@@ -411,30 +429,47 @@ class ChimeIn(commands.Cog):
         )
 
 
-    async def _maybe_react(
-        self, guild_id: int, channel_id: int, vibe: str, score: float,
-    ) -> bool:
-        """React to the latest buffered message on a near-miss score. Returns True if it landed.
+    def _reacts_today(self, key: tuple[int, int]) -> int:
+        """Reaction count for this channel so far today (UTC). 0 after a date roll."""
+        entry = self._react_count.get(key)
+        if entry is None or entry[0] != datetime.now(UTC).date():
+            return 0
+        return entry[1]
 
-        Cheap path: no Claude call, no post, no daily-cap consumption. Gated by
-        REACT_THRESHOLD (must clear the floor) and a light in-memory cooldown so
-        Toots doesn't pepper the channel. The target is the most recent buffered
-        message, the freshest signal of what the room's on.
-        """
-        if score < REACT_THRESHOLD:
-            return False
-        key = (guild_id, channel_id)
+    def _react_eligible(self, key: tuple[int, int]) -> bool:
+        """In-memory gate: react cooldown elapsed AND daily cap not hit. No I/O."""
         last = self._last_react_at.get(key)
         if last is not None and datetime.now(UTC) - last < REACT_COOLDOWN:
             return False
-        msgs = self._buffers.get(key)
-        if not msgs:
+        return self._reacts_today(key) < REACT_DAILY_CAP
+
+    async def _maybe_react(
+        self, key: tuple[int, int], msgs: list[discord.Message], vibe: str, score: float,
+    ) -> bool:
+        """React to the latest *scored* message on a near-miss-or-better score.
+
+        Cheap path: no Claude call, no post, no chimein post-cooldown/cap
+        consumption. Gated by REACT_THRESHOLD plus its own cooldown + daily cap
+        (via _react_eligible) so Toots doesn't pepper the channel. `msgs` is the
+        same snapshot the scorer saw, so the reaction can't drift onto an
+        unrelated message that arrived during the scoring await.
+        """
+        if score < REACT_THRESHOLD or not self._react_eligible(key) or not msgs:
             return False
         target = msgs[-1]
         emoji = voice.pick_reaction(vibe)
+        # Advance the cooldown on the ATTEMPT (before the await), so a failing
+        # react (revoked perm, transient API error) backs off for REACT_COOLDOWN
+        # instead of retrying every tick.
+        self._last_react_at[key] = datetime.now(UTC)
         if not await react(target, emoji, source="chimein"):
             return False
-        self._last_react_at[key] = datetime.now(UTC)
+        # Count only successful reactions against the daily cap.
+        today = datetime.now(UTC).date()
+        prev = self._react_count.get(key)
+        self._react_count[key] = (
+            today, (prev[1] + 1 if prev is not None and prev[0] == today else 1),
+        )
         return True
 
 

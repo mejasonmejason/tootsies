@@ -129,6 +129,7 @@ def _make_cog() -> ChimeIn:
     cog._new_since_eval = defaultdict(int)
     cog._listen_channels = {}
     cog._last_react_at = {}
+    cog._react_count = {}
     return cog
 
 
@@ -230,11 +231,15 @@ async def test_gate_skips_outside_hours_window(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_gate_skips_when_under_chill_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Chill mood: 60min cooldown. A 30min-old chime-in is still inside the window."""
+async def test_post_cooldown_blocks_post_but_still_scores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chill 60min cooldown: a 30min-old post blocks POSTING, but we still score
+    so a reaction can fill the gap (reactions ride their own separate cooldown)."""
     cog = _make_cog()
     claude = _stub_claude()
     cog.bot.claude = claude
+    cog._buffers[(1, 2)].extend([_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE)])
     _force_et_hour(monkeypatch, 12)  # ensure hours_gate passes
     # last_chimein_at must be relative to the FAKE now (the cog calls the patched
     # datetime.now), so compute it from the same source.
@@ -244,7 +249,8 @@ async def test_gate_skips_when_under_chill_cooldown(monkeypatch: pytest.MonkeyPa
         last_chimein_at=patched_datetime.now(UTC) - timedelta(minutes=30),
     )
     await cog._maybe_chime_in_one(1, 2)
-    claude.chimein_score.assert_not_called()
+    claude.chimein_score.assert_called_once()  # scored so it could react
+    claude.chimein_post.assert_not_called()    # but post is on cooldown
 
 
 @pytest.mark.asyncio
@@ -267,7 +273,8 @@ async def test_yaps_passes_cooldown_that_chill_would_block(monkeypatch: pytest.M
 
 @pytest.mark.asyncio
 async def test_chill_daily_cap_lower_than_yaps(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A count of 6 today: chill (cap 5) blocks, yaps (cap 10) doesn't."""
+    """count=6 today: chill (cap 5) blocks the post, yaps (cap 10) doesn't. Both
+    still score, chill so it can react, yaps so it can post."""
     cog = _make_cog()
     claude = _stub_claude()
     cog.bot.claude = claude
@@ -275,7 +282,8 @@ async def test_chill_daily_cap_lower_than_yaps(monkeypatch: pytest.MonkeyPatch) 
     _force_et_hour(monkeypatch, 12)
     cog.bot.db = _stub_db(mood=MoodMode.CHILL, count_today=6)
     await cog._maybe_chime_in_one(1, 2)
-    claude.chimein_score.assert_not_called()  # blocked by chill cap of 5
+    claude.chimein_score.assert_called_once()  # scores so it can react
+    claude.chimein_post.assert_not_called()    # chill cap of 5 blocks the post
 
     cog2 = _make_cog()
     claude2 = _stub_claude()
@@ -432,6 +440,85 @@ async def test_react_respects_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     target = _reactable_message()
     _fill_buffer_ending_with(cog, target)
     _force_et_hour(monkeypatch, 12)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_cooldown_still_allows_reaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Headline fix: posting on cooldown still lets a near-miss get a reaction."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    claude = _stub_claude(score=0.6, vibe="debate")  # under chill 0.8 post bar
+    cog.bot.claude = claude
+    _force_et_hour(monkeypatch, 12)
+    from cogs.chimein import datetime as patched_datetime
+    cog.bot.db = _stub_db(
+        mood=MoodMode.CHILL,
+        last_chimein_at=patched_datetime.now(UTC) - timedelta(minutes=30),  # on cooldown
+    )
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    target.add_reaction.assert_awaited_once()
+    claude.chimein_post.assert_not_called()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "reacted"
+        for ev, f in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_skips_scoring_when_post_and_react_both_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cost-saving: post on cooldown AND reaction on its own cooldown => no score."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: emitted.append((ev, f)))
+
+    cog = _make_cog()
+    claude = _stub_claude()
+    cog.bot.claude = claude
+    _force_et_hour(monkeypatch, 12)
+    from cogs.chimein import datetime as patched_datetime
+    cog.bot.db = _stub_db(
+        mood=MoodMode.CHILL,
+        last_chimein_at=patched_datetime.now(UTC) - timedelta(minutes=30),
+    )
+    cog._last_react_at[(1, 2)] = patched_datetime.now(UTC)  # react also on cooldown
+    cog._buffers[(1, 2)].extend([_stub_message() for _ in range(BUFFER_MIN_FOR_SCORE)])
+
+    await cog._maybe_chime_in_one(1, 2)
+
+    claude.chimein_score.assert_not_called()
+    assert any(
+        ev == "chimein_evaluated" and f.get("decision") == "cooldown_gate"
+        for ev, f in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_react_respects_daily_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reactions stop once REACT_DAILY_CAP is hit for the day, even off cooldown."""
+    monkeypatch.setattr("cogs.chimein.emit", lambda ev, **f: None)
+
+    cog = _make_cog()
+    cog.bot.db = _stub_db(mood=MoodMode.CHILL)
+    cog.bot.claude = _stub_claude(score=0.6, vibe="debate")
+    _force_et_hour(monkeypatch, 12)
+    from cogs.chimein import REACT_DAILY_CAP
+    from cogs.chimein import datetime as patched_datetime
+    cog._react_count[(1, 2)] = (patched_datetime.now(UTC).date(), REACT_DAILY_CAP)
+    target = _reactable_message()
+    _fill_buffer_ending_with(cog, target)
 
     await cog._maybe_chime_in_one(1, 2)
 
