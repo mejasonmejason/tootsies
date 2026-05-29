@@ -42,7 +42,6 @@ import discord
 from discord.ext import commands, tasks
 
 from models import MoodMode
-from utils import voice
 from utils.dedup import is_duplicate_of_recent
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, hot_urls, recent_image_urls
@@ -283,6 +282,9 @@ class ChimeIn(commands.Cog):
         # ---- Score the buffer --------------------------------------------------
         msgs = list(self._buffers[key])
         buffer_blob = format_for_prompt(msgs, include_reactions=True)
+        # Numbered variant for the scorer only, so it can name a [#N] reaction
+        # target. The post path keeps the un-numbered blob (no index noise).
+        scored_blob = format_for_prompt(msgs, include_reactions=True, numbered=True)
 
         recent_all = await self.bot.db.recent_discourse_all(guild_id, limit=10)
         recent_posts = "\n".join(
@@ -291,8 +293,8 @@ class ChimeIn(commands.Cog):
         )
 
         try:
-            score, vibe, hook, reaction = await self.bot.claude.chimein_score(
-                buffer_blob, recent_self_posts=recent_posts,
+            score, vibe, hook, reaction, target = await self.bot.claude.chimein_score(
+                scored_blob, recent_self_posts=recent_posts,
             )
         except Exception as exc:
             emit_error(
@@ -314,7 +316,7 @@ class ChimeIn(commands.Cog):
             if react_ok is None:
                 react_ok = await self._react_eligible(guild_id, channel_id, tuning.react_cap)
             reacted = await self._maybe_react(
-                key, msgs, vibe, score, reaction, eligible=react_ok,
+                key, msgs, score, reaction, target, eligible=react_ok,
             )
             if reacted:
                 decision = "reacted"
@@ -463,39 +465,45 @@ class ChimeIn(commands.Cog):
 
     @staticmethod
     def _pick_react_emoji(
-        message: discord.Message, vibe: str, suggested: str,
+        message: discord.Message, suggested: str,
     ) -> str | discord.Emoji | discord.PartialEmoji:
-        """Choose the emoji to react with.
+        """The emoji to react with, deterministically (no random fallback).
 
-        Priority:
           1. Co-sign the room: if the message already carries reactions, pile
              onto the most-used one (highest count; ties resolve to the
              first-added, since Discord returns reactions in insertion order and
              max() keeps the first on ties).
-          2. The scorer's `suggested` emoji, chosen by stance (🔥 cosign vs 🧢
-             cap aren't interchangeable), when the message is bare.
-          3. A random vibe-appropriate pick, only if the scorer offered nothing.
+          2. Otherwise the scorer's `suggested` stance emoji (🔥 cosign vs 🧢 cap
+             aren't interchangeable).
+
+        Returns "" when the message is bare AND the scorer named no emoji, so the
+        caller stays silent rather than inventing a reaction.
         """
         if message.reactions:
             return max(message.reactions, key=lambda r: r.count).emoji
-        return suggested or voice.pick_reaction(vibe)
+        return suggested
 
     async def _maybe_react(
         self,
         key: tuple[int, int],
         msgs: list[discord.Message],
-        vibe: str,
         score: float,
         suggested: str,
+        target_index: int | None,
         *,
         eligible: bool,
     ) -> bool:
-        """React to the latest *scored* message on a near-miss-or-better score.
+        """React to the specific message the scorer picked, on a near-miss-or-better score.
 
         Cheap path: no Claude call, no post, no chimein post-cooldown/cap
         consumption. `eligible` is the DB-backed cooldown/daily-cap result.
-        `msgs` is the same snapshot the scorer saw, so the reaction can't drift
-        onto an unrelated message that arrived during the scoring await.
+        `msgs` is the same snapshot the scorer saw (same order as the numbered
+        buffer it read), so `target_index` maps straight back to the message the
+        scorer aimed its reaction at.
+
+        Fully scorer-driven, no randomness: if the scorer named neither a target
+        message nor an emoji, Toots stays silent. A named emoji with a missing /
+        out-of-range index falls back to the most recent message.
         """
         if score < REACT_THRESHOLD or not eligible or not msgs:
             return False
@@ -507,8 +515,15 @@ class ChimeIn(commands.Cog):
         last_attempt = self._last_react_attempt.get(key)
         if last_attempt is not None and datetime.now(UTC) - last_attempt < REACT_COOLDOWN:
             return False
-        target = msgs[-1]
-        emoji = self._pick_react_emoji(target, vibe, suggested)
+        if target_index is not None and 0 <= target_index < len(msgs):
+            target = msgs[target_index]
+        elif suggested:
+            target = msgs[-1]  # emoji chosen but no usable index: land on the freshest line
+        else:
+            return False  # scorer chose nothing to react to: stay silent
+        emoji = self._pick_react_emoji(target, suggested)
+        if not emoji:
+            return False
         self._last_react_attempt[key] = datetime.now(UTC)
         if not await react(target, emoji, source="chimein"):
             return False

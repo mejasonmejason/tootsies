@@ -178,8 +178,11 @@ async def main() -> None:
         "production / writing.\n"
     )
     print("**(chime-in tick fires, scoring first)**")
-    score, vibe, hook, reaction = await client.chimein_score(CHIMEIN_BUFFER)
-    print(f"> _scorer:_ `score={score:.2f}, vibe={vibe}, hook={hook!r}, reaction={reaction!r}`\n")
+    score, vibe, hook, reaction, target = await client.chimein_score(CHIMEIN_BUFFER)
+    print(
+        f"> _scorer:_ `score={score:.2f}, vibe={vibe}, hook={hook!r}, "
+        f"reaction={reaction!r}, target={target}`\n"
+    )
     if score >= 0.6:
         line = await client.chimein_post(CHIMEIN_BUFFER, hook=hook)
         print(f"> {line.strip()}\n")

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
-from utils import voice
 from utils.permissions import can_react
 from utils.reactions import react
 
@@ -63,17 +62,6 @@ def test_can_react_false_without_read_history() -> None:
     channel = MagicMock(spec=discord.TextChannel)
     channel.permissions_for = MagicMock(return_value=_fake_perms(history=False))
     assert can_react(channel, MagicMock(spec=discord.Member)) is False
-
-
-# ---- voice.pick_reaction ---------------------------------------------------------
-
-
-def test_pick_reaction_uses_vibe_pool() -> None:
-    assert voice.pick_reaction("hot_take") in voice.REACTION_EMOJI_BY_VIBE["hot_take"]
-
-
-def test_pick_reaction_falls_back_for_unknown_vibe() -> None:
-    assert voice.pick_reaction("nonsense") in voice._REACTION_FALLBACK
 
 
 # ---- react -----------------------------------------------------------------------

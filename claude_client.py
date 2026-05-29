@@ -92,41 +92,44 @@ def _parse_market_intent(text: str) -> dict[str, Any] | None:
     return out
 
 
-def _parse_chimein_score(text: str) -> tuple[float, str, str, str]:
-    """Parse Claude's chimein_score response into (score, vibe, hook, reaction).
+def _parse_chimein_score(text: str) -> tuple[float, str, str, str, int | None]:
+    """Parse Claude's chimein_score response into (score, vibe, hook, reaction, target).
 
     Tolerant of slight format drift (extra whitespace, missing fields, code
-    fences). Returns a safe fallback (0.0, "other", "", "") on any parse failure
-    so the chime-in tick skips the slot rather than misfiring. `reaction` is a
-    single emoji from _CHIMEIN_REACTIONS or "" (anything off-palette is dropped,
-    so the caller falls back to a vibe-based pick).
+    fences). Returns a safe fallback (0.0, "other", "", "", None) on any parse
+    failure so the chime-in tick skips the slot rather than misfiring. `reaction`
+    is a single emoji from _CHIMEIN_REACTIONS or "" (anything off-palette is
+    dropped). `target` is the 0-based index of the buffered message the reaction
+    is aimed at (the scorer picks the specific message in the window's context),
+    or None when not given / unparseable (caller falls back).
     """
     import json
 
     if not text:
-        return 0.0, "other", "", ""
+        return 0.0, "other", "", "", None
 
     # Strip optional markdown code-fence wrapping.
     cleaned = re.sub(r"^```\w*\s*|```$", "", text.strip(), flags=re.MULTILINE).strip()
     # Find the first {...} block (Claude sometimes prefaces with explanation).
     match = re.search(r"\{[^{}]*\}", cleaned)
     if not match:
-        return 0.0, "other", "", ""
+        return 0.0, "other", "", "", None
 
     try:
         data = json.loads(match.group(0))
     except json.JSONDecodeError:
-        return 0.0, "other", "", ""
+        return 0.0, "other", "", "", None
 
     score = data.get("score")
     vibe = data.get("vibe", "other")
     hook = data.get("hook", "")
     reaction = data.get("reaction", "")
+    target = data.get("target")
 
     try:
         score_f = float(score)
     except (TypeError, ValueError):
-        return 0.0, "other", "", ""
+        return 0.0, "other", "", "", None
     score_f = max(0.0, min(1.0, score_f))
 
     if not isinstance(vibe, str) or vibe not in _CHIMEIN_VIBES:
@@ -135,7 +138,16 @@ def _parse_chimein_score(text: str) -> tuple[float, str, str, str]:
         hook = ""
     if not isinstance(reaction, str) or reaction not in _CHIMEIN_REACTIONS:
         reaction = ""
-    return score_f, vibe, hook, reaction
+    # target: accept an int-like index; bool is an int subclass so reject it.
+    if isinstance(target, bool):
+        target_i: int | None = None
+    elif isinstance(target, int):
+        target_i = target
+    elif isinstance(target, str) and target.strip().lstrip("-").isdigit():
+        target_i = int(target.strip())
+    else:
+        target_i = None
+    return score_f, vibe, hook, reaction, target_i
 
 
 def _parse_discourse_score(text: str) -> tuple[float, str]:
@@ -1697,25 +1709,29 @@ class ClaudeClient:
 
     async def chimein_score(
         self, buffer_blob: str, recent_self_posts: str = "",
-    ) -> tuple[float, str, str, str]:
+    ) -> tuple[float, str, str, str, int | None]:
         """Score whether the recent buffer is worth chiming in on.
 
-        Cheap Haiku call. Returns (score 0..1, vibe, hook, reaction):
+        Cheap Haiku call. Returns (score 0..1, vibe, hook, reaction, target):
           - score: how worth-chiming-in this conversation is.
           - vibe: one of: debate, hot_take, question, conversational,
                   vulnerable, catchup, other.
           - hook: a one-line description of what Toots would actually
                   say something about. Empty if score is low.
-          - reaction: a single emoji matching Toots' stance, for the cheap
-                  reaction path when she's not posting. "" if none fits;
-                  picked by meaning (🔥 cosign vs 🧢 cap are not the same).
+          - reaction: a single emoji matching Toots' stance toward ONE specific
+                  message (judged in the window's context), for the cheap
+                  reaction path when she's not posting. "" if none fits; picked
+                  by meaning (🔥 cosign vs 🧢 cap are not the same).
+          - target: the [#N] index of the message that reaction is aimed at, so
+                  it lands on the actual take rather than the trailing line.
+                  None when reaction is "" or unparseable.
 
         Vibe categories matter for gating: vulnerable/catchup/other are
         no-go zones regardless of score. Debate/hot_take/question are the
         sweet spot for chiming in.
 
-        Returns (0.0, "other", "") if the response is unparseable, which
-        guarantees we skip this slot rather than risk a weird post.
+        Returns (0.0, "other", "", "", None) if the response is unparseable,
+        which guarantees we skip this slot rather than risk a weird post.
         """
         system_extra = (
             "TASK: You are scoring whether the recent chat buffer warrants Toots chiming in "
@@ -1739,8 +1755,10 @@ class ClaudeClient:
             "      vulnerable     (someone shared something personal, sad, or sensitive)\n"
             "      catchup        (weekend plans, hi-how-are-you, schedule logistics)\n"
             "      other          (everything else, including pure spam / off-topic noise)\n"
-            "  - reaction: a SINGLE emoji from this palette matching YOUR stance on the room "
-            "right now, or \"\" if none fits. These are NOT interchangeable, choose by meaning:\n"
+            "  - reaction: pick ONE specific message in the buffer (judged in the context "
+            "of the whole window) and give the SINGLE emoji from this palette that's your "
+            "stance toward THAT message, or \"\" if nothing lands. NOT interchangeable, "
+            "choose by meaning:\n"
             "      🔥 fire take, cosign hard      🧢 cap / that's a lie / BS\n"
             "      💀 dead, too funny             😭 crying, relatable\n"
             "      👀 here for the drama / messy  🤔 skeptical, hmm\n"
@@ -1750,6 +1768,9 @@ class ClaudeClient:
             "calling out a real truth / 'clock that tea' -> 🕐; a petty/sassy win -> 💅; "
             "messy drama unfolding -> 👀; a tired take you're over -> 🙄. Never react 🔥 to "
             "something you'd call cap. Use \"\" when nothing fits cleanly.\n"
+            "  - target: the [#N] index (shown at the start of each buffer line) of the "
+            "message your reaction is aimed at. This is the message that carries the take, "
+            "NOT necessarily the last line. Omit / null when reaction is \"\".\n"
             "\n"
             "RULES:\n"
             "  - Vulnerable, catchup, and 'other' vibes ALWAYS get score <= 0.3 regardless of "
@@ -1760,14 +1781,17 @@ class ClaudeClient:
             "  - Be skeptical. Default to 'this isn't worth interrupting for' unless it really is.\n"
             "\n"
             "Respond on ONE line of EXACTLY this format (one JSON-like object, no markdown):\n"
-            "  {\"score\": 0.78, \"vibe\": \"debate\", \"hook\": \"they're going at it about whether kendrick won\", \"reaction\": \"🍿\"}\n"
+            "  {\"score\": 0.78, \"vibe\": \"debate\", \"hook\": \"they're going at it about whether kendrick won\", \"reaction\": \"🕐\", \"target\": 3}\n"
             "If the response can't be parsed we treat it as a 0-score skip."
         )
         recent_self_block = (
             f"\n\nRECENT TOOTS POSTS in this channel (don't repeat yourself):\n{recent_self_posts}"
             if recent_self_posts else ""
         )
-        user = f"Buffer (oldest first):\n{buffer_blob}{recent_self_block}"
+        user = (
+            f"Buffer (oldest first, each line prefixed with its [#N] index):\n"
+            f"{buffer_blob}{recent_self_block}"
+        )
         result = await self._call(
             model=HAIKU, user_message=user, system_extra=system_extra, max_tokens=200,
             purpose="chimein_score",

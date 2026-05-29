@@ -656,3 +656,15 @@ def test_format_for_prompt_reactor_mapping_falls_back_to_count() -> None:
     )
     assert "[reactions: 🔥 alice, bob]" in rendered
     assert "[5 reactions]" in rendered
+
+
+def test_format_for_prompt_numbered_prefixes_each_line_with_index() -> None:
+    """numbered=True prefixes [#i] (0-based, matching list position) for targeting."""
+    rendered = format_for_prompt(
+        [_fake_msg(content="first"), _fake_msg(content="second")], numbered=True,
+    )
+    lines = rendered.splitlines()
+    assert lines[0].startswith("[#0] ")
+    assert lines[1].startswith("[#1] ")
+    # default stays un-numbered
+    assert not format_for_prompt([_fake_msg(content="x")]).startswith("[#0]")

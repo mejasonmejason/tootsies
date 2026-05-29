@@ -310,6 +310,7 @@ def format_for_prompt(
     messages: list[discord.Message],
     include_reactions: bool = False,
     reactors: dict[int, str] | None = None,
+    numbered: bool = False,
 ) -> str:
     """Render a message list for inclusion in a Claude prompt.
 
@@ -322,15 +323,21 @@ def format_for_prompt(
       e.g. `[reactions: 🔥 alice, bob]`, preferred when available.
     - otherwise `include_reactions` appends the bare aggregate `[N reactions]`,
       so callers that don't pay for the reactor lookup still weight popularity.
+
+    `numbered` prefixes each line with its 0-based `[#i]` index, so a model can
+    point back at a specific message (used by chime-in to pick a reaction target).
+    The index matches the position in `messages`, so callers can map it straight
+    back to the message object.
     """
     if not messages:
         return "(no recent messages)"
     lines: list[str] = []
-    for m in messages:
+    for i, m in enumerate(messages):
         age = _relative_time(m.created_at)
         name = m.author.display_name
         body = _truncate(_strip_html(m.content).replace("\n", " "), 200)
-        line = f"[{age}] {name}: {body}" if body else f"[{age}] {name}:"
+        prefix = f"[#{i}] " if numbered else ""
+        line = f"{prefix}[{age}] {name}: {body}" if body else f"{prefix}[{age}] {name}:"
         media = extract_media(m)
         if media:
             line += " " + " ".join(f"[{r.kind}: {r.label}]" for r in media)
