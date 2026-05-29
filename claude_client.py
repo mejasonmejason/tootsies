@@ -47,10 +47,12 @@ _CHIMEIN_VIBES = {
 
 # Emoji Toots may react with, each with a distinct meaning so the scorer picks by
 # STANCE, not vibe-bucket: 🔥/💯 cosign, 🧢 calls BS, 😂/💀/😭 funny, 👀 drama/messy,
-# 🤔 skeptical, 🕐 clocked-it/you're-right, 💅 sassy cosign, 🫡 respect. cap and fire
-# are NOT interchangeable, which is the whole reason the model chooses instead of a
-# random pool draw.
-_CHIMEIN_REACTIONS = {"🔥", "💯", "🧢", "💀", "😭", "😂", "👀", "🤔", "🕐", "💅", "🫡"}
+# 🤔 skeptical, 🙄 over-it, 🕐 clocked-it/you're-right, 💅 sassy cosign, 🙏 pray/manifest,
+# 🫡 respect. cap and fire are NOT interchangeable, which is the whole reason the model
+# chooses instead of a random pool draw.
+_CHIMEIN_REACTIONS = {
+    "🔥", "💯", "🧢", "💀", "😭", "😂", "👀", "🤔", "🙄", "🕐", "💅", "🙏", "🫡",
+}
 
 
 def _parse_market_intent(text: str) -> dict[str, Any] | None:
@@ -1743,12 +1745,13 @@ class ClaudeClient:
             "      🧢 cap / that's a lie / BS     💀 dead, too funny\n"
             "      😂 a genuinely good laugh      😭 crying, relatable\n"
             "      👀 here for the drama / messy  🤔 skeptical, hmm\n"
+            "      🙄 over it, eye-roll           🙏 manifesting / please / amen\n"
             "      🕐 clocked it, you're so right  💅 sassy cosign (slay, yes sis, purr)\n"
             "      🫡 respect\n"
             "    e.g. a hot take you AGREE with -> 🔥 or 💯; a hot take that's nonsense -> 🧢; "
             "calling out a real truth / 'clock that tea' -> 🕐; a petty/sassy win -> 💅; "
-            "messy drama unfolding -> 👀. Never react 🔥 to something you'd call cap. "
-            "Use \"\" when nothing fits cleanly.\n"
+            "messy drama unfolding -> 👀; a tired take you're over -> 🙄. Never react 🔥 to "
+            "something you'd call cap. Use \"\" when nothing fits cleanly.\n"
             "\n"
             "RULES:\n"
             "  - Vulnerable, catchup, and 'other' vibes ALWAYS get score <= 0.3 regardless of "
