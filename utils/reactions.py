@@ -37,8 +37,13 @@ async def react(
     Emits a `reaction_added` event on success.
     """
     guild = message.guild
-    me = guild.me if guild else None
-    if me is None or not can_react(message.channel, me):
+    channel = message.channel
+    # Narrow off DMs/group/partial channels: reactions only fire in guild text
+    # channels and threads, which is also all can_react knows how to check.
+    if guild is None or not isinstance(channel, discord.TextChannel | discord.Thread):
+        return False
+    me = guild.me
+    if me is None or not can_react(channel, me):
         return False
 
     # Already reacted with this emoji? `r.me` is True when the bot is among the
@@ -56,8 +61,8 @@ async def react(
     emit(
         "reaction_added",
         source=source,
-        guild_id=guild.id if guild else None,
-        channel_id=message.channel.id,
+        guild_id=guild.id,
+        channel_id=channel.id,
         message_id=message.id,
         emoji=emoji,
     )
