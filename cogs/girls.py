@@ -1,14 +1,12 @@
-"""/girls family, tell Toots who her girls are.
+"""/girls, name the roles Toots treats as her girls.
 
-/girls show              list the roles Toots treats as her girls
-/girls add <role>        add a role to her girls (mods only)
-/girls remove <role>     drop a role from her girls (mods only)
-/girls clear             clear the whole list (mods only)
-
-Anyone wearing one of these roles gets the extra-warm, feminine, sisterly
-treatment in /ask + @mentions (see claude_client.ask's girls_context). Storage
-is the settings KV table via db.get/set_girls_roles, so it's a small per-guild
-list of role ids, no schema change.
+One command, one autosaving role multi-select (same pattern as the `/menu`
+pickers). Pick the role(s) for the girls (e.g. @Habibtis); it saves as you go,
+deselect everything to clear. Anyone wearing one of these roles gets the
+extra-warm, feminine, sisterly treatment in /ask + @mentions (see
+claude_client.ask's girls_context). Storage is the settings KV table via
+db.get/set_girls_roles, so it's a small per-guild list of role ids, no schema
+change.
 """
 
 from __future__ import annotations
@@ -30,122 +28,140 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Suppress pings: rendering a role mention should show the colored name, not
-# notify everyone wearing it every time a mod tweaks the list.
-_NO_PING = discord.AllowedMentions.none()
+
+def _role_defaults(
+    guild: discord.Guild, role_ids: list[int],
+) -> list[discord.SelectDefaultValue]:
+    """Pre-populate the select with roles that still exist in the guild."""
+    out: list[discord.SelectDefaultValue] = []
+    for rid in role_ids:
+        if guild.get_role(rid) is not None:
+            out.append(discord.SelectDefaultValue(
+                id=rid, type=discord.SelectDefaultValueType.role,
+            ))
+    return out
 
 
-class Girls(commands.GroupCog, name="girls"):  # type: ignore[call-arg]
+class _GirlsRoleSelect(discord.ui.RoleSelect):
+    LABEL = "the girls"
+
+    def __init__(
+        self, parent: GirlsView, defaults: list[discord.SelectDefaultValue],
+    ) -> None:
+        # min_values=0 so deselecting everything clears the list.
+        super().__init__(
+            placeholder=self.LABEL,
+            min_values=0, max_values=25,
+            default_values=defaults,
+        )
+        self.parent_view = parent
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.parent_view.selected = [r.id for r in self.values]
+        await self.parent_view.autosave(interaction)
+
+
+class GirlsView(discord.ui.View):
+    """One role select, autosaves on every pick. Only the invoking mod can use it."""
+
+    def __init__(
+        self,
+        bot: TootsiesBot,
+        guild: discord.Guild,
+        role_ids: list[int],
+        actor_id: int,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.bot = bot
+        self.guild = guild
+        self.actor_id = actor_id
+        self.selected: list[int] = list(role_ids)
+        self.add_item(_GirlsRoleSelect(self, _role_defaults(guild, role_ids)))
+        self._refresh()
+
+    def embed(self) -> discord.Embed:
+        if self.selected:
+            mentions = []
+            for rid in self.selected:
+                role = self.guild.get_role(rid)
+                mentions.append(role.mention if role else f"(role {rid}, gone)")
+            current = "my girls: " + ", ".join(mentions)
+        else:
+            current = "no girls picked yet."
+        return discord.Embed(
+            title="who are my girls?",
+            description=(
+                f"{current}\n\n"
+                "pick the role(s) i should treat as my girls (i'm extra warm "
+                "with them). saves as you go, deselect all to clear."
+            ),
+            color=0x9b59b6,
+        )
+
+    def _refresh(self) -> None:
+        """Re-sync the select's default_values + placeholder to self.selected
+        before any edit_message, or the view visually clears on re-render."""
+        for child in self.children:
+            if isinstance(child, _GirlsRoleSelect):
+                child.default_values = _role_defaults(self.guild, self.selected)
+                child.placeholder = (
+                    f"{child.LABEL}: {len(self.selected)} picked"
+                    if self.selected else child.LABEL
+                )
+
+    async def autosave(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.actor_id:
+            await interaction.response.send_message(
+                "not your list, regular.", ephemeral=True,
+            )
+            return
+        guild_id = self.guild.id
+        try:
+            await self.bot.db.set_girls_roles(
+                guild_id, self.selected, actor_id=self.actor_id,
+            )
+        except Exception:
+            log.exception("girls roles autosave failed for guild=%s", guild_id)
+            # Don't block the visual update; the value is in self.selected so a
+            # re-select retries the write.
+        else:
+            await self.bot.db.audit(
+                guild_id, self.actor_id, "girls_set",
+                after={"role_ids": self.selected},
+            )
+        self._refresh()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+
+class Girls(commands.Cog):
     def __init__(self, bot: TootsiesBot) -> None:
         self.bot = bot
-        super().__init__()
 
-    @app_commands.command(name="show", description="see which roles toots treats as her girls.")
-    @track_command("girls show")
-    async def show(self, interaction: discord.Interaction) -> None:
+    @app_commands.command(
+        name="girls",
+        description="name the girls i'm extra warm with. (mods only)",
+    )
+    @track_command("girls")
+    async def girls(self, interaction: discord.Interaction) -> None:
         if not await require_configured(interaction, self.bot.db):
             return
-        assert interaction.guild is not None
-        role_ids = await self.bot.db.get_girls_roles(interaction.guild.id)
-        if not role_ids:
-            await interaction.response.send_message(
-                "haven't met my girls yet. a mod can point them out with `/girls add`.",
-                ephemeral=True,
-            )
-            return
-        mentions = []
-        for rid in role_ids:
-            role = interaction.guild.get_role(rid)
-            mentions.append(role.mention if role else f"(role {rid}, gone)")
-        await interaction.response.send_message(
-            "my girls: " + ", ".join(mentions),
-            ephemeral=True,
-            allowed_mentions=_NO_PING,
-        )
-
-    @app_commands.command(name="add", description="add a role to toots' girls. (mods only)")
-    @app_commands.describe(role="the role to treat as one of the girls")
-    @track_command("girls add")
-    async def add(self, interaction: discord.Interaction, role: discord.Role) -> None:
-        if not await self._mod_gate(interaction):
-            return
-        assert interaction.guild is not None
-        guild_id = interaction.guild.id
-        role_ids = await self.bot.db.get_girls_roles(guild_id)
-        if role.id in role_ids:
-            await interaction.response.send_message(
-                f"{role.mention} already runs with my girls.",
-                ephemeral=True,
-                allowed_mentions=_NO_PING,
-            )
-            return
-        role_ids.append(role.id)
-        await self.bot.db.set_girls_roles(guild_id, role_ids, actor_id=interaction.user.id)
-        await self.bot.db.audit(
-            guild_id, interaction.user.id, "girls_add", after={"role_id": role.id}
-        )
-        await interaction.response.send_message(
-            f"{role.mention}'s one of my girls now. i got them.",
-            allowed_mentions=_NO_PING,
-        )
-
-    @app_commands.command(name="remove", description="drop a role from toots' girls. (mods only)")
-    @app_commands.describe(role="the role to stop treating as one of the girls")
-    @track_command("girls remove")
-    async def remove(self, interaction: discord.Interaction, role: discord.Role) -> None:
-        if not await self._mod_gate(interaction):
-            return
-        assert interaction.guild is not None
-        guild_id = interaction.guild.id
-        role_ids = await self.bot.db.get_girls_roles(guild_id)
-        if role.id not in role_ids:
-            await interaction.response.send_message(
-                f"{role.mention} wasn't on the list anyway.",
-                ephemeral=True,
-                allowed_mentions=_NO_PING,
-            )
-            return
-        role_ids = [rid for rid in role_ids if rid != role.id]
-        await self.bot.db.set_girls_roles(guild_id, role_ids, actor_id=interaction.user.id)
-        await self.bot.db.audit(
-            guild_id, interaction.user.id, "girls_remove", after={"role_id": role.id}
-        )
-        await interaction.response.send_message(
-            f"took {role.mention} off the list. no drama.",
-            allowed_mentions=_NO_PING,
-        )
-
-    @app_commands.command(name="clear", description="clear toots' whole girls list. (mods only)")
-    @track_command("girls clear")
-    async def clear(self, interaction: discord.Interaction) -> None:
-        if not await self._mod_gate(interaction):
-            return
-        assert interaction.guild is not None
-        guild_id = interaction.guild.id
-        if not await self.bot.db.get_girls_roles(guild_id):
-            await interaction.response.send_message(
-                "list's already empty.", ephemeral=True
-            )
-            return
-        await self.bot.db.set_girls_roles(guild_id, [], actor_id=interaction.user.id)
-        await self.bot.db.audit(guild_id, interaction.user.id, "girls_clear")
-        await interaction.response.send_message("cleared the list. fresh slate.")
-
-    async def _mod_gate(self, interaction: discord.Interaction) -> bool:
-        if not await require_configured(interaction, self.bot.db):
-            return False
         member = interaction.user
-        if not isinstance(member, discord.Member):
+        guild = interaction.guild
+        if guild is None or not isinstance(member, discord.Member):
             await interaction.response.send_message(
-                voice.pick(voice.PERMISSION_DENIED), ephemeral=True
+                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
             )
-            return False
+            return
         if not await is_mod(self.bot.db, member):
             await interaction.response.send_message(
-                voice.pick(voice.PERMISSION_DENIED), ephemeral=True
+                voice.pick(voice.PERMISSION_DENIED), ephemeral=True,
             )
-            return False
-        return True
+            return
+        role_ids = await self.bot.db.get_girls_roles(guild.id)
+        view = GirlsView(self.bot, guild, role_ids, member.id)
+        await interaction.response.send_message(
+            embed=view.embed(), view=view, ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -15,6 +15,7 @@ import pytest
 
 from claude_client import ClaudeClient
 from cogs.ask import Ask
+from cogs.girls import GirlsView
 from db import DB
 from utils.permissions import member_has_role
 
@@ -150,3 +151,70 @@ async def test_girls_context_none_outside_guild() -> None:
     cog = _ask_cog([20])
     channel = SimpleNamespace(guild=None)
     assert await cog._girls_context(channel, [], None) is None
+
+
+# ---- GirlsView (the /girls autosave role select) ----------------------------
+
+
+def _fake_guild(role_names: dict[int, str]) -> MagicMock:
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 42
+    guild.get_role = MagicMock(
+        side_effect=lambda rid: (
+            SimpleNamespace(id=rid, mention=f"@{role_names[rid]}")
+            if rid in role_names else None
+        )
+    )
+    return guild
+
+
+def _fake_bot() -> MagicMock:
+    bot = MagicMock()
+    bot.db = MagicMock()
+    bot.db.set_girls_roles = AsyncMock()
+    bot.db.audit = AsyncMock()
+    return bot
+
+
+@pytest.mark.asyncio  # GirlsView.__init__ needs a running loop (asyncio.Future)
+async def test_girls_view_embed_lists_current_roles() -> None:
+    guild = _fake_guild({20: "Habibtis"})
+    view = GirlsView(_fake_bot(), guild, [20], actor_id=1)
+    assert "@Habibtis" in view.embed().description
+
+
+@pytest.mark.asyncio
+async def test_girls_view_embed_when_empty() -> None:
+    guild = _fake_guild({})
+    view = GirlsView(_fake_bot(), guild, [], actor_id=1)
+    assert "no girls picked yet" in view.embed().description
+
+
+@pytest.mark.asyncio
+async def test_girls_view_autosave_persists_and_rerenders() -> None:
+    bot = _fake_bot()
+    guild = _fake_guild({20: "Habibtis", 21: "VIP"})
+    view = GirlsView(bot, guild, [20], actor_id=1)
+    view.selected = [20, 21]  # what the select callback would set
+    interaction = MagicMock()
+    interaction.user.id = 1
+    interaction.response.edit_message = AsyncMock()
+    await view.autosave(interaction)
+    bot.db.set_girls_roles.assert_awaited_once_with(42, [20, 21], actor_id=1)
+    bot.db.audit.assert_awaited_once()
+    interaction.response.edit_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_girls_view_autosave_rejects_other_users() -> None:
+    bot = _fake_bot()
+    guild = _fake_guild({20: "Habibtis"})
+    view = GirlsView(bot, guild, [20], actor_id=1)
+    interaction = MagicMock()
+    interaction.user.id = 999  # not the invoker
+    interaction.response.send_message = AsyncMock()
+    interaction.response.edit_message = AsyncMock()
+    await view.autosave(interaction)
+    bot.db.set_girls_roles.assert_not_awaited()
+    interaction.response.send_message.assert_awaited_once()
+    interaction.response.edit_message.assert_not_awaited()
