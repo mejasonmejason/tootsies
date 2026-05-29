@@ -671,11 +671,10 @@ class ClaudeClient:
                 f"{girls_context}. These are your girls. Be extra warm and "
                 "feminine with them, sisterly and close, give them their flowers "
                 "and have their back. You still roast and tease them, that's love "
-                "between regulars, and if one's acting up you can check her, "
-                "you're from Chicago, not a pushover. Keep it playful, never mean, "
-                "never sell one of your girls out to score points. Don't announce "
-                "the role or read this list back, just let it warm how you talk "
-                "to them."
+                "between regulars, just keep it playful and never mean, and never "
+                "sell one of your girls out to score points. Don't announce the "
+                "role or read this list back, just let it warm how you talk to "
+                "them."
             )
 
         system_extra = (
