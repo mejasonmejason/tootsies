@@ -112,6 +112,21 @@ def test_name_in_text_no_false_substring() -> None:
     assert not _name_in_text("banana republic and canada", "ana")
 
 
+def test_name_in_text_unicode_normalization() -> None:
+    # A display name with a combining accent, two ways: precomposed (NFC) vs
+    # decomposed (NFD: base + U+0301 combining acute). /forget must match across
+    # the mismatch or a user is left half-forgotten. Build both forms from code
+    # points so the test never depends on how this file was saved/normalized.
+    import unicodedata
+
+    base = "Jos" + "e" + "\u0301"  # "Jose" + combining acute
+    decomposed = unicodedata.normalize("NFD", base)
+    precomposed = unicodedata.normalize("NFC", base)
+    assert precomposed != decomposed  # sanity: genuinely different code points
+    assert _name_in_text(decomposed + " carried the debate", precomposed)
+    assert _name_in_text(precomposed + " carried the debate", decomposed)
+
+
 # ---- fenced memory prompts --------------------------------------------------
 
 

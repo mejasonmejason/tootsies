@@ -20,12 +20,21 @@ def _name_in_text(text: str, name: str) -> bool:
     Used by /forget to find memory notes that mention a user. Word-boundary so
     "al" doesn't match "always"; case-insensitive so "Alex" matches "alex".
     A blank/whitespace name never matches (guards against pathological input).
+
+    Both sides are NFC-normalized first: a display name with combining
+    diacritics (e.g. "Jose" + combining acute) and the note text the model
+    wrote may differ in unicode normalization, which would otherwise leave a
+    user partially forgotten, the exact privacy failure /forget exists to
+    prevent.
     """
     import re
+    import unicodedata
 
     if not name or not name.strip():
         return False
-    return re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE) is not None
+    name_n = unicodedata.normalize("NFC", name)
+    text_n = unicodedata.normalize("NFC", text)
+    return re.search(rf"\b{re.escape(name_n)}\b", text_n, re.IGNORECASE) is not None
 
 
 def sql_op(query: str) -> str:

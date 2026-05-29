@@ -164,8 +164,6 @@ class Memory(commands.Cog):
         try:
             now_et = datetime.now(ET)
             for guild_id in await self.bot.db.all_configured_guilds():
-                # Small per-guild jitter so writes spread out instead of bursting.
-                await asyncio.sleep(random.uniform(0, _TICK_JITTER_MAX_SECONDS))
                 try:
                     await self._maybe_write_halfday(guild_id, now_et)
                     await self._maybe_rollup_weekly(guild_id, now_et)
@@ -204,9 +202,12 @@ class Memory(commands.Cog):
         if not channel_ids:
             return
 
-        blob, msg_count, channel_count = await self._gather(
-            guild, channel_ids, guild.me, _HALFDAY_WINDOW
-        )
+        # Collect first (history reads only), gate on activity, THEN do the
+        # pricier reactor resolution + the API call, so a dead window costs
+        # nothing past the history reads we need anyway to count.
+        collected = await self._collect(guild, channel_ids, guild.me, _HALFDAY_WINDOW)
+        msg_count = sum(len(msgs) for _, msgs in collected)
+        channel_count = len(collected)
         span_end = datetime.now(UTC)
         span_start = span_end - _HALFDAY_WINDOW
 
@@ -218,7 +219,11 @@ class Memory(commands.Cog):
             )
             return
 
+        blob = await self._render(collected)
         forgotten = await self.bot.db.forgotten_names(guild_id)
+        # Jitter the actual API call so many guilds' writes don't burst onto the
+        # shared model TPM ceiling at once. Only paid when a write really fires.
+        await asyncio.sleep(random.uniform(0, _TICK_JITTER_MAX_SECONDS))
         note = await self.bot.claude.memory_note(blob, forgotten_names=forgotten)
         if _is_empty(note):
             emit(
@@ -255,6 +260,7 @@ class Memory(commands.Cog):
         span_end = halfdays[-1][3]
 
         forgotten = await self.bot.db.forgotten_names(guild_id)
+        await asyncio.sleep(random.uniform(0, _TICK_JITTER_MAX_SECONDS))
         weekly = await self.bot.claude.memory_rollup(
             notes_blob, forgotten_names=forgotten
         )
@@ -275,20 +281,18 @@ class Memory(commands.Cog):
         # keeping them would double-count into next week's rollup.
         await self.bot.db.delete_memory_notes(ids)
 
-    async def _gather(
+    async def _collect(
         self,
         guild: discord.Guild,
         channel_ids: list[int],
         me: discord.Member,
         within: timedelta,
-    ) -> tuple[str, int, int]:
-        """Gather recent human activity across the discourse channels into one
-        prompt blob. Returns (blob, total_message_count, channels_with_activity).
-        include_bots=False: memory is about what PEOPLE did, not webhook posts.
+    ) -> list[tuple[discord.TextChannel | discord.Thread, list[discord.Message]]]:
+        """Read recent human activity per discourse channel (history reads only,
+        no reaction resolution yet). include_bots=False: memory is about what
+        PEOPLE did, not webhook posts. Channels with no messages are dropped.
         """
-        blocks: list[str] = []
-        total = 0
-        used = 0
+        out: list[tuple[discord.TextChannel | discord.Thread, list[discord.Message]]] = []
         for cid in channel_ids:
             channel = guild.get_channel(cid)
             if not isinstance(channel, discord.TextChannel | discord.Thread):
@@ -301,12 +305,23 @@ class Memory(commands.Cog):
             )
             if not msgs:
                 continue
+            out.append((channel, msgs))
+        return out
+
+    @staticmethod
+    async def _render(
+        collected: list[tuple[discord.TextChannel | discord.Thread, list[discord.Message]]],
+    ) -> str:
+        """Render collected messages into one prompt blob, resolving reactors
+        (paginated API calls) here, only reached once the activity gate passes.
+        Reactions signal what the room actually cared about, so they're worth it.
+        """
+        blocks: list[str] = []
+        for channel, msgs in collected:
             reactors = await resolve_reactors(msgs)
             rendered = format_for_prompt(msgs, include_reactions=True, reactors=reactors)
             blocks.append(f"#{channel.name}:\n{rendered}")
-            total += len(msgs)
-            used += 1
-        return "\n\n".join(blocks), total, used
+        return "\n\n".join(blocks)
 
 
 async def setup(bot: commands.Bot) -> None:
