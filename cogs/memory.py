@@ -158,6 +158,8 @@ class Memory(commands.Cog):
         self._last_hourly_attempt: dict[int, datetime] = {}
         self._last_daily_attempt: dict[int, datetime] = {}
         self._last_weekly_attempt: dict[int, datetime] = {}
+        # Guild ids with a /remember backfill currently in flight (concurrency guard).
+        self._backfilling: set[int] = set()
         self.scheduler_tick.start()
 
     async def cog_unload(self) -> None:
@@ -226,15 +228,23 @@ class Memory(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         if guild is None or guild.me is None:
-            await interaction.followup.send(voice.pick(voice.PERMISSION_DENIED), ephemeral=True)
+            await self._reply(interaction, voice.pick(voice.PERMISSION_DENIED))
             return
         channel_ids = await self.bot.db.get_discourse_channels(guild.id)
         if not channel_ids:
-            await interaction.followup.send(
+            await self._reply(
+                interaction,
                 "no discourse channels set up yet. run /menu first, then i'll "
-                "have somewhere to read from.", ephemeral=True,
+                "have somewhere to read from.",
             )
             return
+        # One backfill at a time per guild: idempotency makes a re-run cheap once
+        # spans are covered, but two runs racing before the first writes its
+        # notes would both do the full history + Haiku work. Reject the second.
+        if guild.id in self._backfilling:
+            await self._reply(interaction, "already digging through the archives, hang on.")
+            return
+        self._backfilling.add(guild.id)
         try:
             daily, weekly = await self._backfill(
                 guild, channel_ids, guild.me, REMEMBER_RANGES[period.value]
@@ -245,13 +255,16 @@ class Memory(commands.Cog):
                 source="remember", exc=exc, recoverable=False,
                 guild_id=guild.id, user_id=interaction.user.id,
             )
-            await interaction.followup.send(voice.pick(voice.DB_ERROR), ephemeral=True)
+            await self._reply(interaction, voice.pick(voice.DB_ERROR))
             return
+        finally:
+            self._backfilling.discard(guild.id)
 
         if daily == 0 and weekly == 0:
-            await interaction.followup.send(
+            await self._reply(
+                interaction,
                 f"went digging through the {period.name}, nothing much worth "
-                "remembering back there. quiet crowd.", ephemeral=True,
+                "remembering back there. quiet crowd.",
             )
             return
         bits = []
@@ -259,10 +272,22 @@ class Memory(commands.Cog):
             bits.append(f"{daily} day{'s' if daily != 1 else ''}")
         if weekly:
             bits.append(f"{weekly} week{'s' if weekly != 1 else ''}")
-        await interaction.followup.send(
+        await self._reply(
+            interaction,
             f"caught up on the {period.name}. got the gist of {' and '.join(bits)} "
-            "of y'all. i know the regulars now.", ephemeral=True,
+            "of y'all. i know the regulars now.",
         )
+
+    @staticmethod
+    async def _reply(interaction: discord.Interaction, msg: str) -> None:
+        """Ephemeral followup that tolerates an expired interaction token. A long
+        backfill can (in the worst case) outlast Discord's 15-min interaction
+        window; the notes are already persisted by then, so a failed
+        confirmation must not raise."""
+        try:
+            await interaction.followup.send(msg, ephemeral=True)
+        except discord.HTTPException:
+            log.warning("remember: followup send failed (interaction likely expired)")
 
     async def _mod_gate(self, interaction: discord.Interaction) -> bool:
         if not await require_configured(interaction, self.bot.db):
@@ -379,11 +404,12 @@ class Memory(commands.Cog):
             if not can_read(channel, me):
                 continue
             msgs: list[discord.Message] = []
-            # oldest_first=True so the blob reads chronologically; on a window
-            # busier than `cap` this keeps the start of the window (good enough
-            # for a coarse historical seed).
+            # oldest_first=False keeps the most RECENT `cap` messages of the
+            # window when it's busier than the cap (matches /recap's
+            # newest-within-window fetch, so we don't lose end-of-window
+            # context). Reversed below so the blob still reads chronologically.
             async for m in channel.history(
-                limit=cap, after=start, before=end, oldest_first=True
+                limit=cap, after=start, before=end, oldest_first=False
             ):
                 if m.author.bot:
                     continue
@@ -392,6 +418,7 @@ class Memory(commands.Cog):
                 msgs.append(m)
             if not msgs:
                 continue
+            msgs.reverse()  # newest-first -> chronological for the prompt
             blocks.append(
                 f"#{channel.name}:\n{format_for_prompt(msgs, include_reactions=True)}"
             )
