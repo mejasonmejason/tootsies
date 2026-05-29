@@ -59,7 +59,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 
 **Entrypoint:** `bot.py`, boots Discord client, opens DB pool, exposes `/health`, loads cogs, syncs slash commands per guild on every startup.
 
-**Claude API layer:** `claude_client.py` wraps the Anthropic SDK. Model routing: Haiku for `/ask`, `/recap`, deflections, and the hourly memory writer + `/remember` backfill (fast/cheap, high-volume summarization); Sonnet for `/discourse`, `/order` pre-flight, and the daily/weekly memory rollups (need judgment; rollups are low-volume but produce the durable memory tiers and must honor the fence while compacting). System prompt is cached via `cache_control: ephemeral`. Every API call gets the full constitution + persona prepended (~120 tokens).
+**Claude API layer:** `claude_client.py` wraps the Anthropic SDK. Model routing: Haiku for `/ask`, `/recap`, deflections, and the hourly memory writer + `/remember` backfill (fast/cheap, high-volume summarization); Sonnet for `/discourse`, `/order` pre-flight, and the daily/weekly memory rollups (need judgment; rollups are low-volume but produce the durable memory tiers and must honor the fence while compacting). System prompt is cached via `cache_control: ephemeral`. Every API call gets the full constitution + persona prepended (~120 tokens). `_call` also drives a bounded client-side tool loop (`tool_handlers`): used by `/ask`'s `search_memory` tool, where the model emits `tool_use`, `_call` runs the handler, feeds back a `tool_result`, and continues (capped at `_MAX_TOOL_ITERS`). With no handlers it's a single call, unchanged. (web_search remains a server-side tool, no round-trip.)
 
 **Persona:** `persona.py` composes the system prompt from `constitution.py` (hard rules, house rules, calibration) + persona core + voice examples. `constitution.py` is non-negotiable and cannot be loosened by `/order`.
 
@@ -68,7 +68,7 @@ pytest tests/test_preflight.py::test_preflight_allow -v
 **Models:** `models.py`, plain dataclasses for DB rows and StrEnums for `OrderStatus` and `MoodMode`. No ORM behavior.
 
 **Cogs** (in `cogs/`):
-- `ask.py`, `/ask` + `@Toots` mention handler. Mentions and `/ask` share a rate-limit counter. Fail-open on DB errors (better to answer than go silent).
+- `ask.py`, `/ask` + `@Toots` mention handler. Mentions and `/ask` share a rate-limit counter. Fail-open on DB errors (better to answer than go silent). Injects a fixed long-term-memory slice (the tier mix) AND hands the model a `search_memory` tool (a guild-bound DB full-text-search closure) for on-demand deep recall past that slice; emits `memory_search`.
 - `recap.py`, `/recap period:[1h|today]`
 - `discourse.py`, `/discourse category:` (manual posts) + `/discourse mood:` (schedule control) + the mood scheduler background task
 - `order.py`, `/order new|status|retry|cancel`. Pre-flight sanity check, one-at-a-time enforcement, pipeline-red blocking. Mod-only via `_mod_gate`.
@@ -143,8 +143,9 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `abuse_warned` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `abuse_silenced` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `reaction_added` | utils/reactions.py | source, guild_id, channel_id, message_id, emoji |
-| `memory_write` | cogs/memory.py | guild_id, tier (hourly\|daily\|weekly), ok, chars\|skipped, message_count, channel_count, rolled_up |
+| `memory_write` | cogs/memory.py | guild_id, tier (hourly\|daily\|weekly), ok, chars\|skipped, message_count, channel_count, rolled_up, backfill |
 | `memory_forget` | cogs/memory.py | guild_id, user_id, notes_deleted |
+| `memory_search` | cogs/ask.py | guild_id, query, hits |
 
 **Adding a new event:** call `emit("your_kind", key1=..., key2=...)` and add a row to
 the table above + the events.py docstring. Use snake_case for kinds and fields. Don't

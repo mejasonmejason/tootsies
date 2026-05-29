@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -401,6 +402,36 @@ MAX_TOKENS_POST = 150
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
 MAX_TOKENS_DEFLECT = 60
 
+# Client-side tool loop (search_memory). Bound the round-trips so a model that
+# keeps asking to search can't spin forever; take its text after this many.
+_MAX_TOOL_ITERS = 4
+# Cap a tool result handed back to the model (memory hits are short prose).
+_TOOL_RESULT_MAX_CHARS = 4000
+
+# The one client-side tool: lets /ask reach past the fixed memory block that's
+# already injected and pull older specifics on demand. The handler (DB full-text
+# search) is supplied per-call by the cog, since claude_client has no DB access.
+SEARCH_MEMORY_TOOL: dict[str, Any] = {
+    "name": "search_memory",
+    "description": (
+        "Search your own long-term memory of THIS server for older notes about "
+        "people, topics, running bits, or debates. Use it when the user "
+        "references something the attached memory block doesn't already cover "
+        "(a 'remember when', a specific regular, an old argument). Returns "
+        "distilled notes (may be empty). Keywords, a name, or a topic work best."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "keywords, a display name, or a topic to recall",
+            }
+        },
+        "required": ["query"],
+    },
+}
+
 
 @dataclass
 class ClaudeResult:
@@ -427,6 +458,7 @@ class ClaudeClient:
         system_extra: str = "",
         max_tokens: int = DEFAULT_MAX_TOKENS,
         tools: list[dict[str, Any]] | None = None,
+        tool_handlers: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] | None = None,
         purpose: str = "unknown",
         image_urls: list[str] | None = None,
         thinking_enabled: bool = False,
@@ -477,129 +509,151 @@ class ClaudeClient:
                 kwargs["max_tokens"] = 4096
 
         start = time.monotonic()
-        ok = True
+        # Client-side tool loop. When `tool_handlers` is set the model can emit a
+        # tool_use block we run locally (search_memory), hand back a tool_result,
+        # and continue, bounded by _MAX_TOOL_ITERS. With no handlers this runs
+        # exactly once, identical to the previous single-call behavior.
+        messages: list[dict[str, Any]] = kwargs["messages"]
+        text_parts: list[str] = []
+        web_search_urls: list[str] = []
+        total_in = 0
+        total_out = 0
+        last_stop: str | None = None
         image_retry = False
-        try:
-            resp = await self.client.messages.create(**kwargs)
-        except anthropic.BadRequestError as exc:
-            # Anthropic couldn't fetch one of the image URLs we passed (expired
-            # Discord CDN signature, gated content, geo-restriction, transient
-            # 5xx upstream). The TEXT part of the answer is still useful. Drop
-            # the images and retry once silently. If the retry also fails,
-            # bubble up to the original error path.
-            if (
-                image_urls
-                and "Unable to download" in str(exc)
-                and isinstance(user_content, list)
-            ):
-                image_retry = True
-                # Strip image blocks; keep the text block.
-                text_only_content = [
-                    b for b in user_content if b.get("type") == "text"
-                ]
-                kwargs["messages"] = [
-                    {"role": "user", "content": text_only_content}
-                ]
-                try:
-                    resp = await self.client.messages.create(**kwargs)
-                except Exception as retry_exc:
-                    ok = False
+
+        for iteration in range(_MAX_TOOL_ITERS + 1):
+            try:
+                resp = await self.client.messages.create(**kwargs)
+            except anthropic.BadRequestError as exc:
+                # Anthropic couldn't fetch one of the image URLs we passed
+                # (expired Discord CDN signature, gated content, geo-restriction,
+                # transient 5xx). The TEXT part is still useful, so drop the
+                # images and retry once. Images only ride the first turn, so this
+                # is only reachable on iteration 0.
+                if (
+                    image_urls
+                    and iteration == 0
+                    and "Unable to download" in str(exc)
+                    and isinstance(user_content, list)
+                ):
+                    image_retry = True
+                    messages[0] = {
+                        "role": "user",
+                        "content": [b for b in user_content if b.get("type") == "text"],
+                    }
+                    try:
+                        resp = await self.client.messages.create(**kwargs)
+                    except Exception as retry_exc:
+                        emit(
+                            "claude_api", model=model, purpose=purpose,
+                            duration_ms=int((time.monotonic() - start) * 1000),
+                            ok=False, error=type(retry_exc).__name__,
+                            image_retry=True, retry_failed=True,
+                        )
+                        raise
+                else:
                     emit(
-                        "claude_api",
-                        model=model, purpose=purpose,
+                        "claude_api", model=model, purpose=purpose,
                         duration_ms=int((time.monotonic() - start) * 1000),
-                        ok=ok, error=type(retry_exc).__name__,
-                        image_retry=True, retry_failed=True,
+                        ok=False, error=type(exc).__name__,
                     )
                     raise
-            else:
-                ok = False
+            except Exception as exc:
                 emit(
-                    "claude_api",
-                    model=model, purpose=purpose,
+                    "claude_api", model=model, purpose=purpose,
                     duration_ms=int((time.monotonic() - start) * 1000),
-                    ok=ok, error=type(exc).__name__,
+                    ok=False, error=type(exc).__name__,
                 )
                 raise
-        except Exception as exc:
-            ok = False
+
+            total_in += resp.usage.input_tokens
+            total_out += resp.usage.output_tokens
+            last_stop = resp.stop_reason
+
+            # Parse this turn. tool_calls is telemetry for every tool the model
+            # touched (debugging "why did it say X"); client_tool_uses are the
+            # blocks WE must execute and feed back.
+            turn_text: list[str] = []
+            tool_calls: list[dict[str, Any]] = []
+            client_tool_uses: list[Any] = []
+            for block in resp.content:
+                btype = getattr(block, "type", None)
+                if btype == "text":
+                    turn_text.append(block.text)
+                elif btype in ("tool_use", "server_tool_use"):
+                    tool_input = getattr(block, "input", {}) or {}
+                    name = getattr(block, "name", "unknown")
+                    tool_calls.append({
+                        "name": name,
+                        "query": str(tool_input.get("query", ""))[:120]
+                        if isinstance(tool_input, dict) else "",
+                    })
+                    if btype == "tool_use" and tool_handlers and name in tool_handlers:
+                        client_tool_uses.append(block)
+                elif btype == "web_search_tool_result":
+                    # Server-side web_search returns a list of {url, title, ...}.
+                    # On error `content` is a single object (not a list), skipped.
+                    result_content = getattr(block, "content", None)
+                    if isinstance(result_content, list):
+                        for item in result_content:
+                            item_url = getattr(item, "url", None)
+                            if item_url is None and isinstance(item, dict):
+                                item_url = item.get("url")
+                            if isinstance(item_url, str) and item_url:
+                                web_search_urls.append(item_url)
+
+            turn_str = " ".join(turn_text).strip()
             emit(
                 "claude_api",
-                model=model, purpose=purpose,
+                model=model,
+                purpose=purpose,
+                input_tokens=resp.usage.input_tokens,
+                output_tokens=resp.usage.output_tokens,
                 duration_ms=int((time.monotonic() - start) * 1000),
-                ok=ok, error=type(exc).__name__,
+                stop_reason=resp.stop_reason,
+                ok=True,
+                response_preview=turn_str[:200],
+                response_chars=len(turn_str),
+                tool_calls=tool_calls if tool_calls else None,
+                tool_call_count=len(tool_calls),
+                had_tools_available=bool(tools),
+                image_retry=image_retry if image_retry else None,
+                tool_iteration=iteration if tool_handlers else None,
             )
-            raise
 
-        duration_ms = int((time.monotonic() - start) * 1000)
-        text_parts: list[str] = []
-        # Tool-use diagnostics: track every tool the model invoked so we can
-        # debug "why did discourse say jimmy butler is on the heat" in the
-        # future. If web_search wasn't called for a sports claim, that's the
-        # bug. If it WAS called and returned nothing useful, that's a different
-        # bug. The structured event gives us the answer without re-running.
-        tool_calls: list[dict[str, Any]] = []
-        web_search_urls: list[str] = []
-        for block in resp.content:
-            btype = getattr(block, "type", None)
-            if btype == "text":
-                text_parts.append(block.text)
-            elif btype in ("tool_use", "server_tool_use"):
-                # web_search blocks carry the query in `input.query`. Other
-                # tools may have different shapes; just capture name + a brief
-                # input summary, keep it lean.
-                tool_input = getattr(block, "input", {}) or {}
-                tool_calls.append({
-                    "name": getattr(block, "name", "unknown"),
-                    "query": str(tool_input.get("query", ""))[:120] if isinstance(tool_input, dict) else "",
-                })
-            elif btype == "web_search_tool_result":
-                # Server-side web_search returns a list of {url, title, ...}
-                # entries in `content`. On error, content is a single error
-                # object (not a list), which we skip. URLs feed the discourse
-                # link guardrail's allowlist.
-                result_content = getattr(block, "content", None)
-                if isinstance(result_content, list):
-                    for item in result_content:
-                        item_url = getattr(item, "url", None)
-                        if item_url is None and isinstance(item, dict):
-                            item_url = item.get("url")
-                        if isinstance(item_url, str) and item_url:
-                            web_search_urls.append(item_url)
+            # Continue only when the model asked for a client-side tool and we
+            # have budget left; otherwise this turn is the answer.
+            if (
+                tool_handlers
+                and resp.stop_reason == "tool_use"
+                and client_tool_uses
+                and iteration < _MAX_TOOL_ITERS
+            ):
+                messages.append({"role": "assistant", "content": resp.content})
+                tool_results: list[dict[str, Any]] = []
+                for tu in client_tool_uses:
+                    try:
+                        out = await tool_handlers[tu.name](tu.input or {})
+                    except Exception:
+                        log.exception("tool handler %s failed", getattr(tu, "name", "?"))
+                        out = "(that lookup failed)"
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu.id,
+                        "content": (out or "")[:_TOOL_RESULT_MAX_CHARS],
+                    })
+                messages.append({"role": "user", "content": tool_results})
+                continue
+
+            text_parts = turn_text
+            break
+
         text = " ".join(text_parts).strip()
-
-        # Truncated output preview for the log-monitor / dashboards. The full
-        # output is public (it's what the user/channel saw), so logging a
-        # snippet is fine. 200 chars matches the persona's tweet-length
-        # ceiling so the preview shows MOST outputs in full.
-        response_preview = text[:200] if text else ""
-
-        emit(
-            "claude_api",
-            model=model,
-            purpose=purpose,
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
-            duration_ms=duration_ms,
-            stop_reason=resp.stop_reason,
-            ok=ok,
-            response_preview=response_preview,
-            response_chars=len(text),
-            tool_calls=tool_calls if tool_calls else None,
-            tool_call_count=len(tool_calls),
-            had_tools_available=bool(tools),
-            # True if we silently retried without image_urls because
-            # Anthropic couldn't fetch one of them. Lets us see in logs
-            # how often the image-fetch retry is firing (and on which
-            # surfaces, to know if we need to cache/proxy images).
-            image_retry=image_retry if image_retry else None,
-        )
-
         return ClaudeResult(
             text=text,
-            stop_reason=resp.stop_reason,
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
+            stop_reason=last_stop,
+            input_tokens=total_in,
+            output_tokens=total_out,
             web_search_urls=web_search_urls,
         )
 
@@ -614,8 +668,14 @@ class ClaudeClient:
         recently_seen_urls: list[str] | None = None,
         markets_context: list[MarketSnapshot] | None = None,
         memory_context: str | None = None,
+        memory_search: Callable[[str], Awaitable[str]] | None = None,
     ) -> str:
         """Answer a user question in Toots voice. Used by /ask and @Toots mentions.
+
+        `memory_search`, if provided, is an async `(query) -> str` that searches
+        this server's long-term memory (DB full-text search, supplied by the cog
+        since this layer has no DB). When set, the model gets a `search_memory`
+        tool for on-demand deep recall past the fixed `memory_context` block.
 
         `memory_context`, if provided, is Toots's distilled long-term memory of
         this server (recent half-day + weekly notes, from the memory cog). It
@@ -759,13 +819,33 @@ class ClaudeClient:
             "keeps things running there. holler if you want the moving parts.'"
             + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
-        tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_web else None
+        tools: list[dict[str, Any]] = []
+        if use_web:
+            tools.append({"type": "web_search_20250305", "name": "web_search"})
+        tool_handlers: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] | None = None
+        if memory_search is not None:
+            tools.append(SEARCH_MEMORY_TOOL)
+
+            async def _run_memory_search(inp: dict[str, Any]) -> str:
+                return await memory_search(str(inp.get("query", "")).strip())
+
+            tool_handlers = {"search_memory": _run_memory_search}
+            system_extra += (
+                "\n\nSEARCH_MEMORY TOOL: you can search your own long-term memory "
+                "of this server on demand. Call it (silently, per tool discipline) "
+                "when the user references an older bit, a specific regular, or a "
+                "'remember when' the attached memory block doesn't already cover. "
+                "Treat any hits exactly like the memory block: flavor and "
+                "callbacks, never a recited dossier, never personal info. If it "
+                "returns nothing, just answer as if you don't recall."
+            )
         result = await self._call(
             model=SONNET,
             user_message=f"{question}{extra_context}",
             system_extra=system_extra,
             max_tokens=MAX_TOKENS_REPLY,
-            tools=tools,
+            tools=tools or None,
+            tool_handlers=tool_handlers,
             purpose="ask",
             image_urls=image_urls,
             thinking_enabled=use_web,
