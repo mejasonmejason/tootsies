@@ -140,6 +140,25 @@ def test_chimein_prompt_names_the_hollow_take() -> None:
     assert "pick your spots" in src  # the don't-be-a-know-it-all counterweight
 
 
+def test_chimein_prompt_requires_grounding_before_posting() -> None:
+    """Toots was posting confident takes about recent music she didn't actually
+    know (losing credibility). She already gets a live REAL-TIME CONTEXT block
+    (a Perplexity search runs per chime-in); the prompt must require her to
+    ground the specific claim in that context (or web_search) before posting,
+    rather than asserting from stale memory. This is the non-forcing grounding
+    lever (per Anthropic's tool-use guidance), not a forced tool_choice."""
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    src = inspect.getsource(ClaudeClient.chimein_post).lower()
+    assert "ground it or don't say it" in src
+    assert "real-time context" in src
+    assert "credibility" in src
+    # And we did NOT switch to forced tool use (keeps adaptive thinking).
+    assert "tool_choice" not in src
+
+
 def test_post_grounding_requires_self_contained_posts() -> None:
     """A chime-in pointed at 'that list' / 'the receipts right there', things
     that existed only in Toots's Perplexity context, not the channel, and

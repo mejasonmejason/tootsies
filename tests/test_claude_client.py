@@ -190,53 +190,6 @@ async def test_call_omits_thinking_by_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_call_passes_tool_choice_only_when_thinking_off() -> None:
-    """Forced tool_choice (mandatory web_search) is incompatible with adaptive
-    thinking, so _call applies it only when thinking is off and silently drops
-    it when thinking is on."""
-    client, create = _client_with_fake_anthropic()
-    await client._call(
-        model=SONNET, user_message="x", purpose="chimein_post",
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        tool_choice={"type": "tool", "name": "web_search"},
-        thinking_enabled=False,
-    )
-    assert create.call_args.kwargs["tool_choice"] == {"type": "tool", "name": "web_search"}
-
-    # Thinking on: tool_choice must NOT be sent (API would 400).
-    client2, create2 = _client_with_fake_anthropic()
-    await client2._call(
-        model=SONNET, user_message="x", purpose="chimein_post",
-        tool_choice={"type": "tool", "name": "web_search"},
-        thinking_enabled=True,
-    )
-    assert "tool_choice" not in create2.call_args.kwargs
-
-
-@pytest.mark.asyncio
-async def test_chimein_post_forces_web_search() -> None:
-    """A chime-in must be grounded in a fresh search, not stale memory (every
-    logged misfire ran zero searches). chimein_post forces the web_search tool
-    via tool_choice, with thinking off so the forced choice is allowed."""
-    client = ClaudeClient(api_key="test")
-    captured: dict[str, Any] = {}
-
-    async def fake_call(**kwargs: Any) -> ClaudeResult:
-        captured.update(kwargs)
-        return ClaudeResult(
-            text="grounded take", stop_reason="end_turn",
-            input_tokens=1, output_tokens=1, web_search_urls=["https://x"],
-        )
-
-    with patch.object(client, "_call", fake_call):
-        out = await client.chimein_post("buffer", hook="who's better")
-    assert out
-    assert captured["tool_choice"] == {"type": "tool", "name": "web_search"}
-    assert captured["thinking_enabled"] is False
-    assert any(t.get("name") == "web_search" for t in captured["tools"])
-
-
-@pytest.mark.asyncio
 async def test_call_passes_adaptive_thinking_when_enabled() -> None:
     """Adaptive thinking + medium effort is the leak fix from the music-post bug."""
     client, create = _client_with_fake_anthropic()
@@ -493,15 +446,12 @@ async def test_music_post_enables_thinking() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chimein_post_runs_thinking_off_for_forced_search() -> None:
-    """Chime-in now FORCES web_search (mandatory grounding). The API forbids a
-    forced tool_choice alongside adaptive thinking, so chime-in deliberately
-    trades thinking for a guaranteed search."""
+async def test_chimein_post_enables_thinking() -> None:
     client = ClaudeClient(api_key="test")
-    fake = AsyncMock(return_value=MagicMock(text="reply", web_search_urls=["https://x"]))
+    fake = AsyncMock(return_value=MagicMock(text="reply"))
     with patch.object(client, "_call", fake):
         await client.chimein_post("buffer blob", hook="lakers convo")
-    assert fake.call_args.kwargs["thinking_enabled"] is False
+    assert fake.call_args.kwargs["thinking_enabled"] is True
 
 
 @pytest.mark.asyncio
