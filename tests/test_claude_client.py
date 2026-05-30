@@ -446,12 +446,54 @@ async def test_music_post_enables_thinking() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chimein_post_enables_thinking() -> None:
+async def test_chimein_post_happy_path_keeps_thinking_when_she_searches() -> None:
+    """Happy path: adaptive thinking ON, web_search available. If she grounds
+    the take with a search (web_search_urls populated), we keep her result and
+    do NOT force a second call, preserving thinking."""
     client = ClaudeClient(api_key="test")
-    fake = AsyncMock(return_value=MagicMock(text="reply"))
-    with patch.object(client, "_call", fake):
-        await client.chimein_post("buffer blob", hook="lakers convo")
-    assert fake.call_args.kwargs["thinking_enabled"] is True
+    calls: list[dict[str, Any]] = []
+
+    async def fake_call(**kwargs: Any) -> ClaudeResult:
+        calls.append(kwargs)
+        return ClaudeResult(
+            text="grounded", stop_reason="end_turn",
+            input_tokens=1, output_tokens=1, web_search_urls=["https://x"],
+        )
+
+    with patch.object(client, "_call", fake_call):
+        out = await client.chimein_post("buffer", hook="lakers convo")
+    assert out == "grounded"
+    assert len(calls) == 1  # no fallback
+    assert calls[0]["thinking_enabled"] is True
+    assert "tool_choice" not in calls[0] or calls[0].get("tool_choice") is None
+
+
+@pytest.mark.asyncio
+async def test_chimein_post_forces_search_when_she_skipped_it() -> None:
+    """The logs showed 0 searches across two days of chime-ins. If the
+    thinking-on call ran no search (web_search_urls empty), force one on a
+    single retry (thinking off, since forced tool_choice + thinking is a 400).
+    This is the grounding guarantee that the prompt nudge alone didn't deliver."""
+    client = ClaudeClient(api_key="test")
+    calls: list[dict[str, Any]] = []
+
+    async def fake_call(**kwargs: Any) -> ClaudeResult:
+        calls.append(kwargs)
+        # First (thinking-on) call: no search. Forced retry: grounded.
+        searched = kwargs.get("tool_choice") is not None
+        return ClaudeResult(
+            text="grounded retry" if searched else "ungrounded",
+            stop_reason="end_turn", input_tokens=1, output_tokens=1,
+            web_search_urls=["https://x"] if searched else [],
+        )
+
+    with patch.object(client, "_call", fake_call):
+        out = await client.chimein_post("buffer", hook="lakers convo")
+    assert out == "grounded retry"
+    assert len(calls) == 2
+    assert calls[0]["thinking_enabled"] is True          # happy path keeps thinking
+    assert calls[1]["tool_choice"] == {"type": "tool", "name": "web_search"}
+    assert calls[1]["thinking_enabled"] is False         # forced retry drops it
 
 
 @pytest.mark.asyncio

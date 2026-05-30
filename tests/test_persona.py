@@ -155,8 +155,6 @@ def test_chimein_prompt_requires_grounding_before_posting() -> None:
     assert "ground it or don't say it" in src
     assert "real-time context" in src
     assert "credibility" in src
-    # And we did NOT switch to forced tool use (keeps adaptive thinking).
-    assert "tool_choice" not in src
 
 
 def test_discourse_score_catches_the_hollow_take() -> None:
@@ -175,6 +173,18 @@ def test_discourse_score_catches_the_hollow_take() -> None:
     assert "no matter how confident" in src
     # It must instruct the scorer to look PAST surface confidence/names.
     assert "strip the cadence" in src
+
+
+def test_post_grounding_bans_thread_piling() -> None:
+    """Live chime-ins crammed multiple threads into two sentences ('LeBron got
+    called soft for drinking water, the dark-skin angle is real, but SGA's
+    problem is the flopping' = three threads). ONE TOPIC must explicitly ban
+    thread-piling, not just 'two unrelated topics'."""
+    from claude_client import _POST_GROUNDING
+
+    grounding = _POST_GROUNDING.lower()
+    assert "thread-piling" in grounding or "thread-pile" in grounding or "pile" in grounding
+    assert "one topic" in grounding
 
 
 def test_post_grounding_has_substance_cue() -> None:
