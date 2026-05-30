@@ -1,0 +1,65 @@
+name: command-eval
+
+# Twice-daily health check of the bot's commands. A deterministic pass
+# (scripts/eval_commands.py) pulls the last ~12h of Railway EVENT logs and
+# flags regressions (errors, latency, hallucinated links, ungrounded chime-ins,
+# rate limits); Claude Code then judges quality on the flagged samples and files
+# deduped `auto-eval` issues. See the script docstring for the metric set.
+
+on:
+  schedule:
+    - cron: "0 8,20 * * *"  # 08:00 and 20:00 UTC, twice a day
+  workflow_dispatch: {}
+
+concurrency:
+  group: command-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write       # file/update auto-eval issues
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deterministic command eval (stdlib only)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: python scripts/eval_commands.py --out "$RUNNER_TEMP/eval_report.md"
+
+      - name: Quality judge + file deduped issues
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Read the deterministic command-eval report at
+            ${{ runner.temp }}/eval_report.md. It covers the last ~12h of the
+            bot's production behavior, one section per flagged finding plus a
+            per-purpose metrics table.
+
+            For each finding:
+            - Decide if it's a REAL, actionable regression. Read the sample
+              outputs; some flags are noise (a one-off slow call, a single
+              stripped link). Be conservative.
+            - Before filing, search OPEN issues labeled `auto-eval`. If the same
+              problem is already open, do NOT open a duplicate; add a short
+              comment only if it's materially worse this run.
+            - Otherwise open ONE concise issue per distinct problem, labeled
+              `auto-eval`, titled with the command + symptom. Include: the
+              metric and numbers, 2-3 sample outputs, and a one-line hypothesis
+              of the cause. Keep it short and actionable.
+
+            If the report says "All clear", do nothing. If it says SETUP
+            INCOMPLETE or EVAL FAILED, file exactly one `auto-eval` issue about
+            that (unless one is already open). One confident, specific issue
+            beats five vague ones.
