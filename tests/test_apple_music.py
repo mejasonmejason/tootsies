@@ -59,12 +59,12 @@ async def test_resolve_parses_live_shape() -> None:
         def raise_for_status(self) -> None: ...
         async def json(self, content_type: Any = None) -> dict[str, Any]:
             return payload
-        async def __aenter__(self) -> "_Resp":
+        async def __aenter__(self) -> _Resp:
             return self
         async def __aexit__(self, *a: Any) -> None: ...
 
     class _Session:
-        def get(self, *a: Any, **k: Any) -> "_Resp":
+        def get(self, *a: Any, **k: Any) -> _Resp:
             return _Resp()
         async def close(self) -> None: ...
 
