@@ -450,6 +450,16 @@ MAX_TOKENS_POST = 150
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
 MAX_TOKENS_DEFLECT = 60
 
+# Server-side web_search cap for music_post only. Music runs in a links-only
+# channel, so the prompt pushes the model to keep searching until it lands an
+# Apple Music / Spotify URL. Uncapped, it spirals into 5-7 serial
+# `site:music.apple.com` searches chasing one exact link — each search is a
+# full model turn, which drove observed call latency to 25-73s (vs ~15s for
+# discourse, which doesn't web_search in practice). The prompt already tells
+# it to switch tracks when a link isn't findable; this cap forces that pivot
+# instead of grinding. 3 covers: find the track, find the link, one retry.
+_MUSIC_WEB_SEARCH_MAX_USES = 3
+
 # Client-side tool loop (search_memory). Bound the round-trips so a model that
 # keeps asking to search can't spin forever; take its text after this many.
 _MAX_TOOL_ITERS = 4
@@ -1667,7 +1677,15 @@ class ClaudeClient:
             model=SONNET,
             user_message=user,
             system_extra=system_extra,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            # max_uses caps the web_search round-trips so the model can't
+            # spiral chasing one exact Apple Music link (see
+            # _MUSIC_WEB_SEARCH_MAX_USES). When it runs out, it pivots to a
+            # track it can link instead of grinding more searches.
+            tools=[{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": _MUSIC_WEB_SEARCH_MAX_USES,
+            }],
             max_tokens=MAX_TOKENS_POST,
             purpose="music_post",
             thinking_enabled=True,
