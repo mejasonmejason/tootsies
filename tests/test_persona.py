@@ -159,6 +159,48 @@ def test_chimein_prompt_requires_grounding_before_posting() -> None:
     assert "tool_choice" not in src
 
 
+def test_discourse_score_catches_the_hollow_take() -> None:
+    """The Haiku quality gate (discourse_score) rewarded both hollow posts
+    0.75-0.82 because its rubric prized 'names names / references something
+    specific' which hollow filler imitates. The gate must score a
+    confident-but-claimless post LOW so the 0.6 threshold drops it, this is
+    the real backstop the generator nudge lacks. Pins it on the scorer
+    prompt (shared by chime-in AND discourse)."""
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    src = inspect.getsource(ClaudeClient.discourse_score).lower()
+    assert "hollow take" in src
+    assert "no matter how confident" in src
+    # It must instruct the scorer to look PAST surface confidence/names.
+    assert "strip the cadence" in src
+
+
+def test_post_grounding_has_substance_cue() -> None:
+    """The substance-over-cadence principle was chime-in-only; lift it into the
+    shared _POST_GROUNDING so the discourse generator carries it too (extending
+    the fix beyond chime-in)."""
+    from claude_client import _POST_GROUNDING
+
+    grounding = _POST_GROUNDING.lower()
+    assert "substance, not cadence" in grounding
+    assert "not a take" in grounding
+
+
+def test_ask_prompt_forbids_bluffing() -> None:
+    """/ask has no quality gate and runs on Haiku, which can bluff a confident
+    answer. The prompt must tell her to admit when she came up empty rather
+    than dress a guess as fact, the same credibility rule as the room surfaces."""
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    src = inspect.getsource(ClaudeClient.ask).lower()
+    assert "don't bluff" in src
+    assert "credibility" in src
+
+
 def test_post_grounding_requires_self_contained_posts() -> None:
     """A chime-in pointed at 'that list' / 'the receipts right there', things
     that existed only in Toots's Perplexity context, not the channel, and
