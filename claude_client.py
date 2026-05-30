@@ -450,6 +450,15 @@ MAX_TOKENS_POST = 150
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
 MAX_TOKENS_DEFLECT = 60
 
+# Hourly memory writer (memory_note): one note per active hour, summarizing up
+# to ~200 msgs. Railway logs showed busy hours producing 390-token / 1394-char
+# notes — right against MAX_TOKENS_REPLY (400), so an active hour was a sentence
+# away from truncation. A truncated hourly isn't the #158 data-loss trap (its
+# Discord-message sources aren't deleted, and the daily rollup recompacts it),
+# but a note cut mid-sentence reads badly in /ask context and degrades the
+# rollup input. Give it a little headroom above the reply cap.
+MAX_TOKENS_MEMORY_NOTE = 500
+
 # Memory rollups (memory_rollup): daily/weekly synthesis runs hotter than a
 # reply. An active day can feed 20+ hourly notes in, and the daily note has to
 # carry the whole day's arc — at MAX_TOKENS_REPLY (400) that synthesis hit the
@@ -1231,7 +1240,7 @@ class ClaudeClient:
             model=SONNET,
             user_message=f"Activity to remember (most recent last):\n{channels_blob}",
             system_extra=system_extra,
-            max_tokens=MAX_TOKENS_REPLY,
+            max_tokens=MAX_TOKENS_MEMORY_NOTE,
             purpose="memory_hourly",
         )
         return result.text
