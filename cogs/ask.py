@@ -55,6 +55,28 @@ def _format_memory_hits(
     return "\n".join(lines)
 
 
+async def _safe_reply(message: discord.Message, content: str) -> None:
+    """Reply to `message`, tolerating the user having deleted it mid-flight.
+
+    `on_message` answers can take seconds (the Anthropic call). If the asker
+    deletes their message in that window, a plain `message.reply()` blows up
+    with `400 / 50035 (message_reference: Unknown message)`, which propagates
+    to discord.py's event wrapper as an unhandled error and discards the
+    already-computed answer (#146).
+
+    `fail_if_not_exists=False` tells Discord to fall back to a normal channel
+    message instead of erroring when the referenced message is gone, so the
+    answer still lands and we don't crash. It's scoped to exactly the
+    missing-reference case: an over-long body or a permissions problem still
+    raises, as it should.
+    """
+    await message.channel.send(
+        content,
+        reference=message.to_reference(fail_if_not_exists=False),
+        mention_author=False,
+    )
+
+
 def _reply_quote(message: discord.Message, me_id: int) -> str | None:
     """If `message` is a direct reply to one of *our own* messages, return that
     message's text (possibly empty). Otherwise None.
@@ -392,7 +414,7 @@ class Ask(commands.Cog):
             log.exception("rate check failed in mention; failing open")
             allowed = True
         if not allowed:
-            await message.reply(voice.pick(voice.RATE_LIMIT_HIT), mention_author=False)
+            await _safe_reply(message, voice.pick(voice.RATE_LIMIT_HIT))
             return
 
         # Abuse detection: Haiku classifier, fail-open. Mention warnings are
@@ -403,10 +425,10 @@ class Ask(commands.Cog):
                 self.bot.db, message.guild.id, message.author.id,
             )
             if count >= abuse_tracker.ABUSE_THRESHOLD:
-                await message.reply(voice.pick(voice.ABUSE_SILENCED), mention_author=False)
+                await _safe_reply(message, voice.pick(voice.ABUSE_SILENCED))
                 return
             if count >= abuse_tracker.WARN_AT:
-                await message.reply(voice.pick(voice.ABUSE_WARNING), mention_author=False)
+                await _safe_reply(message, voice.pick(voice.ABUSE_WARNING))
                 return
             # First violation: let Claude handle via the constitution; fall through.
 
@@ -430,14 +452,14 @@ class Ask(commands.Cog):
                     source="ask_mention", user_id=message.author.id,
                     verbosity=self.bot.config.bot_logs_verbosity,
                 )
-                await message.reply(voice.pick(voice.DB_ERROR), mention_author=False)
+                await _safe_reply(message, voice.pick(voice.DB_ERROR))
                 return
 
         try:
             await consume_user(self.bot.db, message.author.id, message.guild.id, "ask")
         except Exception:
             log.exception("consume failed (mention)")
-        await message.reply(answer, mention_author=False)
+        await _safe_reply(message, answer)
 
 
 async def setup(bot: commands.Bot) -> None:
