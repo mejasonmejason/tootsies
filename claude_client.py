@@ -516,20 +516,32 @@ class ClaudeClient:
         image_urls: list[str] | None = None,
         thinking_enabled: bool = False,
         tool_choice: dict[str, Any] | None = None,
+        skip_persona: bool = False,
     ) -> ClaudeResult:
         # System prompt is a list with a cache_control marker on the persona block so
         # repeat calls hit the prompt cache (the persona is ~1k tokens and stable).
+        #
+        # skip_persona drops the constitution + persona + voice examples and runs
+        # `system_extra` as the entire system prompt. It's for pure classifiers
+        # (e.g. classify_abuse) that emit a fixed label, never user-facing prose:
+        # prepending "you are Toots, you roast, you never break character" makes
+        # the model answer IN her voice instead of returning the label, silently
+        # no-op'ing the classifier (#136). Generation paths must NOT set this —
+        # the constitution is a guarantee on anything that reaches Discord.
+        system_text = system_extra.strip() if skip_persona else system_prompt(system_extra)
         system = [
             {
                 "type": "text",
-                "text": system_prompt(system_extra),
+                "text": system_text,
                 "cache_control": {"type": "ephemeral"},
             }
         ]
 
         # Build user content. Text always, plus optional image blocks for vision.
-        # Time prefix keeps Toots's date/weekday references honest.
-        full_text = _time_context() + user_message
+        # Time prefix keeps Toots's date/weekday references honest — but a bare
+        # classifier (skip_persona) is judging the literal text, so stapling a
+        # date to it is just noise; pass the message through untouched.
+        full_text = user_message if skip_persona else _time_context() + user_message
         if image_urls:
             user_content: list[dict[str, Any]] | str = [{"type": "text", "text": full_text}]
             # Hard cap at 10 images. Per-image fixed overhead (~85 tokens) + variable
@@ -2392,6 +2404,10 @@ class ClaudeClient:
 
         Fail-open on any error (returns False) so a Haiku outage can't
         accidentally silence users.
+
+        Runs with skip_persona=True: this is a pure label task, and prepending
+        the Toots persona made the model answer in-voice instead of emitting
+        ABUSE/OK ~21% of the time, silently no-op'ing detection (#136).
         """
         if not text or not text.strip():
             return False
@@ -2430,6 +2446,7 @@ class ClaudeClient:
                 model=HAIKU, user_message=text, system_extra=system_extra,
                 max_tokens=4,
                 purpose="classify_abuse",
+                skip_persona=True,
             )
         except Exception:
             log.exception("classify_abuse _call failed; failing open")
