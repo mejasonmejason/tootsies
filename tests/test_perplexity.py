@@ -135,6 +135,84 @@ async def test_search_success(client: PerplexityClient):
     assert result == "Drake is trending"
 
 
+def _ok_session(content: str = "trending") -> MagicMock:
+    """A mock session whose .post returns a 200 with the given content."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={
+        "choices": [{"message": {"content": content}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    })
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    return mock_session
+
+
+def _posted_payload(mock_session: MagicMock) -> dict:
+    return mock_session.post.call_args.kwargs["json"]
+
+
+async def test_search_sets_medium_context_by_default(client: PerplexityClient):
+    """Every surface gets search_context_size=medium so Sonar does deeper
+    retrieval than its shallow 'low' default (the root cause of evergreen
+    filler / 'can't verify' hedging)."""
+    client._session = _ok_session()
+    await client.search("q", purpose="ask")
+    payload = _posted_payload(client._session)
+    assert payload["web_search_options"]["search_context_size"] == "medium"
+
+
+async def test_search_ask_has_no_recency_filter(client: PerplexityClient):
+    """ask leads with evergreen fact verification (record counts, chart totals)
+    that live on authoritative pages, so it must NOT clamp to a recency window."""
+    client._session = _ok_session()
+    await client.search("how many #1s does drake have", purpose="ask")
+    assert "search_recency_filter" not in _posted_payload(client._session)
+
+
+async def test_search_music_and_discourse_use_week_recency(client: PerplexityClient):
+    for purpose in ("music", "discourse"):
+        client._session = _ok_session()
+        await client.search("q", purpose=purpose)
+        assert _posted_payload(client._session)["search_recency_filter"] == "week"
+
+
+async def test_search_recap_and_chimein_use_day_recency(client: PerplexityClient):
+    for purpose in ("recap", "chimein"):
+        client._session = _ok_session()
+        await client.search("q", purpose=purpose)
+        assert _posted_payload(client._session)["search_recency_filter"] == "day"
+
+
+async def test_search_unknown_purpose_gets_default_config(client: PerplexityClient):
+    """Unknown purposes fall back to medium context, no recency window."""
+    client._session = _ok_session()
+    await client.search("q", purpose="brand_new_surface")
+    payload = _posted_payload(client._session)
+    assert payload["web_search_options"]["search_context_size"] == "medium"
+    assert "search_recency_filter" not in payload
+
+
+async def test_search_explicit_overrides_win(client: PerplexityClient):
+    """The eval harness can override context size and disable recency."""
+    client._session = _ok_session()
+    await client.search(
+        "q", purpose="music", search_context_size="high", recency=None,
+    )
+    payload = _posted_payload(client._session)
+    assert payload["web_search_options"]["search_context_size"] == "high"
+    assert "search_recency_filter" not in payload
+
+
+async def test_search_explicit_recency_override(client: PerplexityClient):
+    client._session = _ok_session()
+    await client.search("q", purpose="ask", recency="hour")
+    assert _posted_payload(client._session)["search_recency_filter"] == "hour"
+
+
 async def test_search_http_error(client: PerplexityClient):
     mock_resp = AsyncMock()
     mock_resp.status = 500
