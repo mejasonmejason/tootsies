@@ -27,10 +27,10 @@ import anthropic
 from anthropic import AsyncAnthropic
 
 from persona import system_prompt
-from utils.apple_music import resolve_apple_music_url
 from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.markets import MarketSnapshot, format_markets_for_prompt
+from utils.music_links import resolve_music_url
 from utils.perplexity import format_perplexity_for_prompt
 from utils.url_guardrail import enforce_source_links, verify_live_links
 
@@ -1701,15 +1701,11 @@ class ClaudeClient:
             model=SONNET,
             user_message=user,
             system_extra=system_extra,
-            # max_uses caps the web_search round-trips so the model can't
-            # spiral chasing one exact Apple Music link (see
-            # _MUSIC_WEB_SEARCH_MAX_USES). When it runs out, it pivots to a
-            # track it can link instead of grinding more searches.
-            tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": _MUSIC_WEB_SEARCH_MAX_USES,
-            }],
+            # web_search is for track DISCOVERY only (new drops, trending
+            # tracks). We no longer search for the LINK, resolve_music_url
+            # handles that deterministically after generation, so the cap that
+            # bounded the old link-chasing spiral is gone.
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
             max_tokens=MAX_TOKENS_POST,
             purpose="music_post",
             thinking_enabled=True,
@@ -1742,11 +1738,12 @@ class ClaudeClient:
                 count=len(dead), urls=dead[:5],
             )
 
-        # Resolve + append the Apple Music link from the named track. The
-        # resolver is fail-open (None on miss/error); the links-only gate in
-        # cogs/music.py handles a linkless post (retry / skip the slot).
+        # Resolve + append the streaming link from the named track, via the
+        # post-enrichment providers (Apple Music now, Spotify later). Fail-open
+        # (None on miss/error); the links-only gate in cogs/music.py handles a
+        # linkless post (retry / skip the slot).
         if track_query:
-            url = await resolve_apple_music_url(track_query)
+            url = await resolve_music_url(track_query)
             if url:
                 cleaned = f"{cleaned}\n{url}" if cleaned else url
         return cleaned

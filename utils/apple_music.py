@@ -1,21 +1,18 @@
-"""Deterministic Apple Music link resolution via the public iTunes Search API.
+"""Apple Music link resolution via the public iTunes Search API.
 
-The music-lounge channel is links-only: every post must end with a real
-`music.apple.com` URL or mods delete it. Originally the model web_searched for
-that exact link itself, which spiraled into 5-7 serial `site:music.apple.com`
-searches chasing one URL (25-73s music_post calls, the latency bug capped in
-#155).
+One provider behind the post-enrichment pattern (utils/music_links): given a
+track NAME the model produced, return a real Apple Music streaming URL. The API
+is free, needs no auth, returns canonical music.apple.com links, and returns
+zero results on a genuine miss, so the link is always real or absent, never
+hallucinated, resolved in one fast request instead of a model search spiral.
 
-This resolves the link in code instead: the model only has to NAME the track
-(`TRACK: <artist> - <title>`); we hit the iTunes Search API to get the canonical
-Apple Music URL. The API is free, needs no auth, returns real `music.apple.com`
-links, and returns zero results on a genuine miss, so the link is always real
-or absent, never hallucinated, and resolution is one fast request instead of a
-search spiral.
+"Apple Music, not buy a song": we only accept streamable song results and strip
+the iTunes-Store affiliate/tracking param (uo) so the link opens the track on
+Apple Music rather than routing through the Store. The `i=` deep-link param
+(the specific track within its album) is kept.
 
-Fail-open by design: any error, timeout, or miss returns None and the caller
-decides what to do (pick another track / skip the slot). We NEVER raise into a
-cog. No new dependency, just aiohttp which we already have.
+Fail-open by design: any error, timeout, or miss returns None. We NEVER raise
+into a caller. No new dependency, just aiohttp which we already have.
 """
 
 from __future__ import annotations
@@ -23,6 +20,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import aiohttp
 
@@ -34,15 +32,30 @@ _API_URL = "https://itunes.apple.com/search"
 # Apple's endpoint is usually <300ms; 6s captures the slow tail without
 # extending music_post latency (this replaces a multi-search spiral).
 _TIMEOUT_SECONDS = 6.0
+# Query params we keep on the Apple Music URL. `i` deep-links the specific
+# track within its album page; everything else (notably `uo`, the iTunes-Store
+# affiliate tracking param) is dropped so the link is a clean Apple Music page.
+_KEEP_PARAMS = {"i"}
+
+
+def _clean_apple_url(url: str) -> str:
+    """Strip Store/affiliate tracking params, keep the track deep-link (`i`)."""
+    parts = urlsplit(url)
+    kept = {
+        k: v for k, v in parse_qs(parts.query).items() if k in _KEEP_PARAMS
+    }
+    query = urlencode({k: v[0] for k, v in kept.items()})
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 
 def pick_apple_music_url(payload: dict[str, Any]) -> str | None:
-    """Pull the canonical music.apple.com URL out of an iTunes Search response.
+    """Pull a clean, streamable Apple Music URL out of an iTunes Search response.
 
-    Prefers the per-track view URL (`trackViewUrl`) and falls back to the
-    collection/album URL. Only accepts music.apple.com links (the API can also
-    return podcast/app results if the entity filter is loose). Pure function so
-    the parsing is unit-testable without a network call.
+    Only accepts results that are songs, streamable on Apple Music, and whose
+    view URL is on music.apple.com (the API can also return non-streamable or
+    store-only items). Prefers the per-track view URL, falls back to the
+    collection URL. Pure function so the parsing is unit-testable without a
+    network call.
     """
     results = payload.get("results")
     if not isinstance(results, list):
@@ -50,10 +63,15 @@ def pick_apple_music_url(payload: dict[str, Any]) -> str | None:
     for result in results:
         if not isinstance(result, dict):
             continue
+        # Apple Music streaming only: a non-streamable result is buy-only.
+        if result.get("isStreamable") is False:
+            continue
+        if result.get("kind") not in (None, "song"):
+            continue
         for key in ("trackViewUrl", "collectionViewUrl"):
             url = result.get(key)
             if isinstance(url, str) and "music.apple.com" in url:
-                return url
+                return _clean_apple_url(url)
     return None
 
 
@@ -63,13 +81,13 @@ async def resolve_apple_music_url(
     """Resolve a free-text 'artist title' query to an Apple Music URL, or None.
 
     Fail-open: returns None on empty query, HTTP error, timeout, bad JSON, or no
-    match. Emits an `apple_music_lookup` event either way for dashboards.
+    streamable match. Emits an `apple_music_lookup` event either way.
     """
     q = (query or "").strip()
     if not q:
         return None
 
-    params = {"term": q, "entity": "song", "limit": "3"}
+    params = {"term": q, "entity": "song", "limit": "5"}
     start = time.monotonic()
     own_session = session is None
     sess = session or aiohttp.ClientSession(
