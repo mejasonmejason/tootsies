@@ -102,6 +102,17 @@ def test_persona_has_spine_against_sycophancy() -> None:
     assert "cosign" in reminder or "caving" in reminder
 
 
+def test_persona_requires_legible_song_titles() -> None:
+    """A chime-in once read as word salad ("plot twist as the new mob ties
+    is a real stretch...") because three bare lowercase Drake song titles got
+    jammed into one sentence with no quoting. Music is core to Toots, so the
+    persona must tell her to set titles off (so they read as titles, not
+    prose) and not stack deep cuts. Pins that rule against drift."""
+    core = PERSONA_CORE.lower()
+    assert "titles" in core
+    assert "quote" in core or "read as titles" in core
+
+
 def test_system_prompt_composes_all_layers() -> None:
     sp = system_prompt()
     assert "HARD RULES" in sp
