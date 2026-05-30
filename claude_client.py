@@ -512,13 +512,14 @@ _POST_WEB_SEARCH_MAX_USES = 3
 # interstitial text — against the single max_tokens budget for the turn. With
 # max_uses up to 3, a tweet-sized cap (MAX_TOKENS_REPLY 400 / MAX_TOKENS_POST
 # 150) gets eaten by the searches before the final answer finishes, truncating
-# it mid-sentence (#74). The thinking path already floors max_tokens to 4096
-# for the same reason (thinking tokens also count); this is its non-thinking
-# twin. Visible output stays bounded by the persona's tweet-length rule, so the
-# floor is headroom for the search rounds, not a longer answer — and billing is
-# on actual output tokens, not the ceiling. Kept below the thinking floor since
-# there are no thinking tokens to absorb here, just the search rounds + answer.
-_WEB_SEARCH_MAX_TOKENS_FLOOR = 2048
+# it mid-sentence (#74). This is the non-thinking twin of the thinking path's
+# own 4096 floor (which absorbs thinking tokens for the same reason), and it's
+# set to the SAME value on purpose: max_tokens is a ceiling, not a target —
+# billing is on actual output tokens and the visible answer stays bounded by
+# the persona's tweet-length rule — so a higher floor is free truncation
+# headroom, and one number ("web_search present -> at least 4096") is simpler
+# to reason about than two.
+_WEB_SEARCH_MAX_TOKENS_FLOOR = 4096
 
 # The one client-side tool: lets /ask reach past the fixed memory block that's
 # already injected and pull older specifics on demand. The handler (DB full-text
