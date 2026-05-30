@@ -450,6 +450,15 @@ MAX_TOKENS_POST = 150
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
 MAX_TOKENS_DEFLECT = 60
 
+# Memory rollups (memory_rollup): daily/weekly synthesis runs hotter than a
+# reply. An active day can feed 20+ hourly notes in, and the daily note has to
+# carry the whole day's arc — at MAX_TOKENS_REPLY (400) that synthesis hit the
+# wall and got written *truncated* while its source notes were deleted (#158:
+# silent data loss). Rollups get their own, larger cap so the reply ceiling
+# stays tweet-sized. 800 tokens tops out near 3200 chars, under _ROLLUP_MAX_CHARS
+# (3000) so the DB write is the binding limit, not the model cutoff.
+MAX_TOKENS_MEMORY_ROLLUP = 800
+
 # Client-side tool loop (search_memory). Bound the round-trips so a model that
 # keeps asking to search can't spin forever; take its text after this many.
 _MAX_TOOL_ITERS = 4
@@ -1256,7 +1265,7 @@ class ClaudeClient:
             model=SONNET,
             user_message=f"{lower.capitalize()} notes from the past {span} (oldest first):\n{notes_blob}",
             system_extra=system_extra,
-            max_tokens=MAX_TOKENS_REPLY,
+            max_tokens=MAX_TOKENS_MEMORY_ROLLUP,
             purpose=f"memory_{period}",
         )
         return result.text

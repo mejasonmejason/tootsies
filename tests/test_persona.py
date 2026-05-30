@@ -398,6 +398,11 @@ def test_max_tokens_uses_shared_constants_not_magic_numbers() -> None:
         "discourse": "MAX_TOKENS_POST",
         "chimein_post": "MAX_TOKENS_POST",
         "deflect": "MAX_TOKENS_DEFLECT",
+        "memory_note": "MAX_TOKENS_REPLY",
+        # Rollups synthesize a full day/week arc and need more room than a
+        # reply; sharing MAX_TOKENS_REPLY truncated the daily note mid-write
+        # while its source notes were deleted (#158, silent data loss).
+        "memory_rollup": "MAX_TOKENS_MEMORY_ROLLUP",
     }
     for name, constant in expected_constant.items():
         method = getattr(ClaudeClient, name)
