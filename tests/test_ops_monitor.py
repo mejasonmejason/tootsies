@@ -6,7 +6,7 @@ I/O is integration-only and excluded from coverage.
 
 from __future__ import annotations
 
-from scripts.eval_commands import (
+from scripts.ops_monitor import (
     aggregate,
     evaluate,
     parse_event_lines,

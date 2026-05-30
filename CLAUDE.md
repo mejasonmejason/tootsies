@@ -158,7 +158,7 @@ where `event=claude_api`, sum of `output_tokens` where `purpose=ask` for cost tr
 
 ## Ops monitor (the single QA interface)
 
-`scripts/eval_commands.py` + `.github/workflows/ops-monitor.yml` are the bot's one
+`scripts/ops_monitor.py` + `.github/workflows/ops-monitor.yml` are the bot's one
 automated QA routine, running twice daily (`cron: 0 8,20 * * *`, + manual dispatch).
 A deterministic pass pulls the last ~12h of Railway `EVENT` logs (GraphQL, via
 `RAILWAY_API_TOKEN`/`RAILWAY_SERVICE_ID`) and flags **both** halves of QA:
@@ -174,7 +174,7 @@ A deterministic pass pulls the last ~12h of Railway `EVENT` logs (GraphQL, via
 `claude-code-action` then judges the flagged samples and files **deduped `auto-eval`
 issues** (it searches open `auto-eval` issues first, so no spam; "All clear" files
 nothing). The deterministic core (`parse/aggregate/evaluate/render`) is pure and
-unit-tested in `tests/test_eval_commands.py`; the Railway I/O is integration-only
+unit-tested in `tests/test_ops_monitor.py`; the Railway I/O is integration-only
 (`pragma: no cover`).
 
 This **replaces the standalone Railway log-monitor routine** — error monitoring now

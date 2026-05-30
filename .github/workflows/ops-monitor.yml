@@ -1,7 +1,7 @@
 name: ops-monitor
 
 # Twice-daily ops monitor for the bot — the single QA interface. A deterministic
-# pass (scripts/eval_commands.py) pulls the last ~12h of Railway EVENT logs and
+# pass (scripts/ops_monitor.py) pulls the last ~12h of Railway EVENT logs and
 # flags BOTH command-quality regressions (latency, hallucinated links, ungrounded
 # chime-ins, failed commands, rate limits) AND error signatures (grouped by
 # source + exception, split by the recoverable tag, bursts escalated); Claude
@@ -38,7 +38,7 @@ jobs:
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
-        run: python scripts/eval_commands.py --out "$RUNNER_TEMP/ops_report.md"
+        run: python scripts/ops_monitor.py --out "$RUNNER_TEMP/ops_report.md"
 
       - name: Judge + file deduped issues
         uses: anthropics/claude-code-action@v1

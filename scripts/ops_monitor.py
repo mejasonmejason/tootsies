@@ -20,8 +20,8 @@ flagging; the LLM does the fuzzy "is this take actually hollow/wrong" judgment.
 
 Run locally (needs RAILWAY_API_TOKEN + RAILWAY_SERVICE_ID in env):
 
-    python scripts/eval_commands.py            # print report to stdout
-    python scripts/eval_commands.py --out r.md # also write to a file
+    python scripts/ops_monitor.py            # print report to stdout
+    python scripts/ops_monitor.py --out r.md # also write to a file
 
 The pure functions (parse/aggregate/evaluate/render) take plain event dicts and
 are unit-tested; the Railway I/O is integration-only (pragma: no cover).
