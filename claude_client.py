@@ -456,6 +456,11 @@ _MAX_TOOL_ITERS = 4
 # Cap a tool result handed back to the model (memory hits are short prose).
 _TOOL_RESULT_MAX_CHARS = 4000
 
+# Server-side web_search cap for /ask. /ask FORCES a search on factual questions
+# (see classify_ask_grounding); an uncapped server tool can spiral into many
+# serial searches (the music-post latency bug), so bound the round-trips.
+_ASK_WEB_SEARCH_MAX_USES = 3
+
 # The one client-side tool: lets /ask reach past the fixed memory block that's
 # already injected and pull older specifics on demand. The handler (DB full-text
 # search) is supplied per-call by the cog, since claude_client has no DB access.
@@ -898,11 +903,24 @@ class ClaudeClient:
             "keeps things running there. holler if you want the moving parts.'"
             + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
+        # Decide up front whether this question needs a real lookup. Left to
+        # itself the model searches only ~7% of /ask calls and answers from
+        # stale memory; for factual questions we FORCE a web_search (see
+        # classify_ask_grounding). Banter / opinion / self / abstract / math
+        # questions skip the force and keep adaptive thinking + memory recall.
+        needs_grounding = use_web and await self.classify_ask_grounding(question)
+
         tools: list[dict[str, Any]] = []
         if use_web:
-            tools.append({"type": "web_search_20250305", "name": "web_search"})
+            tools.append({
+                "type": "web_search_20250305", "name": "web_search",
+                "max_uses": _ASK_WEB_SEARCH_MAX_USES,
+            })
         tool_handlers: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] | None = None
-        if memory_search is not None:
+        # search_memory is for the non-forced path (callbacks / 'remember when').
+        # When we force a web_search for a factual question, thinking is off and
+        # the client-tool loop would fight the forced tool_choice, so skip it.
+        if memory_search is not None and not needs_grounding:
             tools.append(SEARCH_MEMORY_TOOL)
 
             async def _run_memory_search(inp: dict[str, Any]) -> str:
@@ -925,9 +943,15 @@ class ClaudeClient:
             max_tokens=MAX_TOKENS_REPLY,
             tools=tools or None,
             tool_handlers=tool_handlers,
+            # Factual question: force the search so she can't answer from stale
+            # memory. Forced tool_choice can't run with adaptive thinking (API
+            # 400), so thinking is off on the forced path only.
+            tool_choice=(
+                {"type": "tool", "name": "web_search"} if needs_grounding else None
+            ),
             purpose="ask",
             image_urls=image_urls,
-            thinking_enabled=use_web,
+            thinking_enabled=use_web and not needs_grounding,
         )
 
         # URL guardrail: strip hallucinated URLs and dedup URLs already
@@ -2405,3 +2429,49 @@ class ClaudeClient:
             log.exception("classify_abuse _call failed; failing open")
             return False
         return result.text.strip().upper().startswith("ABUSE")
+
+    async def classify_ask_grounding(self, question: str) -> bool:
+        """Haiku judges whether answering a /ask question accurately needs a
+        fresh web lookup (a current/checkable fact) vs not (banter, opinion,
+        self, abstract, math).
+
+        Why: left to itself the model web_searches only ~7% of /ask calls and
+        answers from stale memory, the credibility problem. We use this to FORCE
+        a web_search on factual questions while letting chitchat answer instantly.
+
+        Leans toward SEARCH when unsure (a stale fact costs more than an extra
+        lookup), but never on pure chitchat / bot-identity. Fail-open to False
+        (don't force) so a Haiku outage can't make every /ask slow.
+        """
+        if not question or not question.strip():
+            return False
+        system_extra = (
+            "TASK: Classify ONE question to a Discord bartender bot as "
+            "SEARCH or SKIP. Reply with exactly one word: SEARCH or SKIP.\n"
+            "\n"
+            "SEARCH = answering it well depends on a current or checkable fact: "
+            "scores, stats, records, chart positions, release/air dates, prices, "
+            "who/what/when/where, recent news or drama, 'is X washed/done', "
+            "'best/most/first/GOAT', or anything about an evolving real-world "
+            "subject (music, sports, film, public figures) where stale info "
+            "would read as wrong.\n"
+            "\n"
+            "SKIP = no lookup needed: chitchat ('wyd', 'sup', 'how's the "
+            "shift'), questions about the bot itself ('who are you', 'what's "
+            "your name'), pure banter or follow-ups ('fair', 'no you're "
+            "wrong', 'lol'), abstract/philosophical questions, math, code, or "
+            "definitions of common words.\n"
+            "\n"
+            "When genuinely unsure, answer SEARCH, a stale fact costs more than "
+            "an extra lookup. But NEVER SEARCH pure chitchat or bot-identity "
+            "questions."
+        )
+        try:
+            result = await self._call(
+                model=HAIKU, user_message=question, system_extra=system_extra,
+                max_tokens=4, purpose="ask_grounding",
+            )
+        except Exception:
+            log.exception("classify_ask_grounding _call failed; not forcing")
+            return False
+        return result.text.strip().upper().startswith("SEARCH")
