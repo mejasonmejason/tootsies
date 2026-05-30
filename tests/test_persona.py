@@ -137,6 +137,20 @@ def test_chimein_prompt_guards_substance_and_grounding() -> None:
     assert "pick your spots" in src  # the don't-be-a-know-it-all counterweight
 
 
+def test_post_grounding_requires_self_contained_posts() -> None:
+    """A chime-in pointed at 'that list' / 'the receipts right there', things
+    that existed only in Toots's Perplexity context, not the channel, and
+    dodged a direct 'who's better' question with 'same lane'. Room-facing
+    posts must be legible to someone reading ONLY the channel, and must answer
+    a direct question instead of deflecting. Pins both in _POST_GROUNDING."""
+    from claude_client import _POST_GROUNDING
+
+    grounding = _POST_GROUNDING.lower()
+    assert "self-contained" in grounding
+    assert "only the channel" in grounding or "gesturing at nothing" in grounding
+    assert "answer it" in grounding  # direct questions get answered, not dodged
+
+
 def test_persona_requires_legible_song_titles() -> None:
     """A chime-in once read as word salad ("plot twist as the new mob ties
     is a real stretch...") because three bare lowercase Drake song titles got
