@@ -102,6 +102,90 @@ def test_persona_has_spine_against_sycophancy() -> None:
     assert "cosign" in reminder or "caving" in reminder
 
 
+def test_spine_has_low_stakes_counterweight() -> None:
+    """The #149 spine change (don't cosign, hold your read) overcorrected into
+    a pedantic chime-in that 'well actually'd a fun deep-cuts debate. Spine has
+    to mean holding a take you actually have, NOT manufacturing disagreement in
+    low-stakes banter. Pins that counterweight so the two stay balanced."""
+    core = PERSONA_CORE.lower()
+    assert "manufacturing" in core or "low-stakes" in core
+    assert "well actually" in core or "reflex" in core
+
+
+def test_persona_distinguishes_take_from_guess() -> None:
+    """The bad chime-in invented a confident verdict about recent Drake tracks
+    the model's stale training can't actually know (zero web searches). The
+    persona must draw the take-vs-guess line: a take has a reason under it; if
+    the specifics are recent/uncertain, don't dress a guess as a take."""
+    core = PERSONA_CORE.lower()
+    assert "guess" in core
+    assert "reason under it" in core or "you don't actually know" in core
+
+
+def test_chimein_prompt_names_the_hollow_take() -> None:
+    """Both bad chime-ins ("...fits that lane", "...same lane, the receipts")
+    were the SAME failure: confident cadence wrapping no actual claim. The
+    calibration must name that root (the hollow take) and its tell (gesturing
+    instead of claiming), not just enumerate symptoms. Also keeps the
+    grounding + pick-your-spots cues that fold under it."""
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    src = inspect.getsource(ClaudeClient.chimein_post).lower()
+    assert "hollow take" in src
+    # The shared tell that both misfires reached for instead of a real claim.
+    assert "same lane" in src and "gesturing" in src
+    assert "didn't web_search" in src or "invent the facts" in src
+    assert "pick your spots" in src  # the don't-be-a-know-it-all counterweight
+
+
+def test_chimein_prompt_requires_grounding_before_posting() -> None:
+    """Toots was posting confident takes about recent music she didn't actually
+    know (losing credibility). She already gets a live REAL-TIME CONTEXT block
+    (a Perplexity search runs per chime-in); the prompt must require her to
+    ground the specific claim in that context (or web_search) before posting,
+    rather than asserting from stale memory. This is the non-forcing grounding
+    lever (per Anthropic's tool-use guidance), not a forced tool_choice."""
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    src = inspect.getsource(ClaudeClient.chimein_post).lower()
+    assert "ground it or don't say it" in src
+    assert "real-time context" in src
+    assert "credibility" in src
+    # And we did NOT switch to forced tool use (keeps adaptive thinking).
+    assert "tool_choice" not in src
+
+
+def test_post_grounding_requires_self_contained_posts() -> None:
+    """A chime-in pointed at 'that list' / 'the receipts right there', things
+    that existed only in Toots's Perplexity context, not the channel, and
+    dodged a direct 'who's better' question with 'same lane'. Room-facing
+    posts must be legible to someone reading ONLY the channel, and must answer
+    a direct question instead of deflecting. Pins both in _POST_GROUNDING."""
+    from claude_client import _POST_GROUNDING
+
+    grounding = _POST_GROUNDING.lower()
+    assert "self-contained" in grounding
+    assert "only the channel" in grounding or "gesturing at nothing" in grounding
+    assert "answer it" in grounding  # direct questions get answered, not dodged
+    # One beat per chime-in: don't answer two of the user's messages at once.
+    assert "react to one" in grounding
+
+
+def test_persona_requires_legible_song_titles() -> None:
+    """A chime-in once read as word salad ("plot twist as the new mob ties
+    is a real stretch...") because three bare lowercase Drake song titles got
+    jammed into one sentence with no quoting. Music is core to Toots, so the
+    persona must tell her to set titles off (so they read as titles, not
+    prose) and not stack deep cuts. Pins that rule against drift."""
+    core = PERSONA_CORE.lower()
+    assert "titles" in core
+    assert "quote" in core or "read as titles" in core
+
+
 def test_system_prompt_composes_all_layers() -> None:
     sp = system_prompt()
     assert "HARD RULES" in sp
