@@ -9,7 +9,9 @@ before/after so the bump is justified, not vibes.
 
 For each surface it runs the SAME query across the grid:
   context_size in {low, medium, high}  x  recency in {off, per-surface default}
-and reports, per cell: hedging rate, avg source count, latency.
+and, because hedging is intermittent (handoff finding), repeats each cell
+REPEATS times and reports a real fraction: hedging rate, avg source count,
+avg latency.
 
 Not a pytest test (makes live API calls). Needs PERPLEXITY_API_KEY (pull from
 Railway per CLAUDE.md "Debugging Railway deploys"). Run:
@@ -22,6 +24,11 @@ import os
 import time
 
 from utils.perplexity import _SEARCH_CONFIG, PerplexityClient, build_search_query
+
+# How many times to sample each grid cell. Hedging is intermittent, so a single
+# sample is a coin flip, not a rate. 3 keeps the live API spend bounded while
+# still distinguishing "always hedges" from "flaky".
+REPEATS = 3
 
 # One representative query per surface, built the same way production does.
 PROBES: list[dict[str, str]] = [
@@ -64,6 +71,8 @@ def _is_hedged(text: str) -> bool:
 
 
 def _source_count(text: str) -> int:
+    # Mirrors the SOURCES block emitted by PerplexityClient.search (one
+    # "\n  [N] url" line per citation). If that format changes, update both.
     if "SOURCES:" not in text:
         return 0
     return text.split("SOURCES:")[1].count("\n  [")
@@ -86,27 +95,37 @@ async def main() -> None:
             )
             print(f"\n{'=' * 72}")
             print(f"surface={probe['surface']} purpose={purpose} "
-                  f"default_recency={default_recency or 'off'}")
+                  f"default_recency={default_recency or 'off'} (n={REPEATS}/cell)")
             print(f"query: {query[:90]}...")
             print(f"{'=' * 72}")
-            print(f"{'context':>8} {'recency':>8} {'hedged':>7} {'sources':>8} {'ms':>6}")
+            print(f"{'context':>8} {'recency':>8} {'hedge_rate':>11} {'avg_src':>8} {'avg_ms':>7}")
             for ctx in CONTEXT_SIZES:
                 recency_opts = [None]
                 if default_recency:
                     recency_opts.append(default_recency)
                 for rec in recency_opts:
-                    t0 = time.monotonic()
-                    text = await client.search(
-                        query, purpose=purpose,
-                        search_context_size=ctx, recency=rec,
-                    )
-                    ms = int((time.monotonic() - t0) * 1000)
-                    if text is None:
-                        print(f"{ctx:>8} {(rec or 'off'):>8} {'ERR':>7} {'-':>8} {ms:>6}")
-                        continue
-                    hedged = "YES" if _is_hedged(text) else "no"
-                    print(f"{ctx:>8} {(rec or 'off'):>8} {hedged:>7} "
-                          f"{_source_count(text):>8} {ms:>6}")
+                    hedged = 0
+                    sources: list[int] = []
+                    latencies: list[int] = []
+                    errors = 0
+                    for _ in range(REPEATS):
+                        t0 = time.monotonic()
+                        text = await client.search(
+                            query, purpose=purpose,
+                            search_context_size=ctx, recency=rec,
+                        )
+                        latencies.append(int((time.monotonic() - t0) * 1000))
+                        if text is None:
+                            errors += 1
+                            continue
+                        if _is_hedged(text):
+                            hedged += 1
+                        sources.append(_source_count(text))
+                    ok = REPEATS - errors
+                    rate = f"{hedged}/{ok}" if ok else "ERR"
+                    avg_src = f"{sum(sources) / len(sources):.1f}" if sources else "-"
+                    avg_ms = sum(latencies) // len(latencies) if latencies else 0
+                    print(f"{ctx:>8} {(rec or 'off'):>8} {rate:>11} {avg_src:>8} {avg_ms:>7}")
     finally:
         await client.close()
 
