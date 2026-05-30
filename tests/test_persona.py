@@ -152,6 +152,8 @@ def test_post_grounding_requires_self_contained_posts() -> None:
     assert "self-contained" in grounding
     assert "only the channel" in grounding or "gesturing at nothing" in grounding
     assert "answer it" in grounding  # direct questions get answered, not dodged
+    # One beat per chime-in: don't answer two of the user's messages at once.
+    assert "react to one" in grounding
 
 
 def test_persona_requires_legible_song_titles() -> None:
