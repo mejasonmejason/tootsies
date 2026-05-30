@@ -67,16 +67,6 @@ def _has_music_link(text: str) -> bool:
     return any(host in lowered for host in _MUSIC_LINK_HOSTS)
 
 
-def _is_release_day(now_et: datetime) -> bool:
-    """New Music Friday: the biggest projects of the week drop on Friday.
-
-    On release day, the first music slot becomes Toots' marquee pick (a real
-    head always has a take on drop day) instead of the usual genre roulette.
-    weekday() == 4 is Friday.
-    """
-    return now_et.weekday() == 4
-
-
 def _parse_retry_after_seconds(exc: anthropic.RateLimitError) -> float | None:
     response = getattr(exc, "response", None)
     headers = getattr(response, "headers", None) if response is not None else None
@@ -148,7 +138,7 @@ class Music(commands.Cog):
         channel: discord.TextChannel | discord.Thread,
         *,
         must_post: bool = True,
-        release_pick: bool = False,
+        fresh_pick: bool = False,
     ) -> str:
         me = guild.me
         assert me is not None
@@ -184,10 +174,13 @@ class Music(commands.Cog):
 
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
-        # On a release-day pick, go straight at the marquee drop regardless of
-        # genre: no genre lean, and search for this week's biggest releases
-        # instead of rouletting a single genre.
-        if release_pick:
+        # The first drop of the day is the "fresh pick": skip the genre
+        # roulette and point the search at recent drops that fit her taste, so
+        # she leads with something that actually just came out (any day, not
+        # just Friday). If nothing fresh genuinely lands, the prompt falls
+        # through to a normal pick, so variety is preserved. The later slot
+        # stays free-roam on the usual genre rotation.
+        if fresh_pick:
             genre = ""
             search_category = "new-releases"
         else:
@@ -235,14 +228,14 @@ class Music(commands.Cog):
             enriched_links=enriched,
             perplexity_context=pplx_result,
             genre_hint=genre,
-            nmf=release_pick,
+            fresh_pick=fresh_pick,
         )
 
         if not line or line.strip().upper() == "EMPTY":
             emit(
                 "music_fallback",
                 guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
-                reason="claude_returned_empty", release_pick=release_pick,
+                reason="claude_returned_empty", fresh_pick=fresh_pick,
             )
             # Links-only channel: don't post a linkless fallback quip.
             # Skip the slot on scheduled posts; on manual /music,
@@ -267,7 +260,7 @@ class Music(commands.Cog):
             "music_scored",
             guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
             score=score, reason=reason, must_post=must_post,
-            post_preview=line[:120], release_pick=release_pick,
+            post_preview=line[:120], fresh_pick=fresh_pick,
         )
 
         if score < MUSIC_SCORE_THRESHOLD and not must_post:
@@ -295,7 +288,7 @@ class Music(commands.Cog):
                 enriched_links=enriched,
                 perplexity_context=pplx_result,
                 genre_hint=genre,
-                nmf=release_pick,
+                fresh_pick=fresh_pick,
             )
             if line2 and line2.strip().upper() != "EMPTY" and _has_music_link(line2):
                 return line2
@@ -358,10 +351,10 @@ class Music(commands.Cog):
         channel: discord.TextChannel | discord.Thread,
         channel_id: int,
         *,
-        release_pick: bool = False,
+        fresh_pick: bool = False,
     ) -> str:
         try:
-            return await self._compose(guild, channel, must_post=False, release_pick=release_pick)
+            return await self._compose(guild, channel, must_post=False, fresh_pick=fresh_pick)
         except anthropic.RateLimitError as exc:
             retry_after = _parse_retry_after_seconds(exc)
             if retry_after is None:
@@ -375,7 +368,7 @@ class Music(commands.Cog):
             log.info("music scheduled 429 for channel %s, retrying in %.1fs", channel_id, wait)
             await asyncio.sleep(wait)
             try:
-                return await self._compose(guild, channel, must_post=False, release_pick=release_pick)
+                return await self._compose(guild, channel, must_post=False, fresh_pick=fresh_pick)
             except anthropic.RateLimitError as exc2:
                 log.info("music still 429 after %.1fs retry for channel %s", wait, channel_id)
                 emit_error(
@@ -423,17 +416,19 @@ class Music(commands.Cog):
         if me is None or not can_send_in(channel, me):
             return
 
-        # Release-day pick: on New Music Friday (Friday in ET), the FIRST music
-        # drop of the day goes straight at the marquee release everyone's talking
-        # about instead of rouletting into a deep cut. Only the first slot —
-        # the later yaps slot stays free-roam. posts_today reflects today only
-        # when the last post was today; a stale (prior-day) row means 0 so far.
+        # Fresh pick: the FIRST music drop of the day leads with something that
+        # actually just came out and fits her taste, instead of rouletting into
+        # a deep cut. Songs drop every day, so this isn't gated to Friday, the
+        # day's first slot just always favors fresh. If nothing fresh lands the
+        # prompt falls through to a normal pick. The later (yaps) slot stays
+        # free-roam. posts_today reflects today only when the last post was
+        # today; a stale (prior-day) row means 0 so far.
         posts_made_today = posts_today if last_et.date() == now_et.date() else 0
-        release_pick = _is_release_day(now_et) and posts_made_today == 0
+        fresh_pick = posts_made_today == 0
 
         try:
             line = await self._compose_with_retry(
-                guild, channel, channel_id, release_pick=release_pick,
+                guild, channel, channel_id, fresh_pick=fresh_pick,
             )
         except Exception:
             log.exception("music scheduled compose failed for channel %s", channel_id)

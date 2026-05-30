@@ -211,13 +211,13 @@ _CATEGORY_QUERIES: dict[str, str] = {
         "trending sounds. " + _SOURCES
     ),
     "new-releases": (
-        "What are the biggest NEW music releases that dropped THIS WEEK "
-        "(new music friday / new album friday)? Focus on the marquee drops "
-        "everyone's talking about RIGHT NOW across hip hop, R&B, pop, "
-        "afrobeats, and Latin: new albums, EPs, and singles from the last "
-        "few days. For each, give the artist, the project name, and the "
-        "early reaction or hottest take (is it good, what's the standout, "
-        "how it compares to their last one). " + _SOURCES
+        "What new music dropped in the LAST FEW DAYS across hip hop, R&B, rap, "
+        "neo-soul, afrobeats, amapiano, dancehall, and Latin? Include new "
+        "albums, EPs, singles, and surprise drops, not just the #1 chart "
+        "releases, surface slept-on and mid-tier drops too. For each, give the "
+        "artist, the project or track name, the release date, and the early "
+        "reaction or hottest take (is it good, what's the standout, how it "
+        "compares to their last one). " + _SOURCES
     ),
     "pop": (
         "What's trending in pop culture right now? Celebrity news, viral "
