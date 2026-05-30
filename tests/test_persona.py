@@ -102,6 +102,41 @@ def test_persona_has_spine_against_sycophancy() -> None:
     assert "cosign" in reminder or "caving" in reminder
 
 
+def test_spine_has_low_stakes_counterweight() -> None:
+    """The #149 spine change (don't cosign, hold your read) overcorrected into
+    a pedantic chime-in that 'well actually'd a fun deep-cuts debate. Spine has
+    to mean holding a take you actually have, NOT manufacturing disagreement in
+    low-stakes banter. Pins that counterweight so the two stay balanced."""
+    core = PERSONA_CORE.lower()
+    assert "manufacturing" in core or "low-stakes" in core
+    assert "well actually" in core or "reflex" in core
+
+
+def test_persona_distinguishes_take_from_guess() -> None:
+    """The bad chime-in invented a confident verdict about recent Drake tracks
+    the model's stale training can't actually know (zero web searches). The
+    persona must draw the take-vs-guess line: a take has a reason under it; if
+    the specifics are recent/uncertain, don't dress a guess as a take."""
+    core = PERSONA_CORE.lower()
+    assert "guess" in core
+    assert "reason under it" in core or "you don't actually know" in core
+
+
+def test_chimein_prompt_guards_substance_and_grounding() -> None:
+    """The chime-in calibration must teach against the hollow/ungrounded take:
+    no cadence-without-a-claim, and don't invent verdicts on recent specifics
+    you didn't web_search. Pins the substance + pick-your-spots guidance in the
+    chimein_post prompt source (the surface that produced the failure)."""
+    import inspect
+
+    from claude_client import ClaudeClient
+
+    src = inspect.getsource(ClaudeClient.chimein_post).lower()
+    assert "substance over shape" in src
+    assert "didn't web_search" in src or "inventing the facts" in src
+    assert "pick your spots" in src  # the don't-be-a-know-it-all counterweight
+
+
 def test_persona_requires_legible_song_titles() -> None:
     """A chime-in once read as word salad ("plot twist as the new mob ties
     is a real stretch...") because three bare lowercase Drake song titles got
