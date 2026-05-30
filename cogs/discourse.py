@@ -265,10 +265,15 @@ class Discourse(commands.Cog):
             ))
         # The "query" for markets in /discourse is the category + channel name,
         # which feeds the Haiku classifier and gets routed to SGO (if sports) or
-        # Polymarket/Kalshi (if culture/elections/etc.).
-        markets_query = f"{category or ''} {channel.name}".strip() or channel.name
-        markets_idx = len(coros)
-        coros.append(self.bot.markets.get_context(markets_query))
+        # Polymarket/Kalshi (if culture/elections/etc.). Only run it when there's
+        # a real category: scheduled discourse (category=None) leaves just the
+        # bare channel name, which carries no routing signal — the classifier
+        # reliably returns "none" (or, pre-#78, drifted into persona text) and
+        # the Haiku call is wasted (#78).
+        markets_idx = -1
+        if category:
+            markets_idx = len(coros)
+            coros.append(self.bot.markets.get_context(f"{category} {channel.name}".strip()))
         db_idx = len(coros)
         coros.append(self.bot.db.recent_discourse_all(guild.id, limit=20))
 
@@ -278,7 +283,7 @@ class Discourse(commands.Cog):
             raw[pplx_idx]  # type: ignore[assignment]
             if pplx_idx >= 0 and not isinstance(raw[pplx_idx], BaseException) else None
         )
-        markets_raw = raw[markets_idx]
+        markets_raw = raw[markets_idx] if markets_idx >= 0 else None
         markets_result: list[MarketSnapshot] | None = (
             markets_raw if isinstance(markets_raw, list) else None
         )
