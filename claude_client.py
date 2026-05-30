@@ -1511,23 +1511,13 @@ class ClaudeClient:
         fresh_block = ""
         if fresh_pick:
             fresh_block = (
-                "\n\nTHIS IS THE DAY'S FIRST DROP: LEAD WITH SOMETHING FRESH. "
-                "A real music head clocks new releases as they land, not just on "
-                "Fridays. Reach for a track or project that came out in the last "
-                "few days AND fits your taste, and give it a real read.\n"
-                "  - Prefer a genuinely recent drop (last ~3 days) that's in your "
-                "lane. Use the real-time context and web_search to confirm it "
-                "actually just came out and to get the link.\n"
-                "  - Give a REAL take, not an announcement. 'X dropped' is "
-                "curator voice and gets cut. Say whether it's actually good, "
-                "call the standout track, or rank it against their last one.\n"
-                "  - It does NOT have to be the #1 / biggest release, just fresh "
-                "and worth hearing. A slept-on new drop in your lane beats the "
-                "obvious chart-topper.\n"
-                "  - If nothing fresh genuinely fits your taste right now, DON'T "
-                "force a stale or off-lane 'new' release just to be current, "
-                "fall through to a normal pick (a deep cut, a sleeper, a "
-                "callback). Fresh is the preference here, not a hard demand."
+                "\n\nTHIS IS THE DAY'S FIRST DROP: go fresh. Of the good-pick "
+                "options below, lead with 'a new drop the room might have "
+                "missed': something from the last few days that's in your lane, "
+                "with a real take. It does NOT have to be the #1 release, a "
+                "slept-on fresh drop counts. If nothing fresh genuinely fits, "
+                "fall through to a normal pick. Fresh is the preference here, "
+                "not a hard rule."
             )
 
         system_extra = (
