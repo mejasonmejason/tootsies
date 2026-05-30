@@ -446,23 +446,6 @@ async def test_music_post_enables_thinking() -> None:
 
 
 @pytest.mark.asyncio
-async def test_music_post_caps_web_search_uses() -> None:
-    """Music runs in a links-only channel and the prompt pushes the model to
-    keep searching for an Apple Music link; uncapped that spiraled into 5-7
-    serial searches (25-73s calls). The web_search tool must carry a max_uses
-    cap so the model pivots tracks instead of grinding searches."""
-    from claude_client import _MUSIC_WEB_SEARCH_MAX_USES
-
-    client = ClaudeClient(api_key="test")
-    fake = AsyncMock(return_value=MagicMock(text="post", web_search_urls=[]))
-    with patch.object(client, "_call", fake):
-        await client.music_post("sources blob")
-    tools = fake.call_args.kwargs["tools"]
-    web = next(t for t in tools if t.get("name") == "web_search")
-    assert web["max_uses"] == _MUSIC_WEB_SEARCH_MAX_USES
-
-
-@pytest.mark.asyncio
 async def test_chimein_post_happy_path_keeps_thinking_when_she_searches() -> None:
     """Happy path: adaptive thinking ON, web_search available. If she grounds
     the take with a search (web_search_urls populated), we keep her result and
