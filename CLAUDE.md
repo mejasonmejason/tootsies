@@ -166,10 +166,20 @@ A deterministic pass pulls the last ~12h of Railway `EVENT` logs (GraphQL, via
 - **command quality** — per-purpose latency over ceilings (`LATENCY_CEILINGS_MS`),
   hallucinated-link rate per surface, ungrounded chime-ins (0-search posts), failed
   slash commands, rate-limit pressure.
+- **output quality** — the bot's own post-gen gate scores every discourse/music post
+  0.0-1.0 (`discourse_scored`/`music_scored`); a surface whose recent posts mostly land
+  below `SCORE_FLOOR` (the bot's own 0.6 ship gate) is flagged `low_quality`, and
+  `must_post` posts that shipped under the floor are called out (users saw them). Silent
+  `degradation` (canned fallbacks / skipped slots / missing links) is flagged from the
+  `*_fallback` / `discourse_skipped` / `music_link_missing` events.
 - **error triage** — error signatures grouped by `(source, exception_class)`, split by
   the `recoverable` tag from `emit_error` (non-recoverable = high / user-impacting;
   all-recoverable = low, bumped to medium on a burst ≥ `BURST_ERROR_MIN`), with the
   inline traceback + context attached.
+
+The report also renders an **unconditional Quality spot-check** (recent posts + their
+self-gate scores per surface) so the judge eyeballs voice/quality even on an otherwise
+clean run — this is what makes it a quality *eval*, not just a regression alarm.
 
 `claude-code-action` then judges the flagged samples and files **deduped `auto-eval`
 issues** (it searches open `auto-eval` issues first, so no spam; "All clear" files

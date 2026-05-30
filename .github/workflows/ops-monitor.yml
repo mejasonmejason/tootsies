@@ -48,7 +48,15 @@ jobs:
             Read the deterministic ops-monitor report at
             ${{ runner.temp }}/ops_report.md. It covers the last ~12h of the
             bot's production behavior: one section per flagged finding (command
-            quality AND error signatures), plus a per-purpose metrics table.
+            quality AND error signatures), a "Quality spot-check" section with
+            recent posts + their self-gate scores, plus a per-purpose metrics
+            table.
+
+            ALWAYS read the Quality spot-check section even when there are no
+            findings: eyeball whether Toots's posts sound on-voice and have real
+            substance. If several recent posts read as bland, off-voice, wrong,
+            or hollow, open ONE `auto-eval` issue about output quality with those
+            samples, even though no threshold tripped.
 
             For each finding:
             - Decide if it's a REAL, actionable problem. Read the samples; some

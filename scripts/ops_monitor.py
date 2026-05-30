@@ -9,7 +9,11 @@ Code, which judges the flagged samples and files deduped `auto-eval` issues.
 
 This one routine owns BOTH halves of the bot's QA:
   - command quality: per-purpose latency over ceilings, hallucinated-link rate,
-    ungrounded chime-ins, failed slash commands, rate-limit pressure.
+    ungrounded chime-ins, failed slash commands, rate-limit pressure, the bot's
+    own post-gen quality scores (low-score rate per surface), and silent
+    degradation (canned fallbacks / skipped slots / missing links). It also
+    renders an unconditional quality spot-check (recent posts + their scores) so
+    the LLM judge can eyeball voice even when nothing tripped a threshold.
   - error triage: error signatures grouped by (source, exception_class), split
     by the `recoverable` tag from emit_error, with the inline traceback +
     context attached and bursts escalated. (This replaces the standalone
@@ -71,6 +75,33 @@ MAX_SAMPLES = 3
 # (bumps an otherwise-recoverable signature up a severity notch).
 BURST_ERROR_MIN = 10
 
+# Self-scored output quality. The bot's own post-gen quality gate scores every
+# discourse/music post 0.0-1.0 and ships at >= 0.6 (scheduled posts below that
+# are skipped; must_post posts ship anyway). We mirror that floor and flag a
+# surface whose recent posts are mostly landing under it.
+SCORE_FLOOR = 0.6
+# Fraction of a surface's scored posts below the floor before we flag it.
+LOW_SCORE_RATE = 0.5
+# Min scored posts before the low-quality check is meaningful.
+LOW_SCORE_MIN = 4
+# Occurrences of a fallback/skip/missing-link signal before we flag degradation.
+DEGRADATION_MIN = 3
+
+# Silent-degradation events: the bot quietly posted a canned fallback, skipped a
+# slot, or shipped a post missing its required link instead of a real take. Maps
+# the event kind to the surface label it belongs to.
+DEGRADATION_KINDS: dict[str, str] = {
+    "discourse_fallback": "discourse",
+    "music_fallback": "music",
+    "discourse_skipped": "discourse",
+    "music_link_missing": "music",
+}
+# Scored-post events, mapped to their surface label.
+SCORED_KINDS: dict[str, str] = {
+    "discourse_scored": "discourse",
+    "music_scored": "music",
+}
+
 
 @dataclass
 class PurposeStats:
@@ -104,6 +135,29 @@ class ErrorStats:
 
 
 @dataclass
+class QualityStats:
+    """The bot's own quality-gate scores for one post surface (discourse/music).
+
+    The bot scores every generated post 0.0-1.0 and emits it as `discourse_scored`
+    / `music_scored`. We aggregate those so the report can answer "are her posts
+    actually landing?" directly, instead of only catching structural failures
+    (hallucinated links, ungrounded). `spot_samples` is a small unconditional
+    sample (any score) so the LLM judge can eyeball voice/quality even when
+    nothing tripped a threshold.
+    """
+    n: int = 0
+    score_sum: float = 0.0
+    below: int = 0          # scored under SCORE_FLOOR
+    shipped_low: int = 0    # under the floor but must_post, so it shipped anyway
+    low_samples: list[str] = field(default_factory=list)
+    spot_samples: list[str] = field(default_factory=list)
+
+    @property
+    def avg(self) -> float:
+        return self.score_sum / self.n if self.n else 0.0
+
+
+@dataclass
 class Aggregate:
     purposes: dict[str, PurposeStats] = field(default_factory=dict)
     errors: dict[tuple[str, str], ErrorStats] = field(default_factory=dict)
@@ -111,6 +165,8 @@ class Aggregate:
     hallucinated_links: dict[str, int] = field(default_factory=dict)
     hallucinated_samples: dict[str, list[str]] = field(default_factory=dict)
     rate_limit_hits: dict[tuple[str, str], int] = field(default_factory=dict)
+    quality: dict[str, QualityStats] = field(default_factory=dict)
+    degradations: dict[tuple[str, str], int] = field(default_factory=dict)
     total_events: int = 0
 
 
@@ -196,6 +252,26 @@ def aggregate(events: list[dict]) -> Aggregate:
         elif kind == "rate_limit_hit":
             rkey = (str(ev.get("command", "?")), str(ev.get("scope", "?")))
             agg.rate_limit_hits[rkey] = agg.rate_limit_hits.get(rkey, 0) + 1
+        elif kind in SCORED_KINDS:
+            surface = SCORED_KINDS[kind]
+            qs = agg.quality.setdefault(surface, QualityStats())
+            score = float(ev.get("score") or 0.0)
+            preview = str(ev.get("post_preview") or "")
+            qs.n += 1
+            qs.score_sum += score
+            if preview and len(qs.spot_samples) < MAX_SAMPLES:
+                qs.spot_samples.append(f"{score:.2f}: {preview}")
+            if score < SCORE_FLOOR:
+                qs.below += 1
+                if ev.get("must_post"):
+                    qs.shipped_low += 1
+                if preview and len(qs.low_samples) < MAX_SAMPLES:
+                    qs.low_samples.append(f"{score:.2f}: {preview}")
+        elif kind in DEGRADATION_KINDS:
+            surface = DEGRADATION_KINDS[kind]
+            reason = str(ev.get("reason", "?"))
+            dkey = (surface, reason)
+            agg.degradations[dkey] = agg.degradations.get(dkey, 0) + 1
     return agg
 
 
@@ -287,6 +363,37 @@ def evaluate(agg: Aggregate) -> list[Finding]:
             detail=f"{n} {scope} rate-limit hit(s) on `{cmd}`.",
         ))
 
+    # 7. Self-scored output quality: the bot's own gate says her posts are weak.
+    for surface, qs in sorted(agg.quality.items(), key=lambda x: -x[1].below):
+        if qs.n >= LOW_SCORE_MIN and qs.below / qs.n >= LOW_SCORE_RATE:
+            detail = (
+                f"{qs.below}/{qs.n} `{surface}` posts ({qs.below / qs.n:.0%}) scored "
+                f"below {SCORE_FLOOR} on the bot's own quality gate "
+                f"(mean {qs.avg:.2f})."
+            )
+            if qs.shipped_low:
+                detail += (
+                    f" {qs.shipped_low} shipped anyway (must_post), so users saw "
+                    "low-scored output."
+                )
+            findings.append(Finding(
+                command=surface, kind="low_quality", severity="medium",
+                detail=detail, samples=qs.low_samples,
+            ))
+
+    # 8. Silent degradation: canned fallbacks / skipped slots / missing links
+    #    instead of real takes.
+    for (surface, reason), n in sorted(agg.degradations.items(), key=lambda x: -x[1]):
+        if n >= DEGRADATION_MIN:
+            findings.append(Finding(
+                command=surface, kind="degradation", severity="medium",
+                detail=(
+                    f"{n}x `{surface}` degraded (reason `{reason}`): posted a canned "
+                    "fallback, skipped the slot, or shipped without its link instead "
+                    "of a real take."
+                ),
+            ))
+
     return findings
 
 
@@ -311,6 +418,22 @@ def render(agg: Aggregate, findings: list[Finding], window: str = "") -> str:
             for s in f.samples[:MAX_SAMPLES]:
                 lines.append(f"  - sample: `{s[:200]}`")
             lines.append("")
+
+    # Routine quality spot-check: a few recent posts per surface with their
+    # self-gate score, ALWAYS shown (even on "all clear") so the judge can
+    # eyeball voice/quality when no threshold tripped. This is the half that
+    # turns the report from a regression alarm into a quality eval.
+    if agg.quality:
+        lines.append("## Quality spot-check")
+        lines.append(
+            "_Recent scored posts per surface (score: preview). Eyeball the voice "
+            "and substance even if nothing was flagged above._"
+        )
+        for surface, qs in sorted(agg.quality.items()):
+            lines.append(f"- **{surface}** (n={qs.n}, mean {qs.avg:.2f}):")
+            for s in qs.spot_samples[:MAX_SAMPLES]:
+                lines.append(f"  - `{s[:200]}`")
+        lines.append("")
 
     # Always include a compact metrics table for context.
     lines.append("## Per-purpose metrics")
