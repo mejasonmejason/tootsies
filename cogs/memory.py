@@ -37,6 +37,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from claude_client import MemoryRollupTruncated
 from utils import voice
 from utils.events import emit, emit_error
 from utils.feeds import format_for_prompt, recent_messages, resolve_reactors
@@ -542,9 +543,21 @@ class Memory(commands.Cog):
 
         forgotten = await self.bot.db.forgotten_names(guild_id)
         await asyncio.sleep(random.uniform(0, _API_JITTER_MAX_SECONDS))
-        rolled = await self.bot.claude.memory_rollup(
-            notes_blob, period=period, forgotten_names=forgotten
-        )
+        try:
+            rolled = await self.bot.claude.memory_rollup(
+                notes_blob, period=period, forgotten_names=forgotten
+            )
+        except MemoryRollupTruncated:
+            # The synthesis hit max_tokens. Don't write the half-finished note
+            # and (crucially) don't delete the source notes below it -- that
+            # combination is the silent data loss in #158. Leave the lower tier
+            # intact so the next rollup window can try again, and emit a loud
+            # signal since at the raised cap this should basically never fire.
+            emit(
+                "memory_write", guild_id=guild_id, tier=period, ok=False,
+                skipped="truncated", rolled_up=len(ids),
+            )
+            return
         if not _is_empty(rolled):
             await self.bot.db.add_memory_note(
                 guild_id, period, rolled[:_ROLLUP_MAX_CHARS], span_start, span_end

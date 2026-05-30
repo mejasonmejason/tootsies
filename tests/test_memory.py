@@ -225,6 +225,55 @@ async def test_memory_rollup_uses_sonnet_and_period(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("period", ["daily", "weekly"])
+async def test_memory_rollup_raises_when_truncated(
+    client: ClaudeClient, period: str,
+) -> None:
+    # A rollup that hits the token wall is half a synthesis. memory_rollup must
+    # raise rather than hand back the stump, so the caller never persists it (and
+    # never deletes the source notes that would complete it). See #158.
+    from claude_client import MemoryRollupTruncated
+
+    fake = AsyncMock(return_value=_FakeResult(text="big day...", stop_reason="max_tokens"))
+    with patch.object(client, "_call", fake), pytest.raises(MemoryRollupTruncated) as exc:
+        await client.memory_rollup("note 1\n\nnote 2", period=period)
+    assert exc.value.period == period
+
+
+@pytest.mark.asyncio
+async def test_rollup_truncation_keeps_source_notes() -> None:
+    # The #158 data loss: a truncated rollup written + its source notes deleted.
+    # On truncation the cog must skip BOTH the write and the delete so the lower
+    # tier survives for the next rollup window.
+    from datetime import datetime as _dt
+
+    from claude_client import MemoryRollupTruncated
+    from cogs.memory import Memory
+
+    cog = Memory.__new__(Memory)  # bypass __init__ so no scheduler loop starts
+    cog._last_daily_attempt = {}
+    cog._last_weekly_attempt = {}
+    cog.bot = MagicMock()
+    cog.bot.db.last_memory_note_at = AsyncMock(return_value=None)
+    start = _dt(2026, 5, 30, 1, tzinfo=ET)
+    end = _dt(2026, 5, 30, 2, tzinfo=ET)
+    cog.bot.db.memory_notes_since = AsyncMock(
+        return_value=[(11, "n1", start, end), (12, "n2", start, end)]
+    )
+    cog.bot.db.forgotten_names = AsyncMock(return_value=[])
+    cog.bot.db.add_memory_note = AsyncMock()
+    cog.bot.db.delete_memory_notes = AsyncMock()
+    cog.bot.claude.memory_rollup = AsyncMock(side_effect=MemoryRollupTruncated("daily"))
+
+    # 09:00 ET is past DAILY_ROLLUP_TIME with no prior attempt -> daily is due.
+    now_et = _dt(2026, 5, 30, 9, 0, tzinfo=ET)
+    await cog._maybe_rollup(123, now_et, "daily")
+
+    cog.bot.db.add_memory_note.assert_not_called()
+    cog.bot.db.delete_memory_notes.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_memory_note_span_label_flows_into_prompt(client: ClaudeClient) -> None:
     # The backfill reuses memory_note with a span label other than the hourly
     # default; it must reach the prompt so the model frames the window right.

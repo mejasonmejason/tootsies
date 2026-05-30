@@ -450,6 +450,24 @@ MAX_TOKENS_POST = 150
 # these are always short ("kitchen's a mess, give me a sec.") never deep.
 MAX_TOKENS_DEFLECT = 60
 
+# Hourly memory writer (memory_note): one note per active hour, summarizing up
+# to ~200 msgs. Railway logs showed busy hours producing 390-token / 1394-char
+# notes — right against MAX_TOKENS_REPLY (400), so an active hour was a sentence
+# away from truncation. A truncated hourly isn't the #158 data-loss trap (its
+# Discord-message sources aren't deleted, and the daily rollup recompacts it),
+# but a note cut mid-sentence reads badly in /ask context and degrades the
+# rollup input. Give it a little headroom above the reply cap.
+MAX_TOKENS_MEMORY_NOTE = 500
+
+# Memory rollups (memory_rollup): daily/weekly synthesis runs hotter than a
+# reply. An active day can feed 20+ hourly notes in, and the daily note has to
+# carry the whole day's arc — at MAX_TOKENS_REPLY (400) that synthesis hit the
+# wall and got written *truncated* while its source notes were deleted (#158:
+# silent data loss). Rollups get their own, larger cap so the reply ceiling
+# stays tweet-sized. 800 tokens tops out near 3200 chars, under _ROLLUP_MAX_CHARS
+# (3000) so the DB write is the binding limit, not the model cutoff.
+MAX_TOKENS_MEMORY_ROLLUP = 800
+
 # Client-side tool loop (search_memory). Bound the round-trips so a model that
 # keeps asking to search can't spin forever; take its text after this many.
 _MAX_TOOL_ITERS = 4
@@ -497,6 +515,19 @@ class ClaudeResult:
     # returned no results. Used by the discourse URL guardrail to allowlist
     # what Toots may link.
     web_search_urls: list[str] = field(default_factory=list)
+
+
+class MemoryRollupTruncated(Exception):
+    """A memory rollup hit max_tokens mid-synthesis. Raised so the caller can
+    refuse to persist the half-finished note AND keep its source notes intact.
+    The rollup is destructive (it deletes the tier below once written), so a
+    truncated synthesis written + sources deleted is silent data loss (#158):
+    the truncated note becomes the only record of an activity arc. Better to
+    skip the cycle and leave the lower tier uncompressed than to lose it."""
+
+    def __init__(self, period: str) -> None:
+        super().__init__(f"{period} rollup truncated at max_tokens")
+        self.period = period
 
 
 class ClaudeClient:
@@ -1221,7 +1252,7 @@ class ClaudeClient:
             model=SONNET,
             user_message=f"Activity to remember (most recent last):\n{channels_blob}",
             system_extra=system_extra,
-            max_tokens=MAX_TOKENS_REPLY,
+            max_tokens=MAX_TOKENS_MEMORY_NOTE,
             purpose="memory_hourly",
         )
         return result.text
@@ -1268,9 +1299,15 @@ class ClaudeClient:
             model=SONNET,
             user_message=f"{lower.capitalize()} notes from the past {span} (oldest first):\n{notes_blob}",
             system_extra=system_extra,
-            max_tokens=MAX_TOKENS_REPLY,
+            max_tokens=MAX_TOKENS_MEMORY_ROLLUP,
             purpose=f"memory_{period}",
         )
+        # A rollup that hit the token wall is half a synthesis. Persisting it
+        # while deleting the source notes is silent data loss (#158): the cap
+        # raise above makes this rare, but the caller still gets a hard signal
+        # so it can keep the lower tier instead of overwriting it with a stump.
+        if result.stop_reason == "max_tokens":
+            raise MemoryRollupTruncated(period)
         return result.text
 
     async def discourse(
