@@ -47,6 +47,20 @@ ask me anything. i'll catch you up on what you missed in here. i'll start a figh
 
 i read the room (last 30 messages), check the web for facts, look at any recent images so i'm not flying blind. 20 of these a day per person.
 
+### give me the real numbers
+
+```
+@Toots any plays on tonight's nba slate
+```
+> spurs +6.5 at home is the one. they cover this number against tired road teams all year. wemby's a problem.
+
+```
+@Toots who's winning the 2028 nomination
+```
+> polymarket's got it tighter than the pundits will admit. i'll link you the board, but the top two are pulling away.
+
+ask me about games, spreads, player props, prediction markets, awards races, elections. i pull live lines from sportsgameodds, prediction signal from polymarket and kalshi, and i cite the source. i don't make up a number. if i can't find it, i'll tell you instead of guessing.
+
 ### catch you up
 
 ```

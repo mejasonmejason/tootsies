@@ -2,6 +2,34 @@
 
 All notable changes to Tootsies. Dates in PT.
 
+## [1.1.0], 2026-05-26 (markets)
+
+New capability: Toots grounds sports and prediction-market takes on real live data instead of recalling from training. She pulls sports lines from SportsGameOdds, prediction-market signal from Polymarket and Kalshi, routes the right source via a Haiku intent classifier, and cites real source URLs. A DATA INTEGRITY rule forbids inventing odds, spreads, or scores. Runs across `/ask`, `@mention`, `/discourse`, and `/chimein` with a shared parallel-fetch pattern.
+
+### What shipped (PR cluster)
+
+- **#59** — foundation: DATA INTEGRITY constitution rule + SGO/Polymarket/Kalshi clients (`utils/markets.py`) + `/ask` wiring.
+- **#61** — Haiku market-intent classifier (`classify_market_intent`) + `/discourse` and `/chimein` wiring.
+- **#63** — rich fetchers: player props, multi-outcome events, competitive markets, price history.
+- **#64** — CODEOWNERS for auto-review of the markets surface.
+- **#65** — URL guardrail hotfix (don't strip real cited market URLs).
+- **#66** — eval framework (`evals/eval_ask.py`) + DATA INTEGRITY rule hardening.
+- **#67** — further DATA INTEGRITY hardening from eval findings.
+
+### Config
+
+- New optional env var `SPORTS_GAME_ODDS_API_KEY` (sports lines). Polymarket and Kalshi need no key. All enrichers fail open: unset keys degrade to no live data, never a crash.
+
+### Observability
+
+- `market_fetch` structured event (source `sgo`/`polymarket`/`kalshi`, query, ok, duration_ms, cache_hit, result_count, error). See the event catalog in [CLAUDE.md](CLAUDE.md#structured-events-for-dashboards).
+
+### Voice
+
+- Specific numbers (odds, spreads, scores) now always carry a real source or aren't stated. Users see "Toots stopped making up numbers"; the prompt-engineering detail stays internal.
+
+---
+
 ## [1.0.3], 2026-05-24 (chime-in)
 
 New feature: Toots can lean into the discourse channel and chime in when she has something real to say. No new commands and no new settings, it rides entirely on the existing `discourse_channel` + mood configured in `/menu`.
