@@ -137,8 +137,8 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `pplx_chimein` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
 | `link_stripped` | claude_client.py (`discourse`, `ask`, `recap`, `music_post`, `chimein_post`) | purpose, reason (`hallucinated` \| `redundant` \| `dead_link`), count, urls |
 | `market_fetch` | utils/markets.py | source (sgo/polymarket/kalshi), query, ok, duration_ms, cache_hit, result_count, error |
-| `music_fallback` | cogs/music.py | guild_id, channel_id, channel_name, reason |
-| `music_scored` | cogs/music.py | guild_id, channel_id, channel_name, score, reason, must_post, post_preview |
+| `music_fallback` | cogs/music.py | guild_id, channel_id, channel_name, reason, release_pick |
+| `music_scored` | cogs/music.py | guild_id, channel_id, channel_name, score, reason, must_post, post_preview, release_pick |
 | `music_dedup` | cogs/music.py | guild_id, channel_id, channel_name, decision, post_preview |
 | `music_link_missing` | cogs/music.py | guild_id, channel_id, channel_name, must_post, attempt, post_preview |
 | `abuse_warned` | utils/abuse_tracker.py | guild_id, user_id, violations |

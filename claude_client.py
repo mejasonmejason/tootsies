@@ -1445,6 +1445,7 @@ class ClaudeClient:
         enriched_links: list[EnrichedLink] | None = None,
         perplexity_context: str | None = None,
         genre_hint: str = "",
+        nmf: bool = False,
     ) -> str:
         """Generate a music-lounge post: always a track + take + music link.
 
@@ -1453,6 +1454,10 @@ class ClaudeClient:
 
         `genre_hint` rotates each call (hiphop, rnb, pop, afrobeats, neo-soul)
         so the bot doesn't default to the same genre every time.
+
+        `nmf` (New Music Friday): when set, this is the day's release-day pick.
+        Toots goes straight at the marquee drop everyone's talking about with a
+        real take, instead of rouletting into a deep cut or archival loosie.
         """
         dedup_clause = (
             f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat artists, songs, or angles):\n"
@@ -1499,6 +1504,29 @@ class ClaudeClient:
                 "for your pick this time. You don't have to stay strictly in it, "
                 "but it should be the starting point for your search. This rotates "
                 "each post so you naturally cover different sounds."
+            )
+
+        nmf_block = ""
+        if nmf:
+            nmf_block = (
+                "\n\nIT'S NEW MUSIC FRIDAY AND THIS IS YOUR RELEASE-DAY PICK. "
+                "The biggest project of the week just dropped and the room wants "
+                "YOUR read on it. Every real music head has their take on drop "
+                "day, so go straight at the marquee release everyone's talking "
+                "about (a new album, EP, or single from the last day or two), "
+                "NOT a deep cut or an archival loosie.\n"
+                "  - Lead with the headline drop. Use the real-time context and "
+                "web_search to confirm what actually released this week.\n"
+                "  - Give a REAL take, not an announcement. 'X dropped' is "
+                "curator voice and gets cut. Say whether it's actually good, "
+                "call the standout track, rank it against their last one, or "
+                "tell the room it's mid if it is.\n"
+                "  - For THIS post, IGNORE the 'not just what's #1' guidance "
+                "below — the marquee drop IS the point today. Still ONE "
+                "sentence + the link, still the bartender voice.\n"
+                "  - If the marquee drop genuinely has no Apple Music/Spotify "
+                "link yet, pick the next-biggest release of the week you CAN "
+                "link rather than reaching for an old track."
             )
 
         system_extra = (
@@ -1612,7 +1640,7 @@ class ClaudeClient:
             "EMPTY: return literal EMPTY only when you've posted recently AND "
             "nothing fresh is on your mind. Never return EMPTY because you "
             "can't find a link, pick a different track instead.\n"
-            f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{dedup_clause}"
+            f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{nmf_block}{dedup_clause}"
             + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""
