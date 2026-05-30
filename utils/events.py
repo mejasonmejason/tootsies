@@ -35,7 +35,8 @@ Known kinds (keep this list in sync with what's emitted):
   - deploy_event       : bot startup or shutdown
       kind (boot|shutdown), guilds, commit (if known)
   - error              : caught exception in a cog or the global error handler
-      Required: source (e.g. `ask`, `order_preflight`, `undo`), error (exception class).
+      Required: source (e.g. `ask`, `order_preflight`, `undo`,
+        `classify_market_intent`), error (exception class).
       Optional:
         guild_id, user_id, command, order_id, category, ...
         recoverable: bool   true = caught + retried/skipped cleanly with no
