@@ -122,18 +122,21 @@ def test_persona_distinguishes_take_from_guess() -> None:
     assert "reason under it" in core or "you don't actually know" in core
 
 
-def test_chimein_prompt_guards_substance_and_grounding() -> None:
-    """The chime-in calibration must teach against the hollow/ungrounded take:
-    no cadence-without-a-claim, and don't invent verdicts on recent specifics
-    you didn't web_search. Pins the substance + pick-your-spots guidance in the
-    chimein_post prompt source (the surface that produced the failure)."""
+def test_chimein_prompt_names_the_hollow_take() -> None:
+    """Both bad chime-ins ("...fits that lane", "...same lane, the receipts")
+    were the SAME failure: confident cadence wrapping no actual claim. The
+    calibration must name that root (the hollow take) and its tell (gesturing
+    instead of claiming), not just enumerate symptoms. Also keeps the
+    grounding + pick-your-spots cues that fold under it."""
     import inspect
 
     from claude_client import ClaudeClient
 
     src = inspect.getsource(ClaudeClient.chimein_post).lower()
-    assert "substance over shape" in src
-    assert "didn't web_search" in src or "inventing the facts" in src
+    assert "hollow take" in src
+    # The shared tell that both misfires reached for instead of a real claim.
+    assert "same lane" in src and "gesturing" in src
+    assert "didn't web_search" in src or "invent the facts" in src
     assert "pick your spots" in src  # the don't-be-a-know-it-all counterweight
 
 
