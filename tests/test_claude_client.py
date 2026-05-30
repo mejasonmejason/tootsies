@@ -13,6 +13,7 @@ from claude_client import (  # noqa: F401
     _MAX_TOOL_ITERS,
     HAIKU,
     MAX_TOKENS_DEFLECT,
+    MAX_TOKENS_REPLY,
     SEARCH_MEMORY_TOOL,
     SONNET,
     ClaudeClient,
@@ -266,6 +267,55 @@ async def test_call_preserves_caller_max_tokens_when_already_above_floor() -> No
         max_tokens=8192, thinking_enabled=True,
     )
     assert create.call_args.kwargs["max_tokens"] == 8192
+
+
+@pytest.mark.asyncio
+async def test_call_floors_max_tokens_for_web_search_with_thinking_off() -> None:
+    """#74: server-side web_search rounds share the turn's max_tokens budget.
+    On the forced-grounding path (thinking off) a tweet-sized cap got eaten by
+    the searches, truncating the answer mid-sentence. Floor it instead."""
+    from claude_client import _WEB_SEARCH_MAX_TOKENS_FLOOR
+
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=SONNET, user_message="x", purpose="ask",
+        max_tokens=MAX_TOKENS_REPLY,
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+        tool_choice={"type": "tool", "name": "web_search"},
+        thinking_enabled=False,
+    )
+    kw = create.call_args.kwargs
+    assert kw["max_tokens"] == _WEB_SEARCH_MAX_TOKENS_FLOOR
+    # The forced tool_choice still rides along (it's the grounding path).
+    assert kw["tool_choice"] == {"type": "tool", "name": "web_search"}
+
+
+@pytest.mark.asyncio
+async def test_call_no_web_search_floor_without_web_search_tool() -> None:
+    """The floor is web_search-specific: a client-side-only tool (search_memory)
+    doesn't trigger it, so plain replies keep their tweet-sized cap."""
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=SONNET, user_message="x", purpose="ask",
+        max_tokens=MAX_TOKENS_REPLY,
+        tools=[{"name": "search_memory", "input_schema": {}}],
+        thinking_enabled=False,
+    )
+    assert create.call_args.kwargs["max_tokens"] == MAX_TOKENS_REPLY
+
+
+@pytest.mark.asyncio
+async def test_call_web_search_floor_under_thinking_floor() -> None:
+    """When thinking IS on, its 4096 floor already covers the search rounds and
+    wins (it's higher), so the web_search floor never lowers an existing cap."""
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=SONNET, user_message="x", purpose="ask",
+        max_tokens=MAX_TOKENS_REPLY,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        thinking_enabled=True,
+    )
+    assert create.call_args.kwargs["max_tokens"] == 4096
 
 
 # ---- public method routing --------------------------------------------------------
