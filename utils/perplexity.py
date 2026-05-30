@@ -51,13 +51,21 @@ _TIMEOUT_SECONDS = 8.0
 #                         exactly the pages it needs.
 #
 # recency values: hour/day/week/month/year. Cannot combine with date filters.
+#
+# FUTURE (cinema): the "cinema" discourse category inherits discourse's `week`
+# window, but film/TV discourse has a longer half-life than sports/pop -- awards
+# buzz spans months, and people keep debating a release for weeks after it drops.
+# `week` may clamp out a movie from 2-3 weeks ago that the room is still on. This
+# config is keyed by PURPOSE, not category, so giving cinema its own (e.g.
+# `month`) recency means threading `category` into the param resolution here +
+# in the callers, not just `purpose`. Revisit if cinema discourse feels stale.
 _DEFAULT_SEARCH_CONFIG: dict[str, Any] = {"context": "medium", "recency": None}
 _SEARCH_CONFIG: dict[str, dict[str, Any]] = {
     "ask": {"context": "medium", "recency": None},
     "discourse": {"context": "medium", "recency": "week"},
     "recap": {"context": "medium", "recency": "day"},
     "chimein": {"context": "medium", "recency": "day"},
-    "music": {"context": "medium", "recency": "week"},
+    "music": {"context": "medium", "recency": "month"},
 }
 
 # Sentinel so callers can explicitly pass recency=None to DISABLE the per-surface
@@ -113,7 +121,7 @@ class PerplexityClient:
         output_tokens = 0
         cfg = _SEARCH_CONFIG.get(purpose, _DEFAULT_SEARCH_CONFIG)
         context_size = search_context_size or cfg["context"]
-        recency_filter = cfg["recency"] if recency is _UNSET else recency
+        recency_filter = cfg.get("recency") if recency is _UNSET else recency
         try:
             sess = await self._get_session()
             payload: dict[str, Any] = {
