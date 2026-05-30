@@ -181,3 +181,71 @@ def test_render_lists_findings_high_severity_first() -> None:
     report = render(agg, evaluate(agg))
     assert report.index("[HIGH]") < report.index("[MEDIUM]")
     assert "finding(s)" in report
+
+
+def test_evaluate_flags_low_quality_surface() -> None:
+    # 4 of 5 discourse posts under the 0.6 floor -> low_quality finding.
+    events = [
+        {"event": "discourse_scored", "score": s, "must_post": mp, "ts": str(i),
+         "post_preview": f"weak take {i}"}
+        for i, (s, mp) in enumerate(
+            [(0.2, True), (0.3, False), (0.4, False), (0.5, False), (0.9, False)]
+        )
+    ]
+    findings = evaluate(aggregate(events))
+    lq = [f for f in findings if f.kind == "low_quality"]
+    assert len(lq) == 1
+    assert lq[0].command == "discourse"
+    assert "80%" in lq[0].detail            # 4/5 below floor
+    assert "1 shipped anyway" in lq[0].detail  # the one must_post=True under floor
+    assert lq[0].samples                    # low-scoring previews attached
+
+
+def test_evaluate_no_low_quality_when_posts_are_good() -> None:
+    events = [
+        {"event": "music_scored", "score": 0.8, "must_post": False, "ts": str(i),
+         "post_preview": "solid drop"}
+        for i in range(5)
+    ]
+    assert [f for f in evaluate(aggregate(events)) if f.kind == "low_quality"] == []
+
+
+def test_evaluate_skips_low_quality_under_min_sample() -> None:
+    # Below LOW_SCORE_MIN posts: not enough signal to flag.
+    events = [
+        {"event": "discourse_scored", "score": 0.1, "must_post": False, "ts": "1",
+         "post_preview": "x"},
+    ]
+    assert [f for f in evaluate(aggregate(events)) if f.kind == "low_quality"] == []
+
+
+def test_evaluate_flags_silent_degradation() -> None:
+    events = [
+        {"event": "discourse_fallback", "reason": "empty_claude_response",
+         "ts": str(i)}
+        for i in range(3)  # >= DEGRADATION_MIN
+    ]
+    deg = [f for f in evaluate(aggregate(events)) if f.kind == "degradation"]
+    assert len(deg) == 1
+    assert deg[0].command == "discourse"
+    assert "empty_claude_response" in deg[0].detail
+
+
+def test_evaluate_ignores_occasional_degradation() -> None:
+    events = [
+        {"event": "music_fallback", "reason": "claude_returned_empty", "ts": "1"},
+    ]
+    assert [f for f in evaluate(aggregate(events)) if f.kind == "degradation"] == []
+
+
+def test_render_always_shows_quality_spot_check() -> None:
+    # Even with all-good scores (no findings), the spot-check section renders.
+    agg = aggregate([
+        {"event": "music_scored", "score": 0.85, "must_post": False, "ts": str(i),
+         "post_preview": f"banger {i}"}
+        for i in range(3)
+    ])
+    report = render(agg, evaluate(agg))
+    assert "All clear" in report
+    assert "Quality spot-check" in report
+    assert "0.85: banger 0" in report
