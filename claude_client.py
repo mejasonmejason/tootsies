@@ -506,6 +506,20 @@ _ASK_WEB_SEARCH_MAX_USES = 3
 # chime-in or discourse take needs at most a couple of lookups, so cap it.
 _POST_WEB_SEARCH_MAX_USES = 3
 
+# max_tokens floor when a server-side web_search tool is available but adaptive
+# thinking is OFF (the forced-grounding path). The API counts EVERY output
+# block across the server-side search loop — each search-query block plus any
+# interstitial text — against the single max_tokens budget for the turn. With
+# max_uses up to 3, a tweet-sized cap (MAX_TOKENS_REPLY 400 / MAX_TOKENS_POST
+# 150) gets eaten by the searches before the final answer finishes, truncating
+# it mid-sentence (#74). The thinking path already floors max_tokens to 4096
+# for the same reason (thinking tokens also count); this is its non-thinking
+# twin. Visible output stays bounded by the persona's tweet-length rule, so the
+# floor is headroom for the search rounds, not a longer answer — and billing is
+# on actual output tokens, not the ceiling. Kept below the thinking floor since
+# there are no thinking tokens to absorb here, just the search rounds + answer.
+_WEB_SEARCH_MAX_TOKENS_FLOOR = 2048
+
 # The one client-side tool: lets /ask reach past the fixed memory block that's
 # already injected and pull older specifics on demand. The handler (DB full-text
 # search) is supplied per-call by the cog, since claude_client has no DB access.
@@ -631,11 +645,22 @@ class ClaudeClient:
             kwargs["output_config"] = {"effort": "medium"}
             if max_tokens < 4096:
                 kwargs["max_tokens"] = 4096
-        elif tool_choice:
-            # Forced tool use (e.g. mandatory web_search on the grounding
-            # fallback). The API rejects a non-auto tool_choice while adaptive
-            # thinking is on (400), so this only applies when thinking is off.
-            kwargs["tool_choice"] = tool_choice
+        else:
+            if tool_choice:
+                # Forced tool use (e.g. mandatory web_search on the grounding
+                # fallback). The API rejects a non-auto tool_choice while
+                # adaptive thinking is on (400), so this only applies when
+                # thinking is off.
+                kwargs["tool_choice"] = tool_choice
+            # Server-side web_search with thinking off (the forced-grounding
+            # path): the search rounds share the turn's max_tokens budget, so
+            # floor it or 3 searches truncate the final answer mid-sentence
+            # (#74). See _WEB_SEARCH_MAX_TOKENS_FLOOR.
+            has_web_search = any(
+                str(t.get("type", "")).startswith("web_search") for t in (tools or [])
+            )
+            if has_web_search and kwargs["max_tokens"] < _WEB_SEARCH_MAX_TOKENS_FLOOR:
+                kwargs["max_tokens"] = _WEB_SEARCH_MAX_TOKENS_FLOOR
 
         start = time.monotonic()
         # Client-side tool loop. When `tool_handlers` is set the model can emit a
