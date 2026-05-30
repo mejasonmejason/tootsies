@@ -328,7 +328,11 @@ _POST_GROUNDING = (
     "one pass. Even when the buffer has several messages or two questions "
     "on the table, react to ONE; answering two things at once in a single "
     "chime-in reads stilted, like a form letter. Pick the one beat and "
-    "leave the rest.\n"
+    "leave the rest. NO THREAD-PILING: don't cram multiple threads into "
+    "two sentences. BAD: 'LeBron got called soft for drinking water, the "
+    "dark-skin angle is real, but SGA's problem is the flopping' jams three "
+    "separate threads (LeBron, colorism, SGA) into one breath, that's a pile, "
+    "not a take. Pick the one that actually has a point and ride it.\n"
     "\n"
     "BARTENDER, NOT CURATOR. React to the thing like a person who saw it "
     "and has a take. Never evaluate whether something 'fits' the channel, "
@@ -506,6 +510,7 @@ class ClaudeClient:
         purpose: str = "unknown",
         image_urls: list[str] | None = None,
         thinking_enabled: bool = False,
+        tool_choice: dict[str, Any] | None = None,
     ) -> ClaudeResult:
         # System prompt is a list with a cache_control marker on the persona block so
         # repeat calls hit the prompt cache (the persona is ~1k tokens and stable).
@@ -551,6 +556,11 @@ class ClaudeClient:
             kwargs["output_config"] = {"effort": "medium"}
             if max_tokens < 4096:
                 kwargs["max_tokens"] = 4096
+        elif tool_choice:
+            # Forced tool use (e.g. mandatory web_search on the grounding
+            # fallback). The API rejects a non-auto tool_choice while adaptive
+            # thinking is on (400), so this only applies when thinking is off.
+            kwargs["tool_choice"] = tool_choice
 
         start = time.monotonic()
         # Client-side tool loop. When `tool_handlers` is set the model can emit a
@@ -1991,14 +2001,38 @@ class ClaudeClient:
             f"Buffer (oldest first):\n{buffer_blob}"
             f"{enriched_block}{perplexity_block}{markets_block}{dedup_block}"
         )
+        web_tools = [{"type": "web_search_20250305", "name": "web_search"}]
+        # Happy path: adaptive thinking ON, web_search available. She keeps
+        # thinking and, ideally, searches (or grounds in the Perplexity block).
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            tools=web_tools,
             max_tokens=MAX_TOKENS_POST,
             purpose="chimein_post",
             image_urls=image_urls,
             thinking_enabled=True,
         )
+        # Grounding fallback: the logs show she ran ZERO searches across two
+        # days of chime-ins, confidently asserting recent specifics (lineups,
+        # fees, chart timelines) from stale memory. If this take ran no search,
+        # force one on a single retry so it's grounded. Forced tool_choice
+        # can't run with adaptive thinking (API 400), so thinking is off for
+        # THIS retry only, the happy path above keeps it.
+        if not result.web_search_urls:
+            try:
+                forced = await self._call(
+                    model=SONNET, user_message=user, system_extra=system_extra,
+                    tools=web_tools,
+                    tool_choice={"type": "tool", "name": "web_search"},
+                    max_tokens=MAX_TOKENS_POST,
+                    purpose="chimein_post_forced",
+                    image_urls=image_urls,
+                    thinking_enabled=False,
+                )
+                if forced.text.strip():
+                    result = forced
+            except Exception:
+                log.exception("forced web_search chime-in fallback failed")
 
         feed_urls = (
             [link.url for link in enriched_links if link.url]
