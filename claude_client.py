@@ -1522,7 +1522,7 @@ class ClaudeClient:
                 "call the standout track, rank it against their last one, or "
                 "tell the room it's mid if it is.\n"
                 "  - For THIS post, IGNORE the 'not just what's #1' guidance "
-                "below — the marquee drop IS the point today. Still ONE "
+                "below: the marquee drop IS the point today. Still ONE "
                 "sentence + the link, still the bartender voice.\n"
                 "  - If the marquee drop genuinely has no Apple Music/Spotify "
                 "link yet, pick the next-biggest release of the week you CAN "
