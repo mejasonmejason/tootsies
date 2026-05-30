@@ -107,6 +107,8 @@ Known kinds (keep this list in sync with what's emitted):
   - music_fallback     : Claude returned EMPTY for a music drop
       guild_id, channel_id, channel_name, reason (claude_returned_empty)
   - music_link_missing : a music drop lacked an Apple Music / Spotify link
+  - apple_music_lookup : iTunes Search API link resolution for music_post (utils/apple_music.py)
+      query, ok, hit, duration_ms
       guild_id, channel_id, channel_name, must_post, attempt (1|2), post_preview
   - market_fetch       : sports/prediction-market enricher call (utils/markets.py)
       source (sgo|polymarket|kalshi), query, ok, duration_ms,

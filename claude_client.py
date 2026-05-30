@@ -27,6 +27,7 @@ import anthropic
 from anthropic import AsyncAnthropic
 
 from persona import system_prompt
+from utils.apple_music import resolve_apple_music_url
 from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.markets import MarketSnapshot, format_markets_for_prompt
@@ -148,6 +149,25 @@ def _parse_chimein_score(text: str) -> tuple[float, str, str, str, int | None]:
     else:
         target_i = None
     return score_f, vibe, hook, reaction, target_i
+
+
+def _extract_track_line(text: str) -> tuple[str, str | None]:
+    """Split a music_post output into (post_body, track_query).
+
+    The model ends a music post with a line `TRACK: <artist> - <title>` that we
+    look up to attach the Apple Music link. This strips that line off (the room
+    never sees it) and returns the query, or None if there's no TRACK line.
+    """
+    if not text:
+        return text, None
+    lines = text.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped.lower().startswith("track:"):
+            query = stripped[len("track:"):].strip()
+            body = "\n".join(lines[:i] + lines[i + 1:]).strip()
+            return body, (query or None)
+    return text.strip(), None
 
 
 def _parse_discourse_score(text: str) -> tuple[float, str]:
@@ -1554,9 +1574,9 @@ class ClaudeClient:
             )
 
         system_extra = (
-            "TASK: Post a music recommendation in a LINKS-ONLY channel. Every "
-            "post MUST end with an Apple Music or Spotify link or it gets "
-            "deleted by mods.\n"
+            "TASK: Post a music recommendation in a LINKS-ONLY channel. The "
+            "Apple Music link is attached automatically AFTER you write, from "
+            "the track you name, so you do NOT search for or write a URL.\n"
             "\n"
             "FORMAT (non-negotiable):\n"
             "  1. ONE short sentence with your take. Tweet-length, not "
@@ -1564,9 +1584,13 @@ class ClaudeClient:
             "unless it's a question to the room.\n"
             "  2. Optionally one short question that gets the room posting "
             "their own links back.\n"
-            "  3. An Apple Music or Spotify link on its own line at the end. "
-            "Prefer Apple Music (music.apple.com). Spotify (open.spotify.com) "
-            "is also fine.\n"
+            "  3. A final line naming the exact track, EXACTLY this format:\n"
+            "       TRACK: <artist> - <song title>\n"
+            "     e.g. 'TRACK: Tems - Love Me JeJe'. Use the real artist and "
+            "song title (no album unless it's an album rec). This line is what "
+            "we look up to attach the Apple Music link, so get the names right; "
+            "it is stripped from the post the room sees. Do NOT write a URL "
+            "yourself and do NOT web_search for a link.\n"
             "\n"
             "HARD LENGTH CAP: 200 chars for the take + question. Past that "
             "you sound like a music journalist, not a bartender. Bartenders "
@@ -1653,17 +1677,17 @@ class ClaudeClient:
             "  - STRONG opinions, not a snob. You'll put on a guilty pleasure "
             "and own it\n"
             "\n"
-            "FINDING THE LINK:\n"
-            "  web_search for 'site:music.apple.com [artist] [song title]' to "
-            "get the Apple Music URL. If Apple Music doesn't have it, try "
-            "'site:open.spotify.com [artist] [song title]'. If neither search "
-            "works, try artist + album name. If you genuinely can't find a "
-            "music link after searching, pick a different track you CAN find. "
-            "A post without a link WILL be deleted. NEVER invent a URL.\n"
+            "THE LINK IS AUTOMATIC:\n"
+            "  Do NOT web_search for a link and do NOT write a URL. Just name "
+            "the track on the TRACK line; we resolve the Apple Music link from "
+            "Apple's catalog and attach it. Use web_search only to DISCOVER "
+            "what to recommend (new drops, trending tracks), never to chase a "
+            "link. Name a real, correctly-spelled artist + song so the lookup "
+            "lands.\n"
             "\n"
             "EMPTY: return literal EMPTY only when you've posted recently AND "
-            "nothing fresh is on your mind. Never return EMPTY because you "
-            "can't find a link, pick a different track instead.\n"
+            "nothing fresh is on your mind. Never return EMPTY because of the "
+            "link, naming the track is enough.\n"
             f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{dedup_clause}"
             + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
@@ -1691,9 +1715,17 @@ class ClaudeClient:
             thinking_enabled=True,
         )
 
+        # The model names the track on a trailing `TRACK: artist - title` line
+        # instead of writing/searching for a URL. Split it off (the room never
+        # sees it), guardrail the take, then attach the Apple Music link we
+        # resolve deterministically from Apple's catalog.
+        body, track_query = _extract_track_line(result.text)
+        if body.strip().upper() == "EMPTY":
+            return "EMPTY"
+
         feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
         cleaned, rejected, deduped = enforce_source_links(
-            result.text,
+            body,
             feed_urls=feed_urls,
             perplexity_context=perplexity_context,
             web_search_urls=result.web_search_urls,
@@ -1709,6 +1741,14 @@ class ClaudeClient:
                 "link_stripped", purpose="music_post", reason="dead_link",
                 count=len(dead), urls=dead[:5],
             )
+
+        # Resolve + append the Apple Music link from the named track. The
+        # resolver is fail-open (None on miss/error); the links-only gate in
+        # cogs/music.py handles a linkless post (retry / skip the slot).
+        if track_query:
+            url = await resolve_apple_music_url(track_query)
+            if url:
+                cleaned = f"{cleaned}\n{url}" if cleaned else url
         return cleaned
 
     async def discourse_score(
