@@ -29,6 +29,20 @@ def _tool_use_block(name: str, tool_id: str, tool_input: dict[str, Any]) -> Any:
     block.input = tool_input
     return block
 
+
+@pytest.fixture(autouse=True)
+def _ask_classifier_skips_by_default() -> Any:
+    """/ask now runs a Haiku grounding classifier (classify_ask_grounding)
+    before generating, and FORCES a web_search for factual questions. The legacy
+    /ask tests here mock _call and assert on the single generate call, so default
+    the classifier to 'no force' (returns False) to keep that one-call shape.
+    Tests that exercise forcing live in test_ask_grounding.py and opt in."""
+    with patch.object(
+        ClaudeClient, "classify_ask_grounding", AsyncMock(return_value=False)
+    ):
+        yield
+
+
 # ---- _time_context ----------------------------------------------------------------
 
 
