@@ -156,6 +156,30 @@ include full message content (data minimization, per the constitution).
 suffix. Typical queries: count of `event=command` per minute, p95 of `duration_ms`
 where `event=claude_api`, sum of `output_tokens` where `purpose=ask` for cost tracking.
 
+## Ops monitor (the single QA interface)
+
+`scripts/ops_monitor.py` + `.github/workflows/ops-monitor.yml` are the bot's one
+automated QA routine, running twice daily (`cron: 0 8,20 * * *`, + manual dispatch).
+A deterministic pass pulls the last ~12h of Railway `EVENT` logs (GraphQL, via
+`RAILWAY_API_TOKEN`/`RAILWAY_SERVICE_ID`) and flags **both** halves of QA:
+
+- **command quality** — per-purpose latency over ceilings (`LATENCY_CEILINGS_MS`),
+  hallucinated-link rate per surface, ungrounded chime-ins (0-search posts), failed
+  slash commands, rate-limit pressure.
+- **error triage** — error signatures grouped by `(source, exception_class)`, split by
+  the `recoverable` tag from `emit_error` (non-recoverable = high / user-impacting;
+  all-recoverable = low, bumped to medium on a burst ≥ `BURST_ERROR_MIN`), with the
+  inline traceback + context attached.
+
+`claude-code-action` then judges the flagged samples and files **deduped `auto-eval`
+issues** (it searches open `auto-eval` issues first, so no spam; "All clear" files
+nothing). The deterministic core (`parse/aggregate/evaluate/render`) is pure and
+unit-tested in `tests/test_ops_monitor.py`; the Railway I/O is integration-only
+(`pragma: no cover`).
+
+This **replaces the standalone Railway log-monitor routine** — error monitoring now
+lives here, one interface and one cadence. There is no separate log-monitor workflow.
+
 ## Branching and PR rules
 
 **Never push directly to `main`.** Even for one-line prompt tweaks or typo fixes, always work on a branch and open a PR. The PR doesn't have to wait for human review — you can merge it yourself once CI passes if the change is small and obvious — but the PR exists so the change has a reviewable diff, runs CI, and can be reverted cleanly. Direct pushes to main skip the safety net.

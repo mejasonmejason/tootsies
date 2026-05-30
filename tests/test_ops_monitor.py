@@ -1,4 +1,4 @@
-"""Unit tests for the deterministic half of the command evaluator.
+"""Unit tests for the deterministic half of the ops monitor.
 
 Covers parse/aggregate/evaluate/render on synthetic event dicts. The Railway
 I/O is integration-only and excluded from coverage.
@@ -6,7 +6,7 @@ I/O is integration-only and excluded from coverage.
 
 from __future__ import annotations
 
-from scripts.eval_commands import (
+from scripts.ops_monitor import (
     aggregate,
     evaluate,
     parse_event_lines,
@@ -52,16 +52,44 @@ def test_aggregate_collects_latency_tokens_and_zero_tool_calls() -> None:
     assert len(st.samples) == 2
 
 
-def test_evaluate_flags_errors_as_high() -> None:
+def test_evaluate_flags_nonrecoverable_errors_as_high_with_traceback() -> None:
     agg = aggregate([
-        {"event": "error", "source": "order", "error": "TimeoutError", "ts": "1"},
+        {"event": "error", "source": "order", "error": "TimeoutError", "ts": "1",
+         "traceback": ["frame a", "frame b: raise TimeoutError"],
+         "context": {"model": "sonnet"}},
         {"event": "error", "source": "order", "error": "TimeoutError", "ts": "2"},
     ])
     findings = evaluate(agg)
     err = [f for f in findings if f.kind == "error"]
     assert len(err) == 1
-    assert err[0].severity == "high"
+    assert err[0].severity == "high"  # non-recoverable -> user-impacting
     assert "2x" in err[0].detail
+    assert "2 non-recoverable" in err[0].detail
+    assert "model" in err[0].detail  # context surfaced
+    # The deepest traceback frame rides along as a sample for the judge.
+    assert err[0].samples == ["frame b: raise TimeoutError"]
+
+
+def test_evaluate_recoverable_error_is_low_until_it_bursts() -> None:
+    # A handful of recovered errors is informational (low severity).
+    agg = aggregate([
+        {"event": "error", "source": "chimein_score", "error": "APITimeout",
+         "recoverable": True, "ts": str(i)}
+        for i in range(3)
+    ])
+    err = [f for f in evaluate(agg) if f.kind == "error"]
+    assert len(err) == 1
+    assert err[0].severity == "low"
+    assert "0 non-recoverable, 3 recovered" in err[0].detail
+
+    # But once the same recoverable signature bursts past the threshold, bump it.
+    agg2 = aggregate([
+        {"event": "error", "source": "chimein_score", "error": "APITimeout",
+         "recoverable": True, "ts": str(i)}
+        for i in range(12)  # >= BURST_ERROR_MIN (10)
+    ])
+    err2 = [f for f in evaluate(agg2) if f.kind == "error"]
+    assert err2[0].severity == "medium"
 
 
 def test_evaluate_flags_latency_over_ceiling() -> None:

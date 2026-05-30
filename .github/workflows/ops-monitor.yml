@@ -1,0 +1,70 @@
+name: ops-monitor
+
+# Twice-daily ops monitor for the bot — the single QA interface. A deterministic
+# pass (scripts/ops_monitor.py) pulls the last ~12h of Railway EVENT logs and
+# flags BOTH command-quality regressions (latency, hallucinated links, ungrounded
+# chime-ins, failed commands, rate limits) AND error signatures (grouped by
+# source + exception, split by the recoverable tag, bursts escalated); Claude
+# Code then judges the flagged samples and files deduped `auto-eval` issues.
+# This replaces the standalone Railway log-monitor routine. See the script
+# docstring for the full metric set.
+
+on:
+  schedule:
+    - cron: "0 8,20 * * *"  # 08:00 and 20:00 UTC, twice a day
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write       # file/update auto-eval issues
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deterministic ops eval (stdlib only)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: python scripts/ops_monitor.py --out "$RUNNER_TEMP/ops_report.md"
+
+      - name: Judge + file deduped issues
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Read the deterministic ops-monitor report at
+            ${{ runner.temp }}/ops_report.md. It covers the last ~12h of the
+            bot's production behavior: one section per flagged finding (command
+            quality AND error signatures), plus a per-purpose metrics table.
+
+            For each finding:
+            - Decide if it's a REAL, actionable problem. Read the samples; some
+              flags are noise (a one-off slow call, a single stripped link, a
+              lone recoverable error). Be conservative. For `error` findings,
+              non-recoverable signatures are user-impacting and worth filing;
+              all-recoverable ones are usually informational unless they burst.
+            - Before filing, search OPEN issues labeled `auto-eval`. If the same
+              problem is already open, do NOT open a duplicate; add a short
+              comment only if it's materially worse this run.
+            - Otherwise open ONE concise issue per distinct problem, labeled
+              `auto-eval`, titled with the command/source + symptom. Include the
+              metric and numbers, 2-3 samples (or the traceback for errors), and
+              a one-line hypothesis of the cause. Keep it short and actionable.
+
+            If the report says "All clear", do nothing. If it says SETUP
+            INCOMPLETE or EVAL FAILED, file exactly one `auto-eval` issue about
+            that (unless one is already open). One confident, specific issue
+            beats five vague ones.

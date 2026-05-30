@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Twice-daily command evaluator.
+"""Twice-daily ops monitor for the bot.
 
-Pulls the bot's structured EVENT logs from Railway, computes per-command health
-metrics over the recent window, and emits a Markdown report of regressions
-(threshold crossings) with sample outputs. A scheduled GitHub Actions workflow
-(.github/workflows/command-eval.yml) runs this, then hands the report to
-Claude Code, which judges quality on the flagged samples and files deduped
-`auto-eval` issues.
+Pulls the bot's structured EVENT logs from Railway, computes health metrics over
+the recent window, and emits a Markdown report of regressions (threshold
+crossings) with sample outputs. A scheduled GitHub Actions workflow
+(.github/workflows/ops-monitor.yml) runs this, then hands the report to Claude
+Code, which judges the flagged samples and files deduped `auto-eval` issues.
+
+This one routine owns BOTH halves of the bot's QA:
+  - command quality: per-purpose latency over ceilings, hallucinated-link rate,
+    ungrounded chime-ins, failed slash commands, rate-limit pressure.
+  - error triage: error signatures grouped by (source, exception_class), split
+    by the `recoverable` tag from emit_error, with the inline traceback +
+    context attached and bursts escalated. (This replaces the standalone
+    Railway log-monitor routine: one interface, one cadence.)
 
 This is the DETERMINISTIC half of the hybrid: it does the reliable counting and
 flagging; the LLM does the fuzzy "is this take actually hollow/wrong" judgment.
 
 Run locally (needs RAILWAY_API_TOKEN + RAILWAY_SERVICE_ID in env):
 
-    python scripts/eval_commands.py            # print report to stdout
-    python scripts/eval_commands.py --out r.md # also write to a file
+    python scripts/ops_monitor.py            # print report to stdout
+    python scripts/ops_monitor.py --out r.md # also write to a file
 
 The pure functions (parse/aggregate/evaluate/render) take plain event dicts and
 are unit-tested; the Railway I/O is integration-only (pragma: no cover).
@@ -60,6 +67,9 @@ UNGROUNDED_CHIMEIN_RATE = 0.5
 UNGROUNDED_CHIMEIN_MIN_POSTS = 4
 # Max sample outputs to attach to any one finding.
 MAX_SAMPLES = 3
+# Occurrences of one error signature in the window before we call it a "burst"
+# (bumps an otherwise-recoverable signature up a severity notch).
+BURST_ERROR_MIN = 10
 
 
 @dataclass
@@ -77,9 +87,26 @@ class PurposeStats:
 
 
 @dataclass
+class ErrorStats:
+    """One error signature, keyed on (source, exception_class).
+
+    Pulls the structure out of `emit_error` (utils/events.py) so the report can
+    triage urgency the same way the bot tags it: `recoverable=True` means the
+    bot caught + recovered (retry/skip, no user-visible failure), so those are
+    informational; non-recoverable ones caused a deflection / undelivered
+    response and are the ones that actually bite.
+    """
+    n: int = 0
+    recoverable: int = 0
+    non_recoverable: int = 0
+    sample_traceback: str = ""
+    sample_context: str = ""
+
+
+@dataclass
 class Aggregate:
     purposes: dict[str, PurposeStats] = field(default_factory=dict)
-    errors: dict[tuple[str, str], int] = field(default_factory=dict)
+    errors: dict[tuple[str, str], ErrorStats] = field(default_factory=dict)
     command_failures: list[dict] = field(default_factory=list)
     hallucinated_links: dict[str, int] = field(default_factory=dict)
     hallucinated_samples: dict[str, list[str]] = field(default_factory=dict)
@@ -141,7 +168,19 @@ def aggregate(events: list[dict]) -> Aggregate:
                 stats.samples.append(str(preview))
         elif kind == "error":
             ekey = (str(ev.get("source", "?")), str(ev.get("error", "?")))
-            agg.errors[ekey] = agg.errors.get(ekey, 0) + 1
+            est = agg.errors.setdefault(ekey, ErrorStats())
+            est.n += 1
+            if ev.get("recoverable"):
+                est.recoverable += 1
+            else:
+                est.non_recoverable += 1
+            # Keep the first traceback/context we see for this signature, so the
+            # judge can write an actionable bug without re-running the call.
+            if not est.sample_traceback and ev.get("traceback"):
+                tb = ev["traceback"]
+                est.sample_traceback = tb[-1] if isinstance(tb, list) and tb else str(tb)
+            if not est.sample_context and ev.get("context"):
+                est.sample_context = str(ev["context"])
         elif kind == "command" and ev.get("ok") is False:
             agg.command_failures.append(ev)
         elif kind == "link_stripped" and ev.get("reason") == "hallucinated":
@@ -164,11 +203,28 @@ def evaluate(agg: Aggregate) -> list[Finding]:
     """Turn aggregated metrics into a list of issue-worthy findings."""
     findings: list[Finding] = []
 
-    # 1. Any errors at all are worth a look.
-    for (source, error), n in sorted(agg.errors.items(), key=lambda x: -x[1]):
+    # 1. Error signatures, grouped by (source, exception). Non-recoverable
+    #    errors (user-visible failures) are high; all-recoverable signatures are
+    #    informational (low) unless they burst, which bumps them to medium. This
+    #    deprioritizes background-tick noise without a hardcoded suppression list
+    #    (the bot already tags those `recoverable=True`).
+    for (source, error), est in sorted(agg.errors.items(), key=lambda x: -x[1].n):
+        if est.non_recoverable:
+            severity = "high"
+        elif est.n >= BURST_ERROR_MIN:
+            severity = "medium"
+        else:
+            severity = "low"
+        detail = (
+            f"{est.n}x `{error}` from `{source}` "
+            f"({est.non_recoverable} non-recoverable, {est.recoverable} recovered)."
+        )
+        if est.sample_context:
+            detail += f" context: {est.sample_context[:200]}"
+        samples = [est.sample_traceback] if est.sample_traceback else []
         findings.append(Finding(
-            command=source, kind="error", severity="high",
-            detail=f"{n}x `{error}` raised from `{source}`.",
+            command=source, kind="error", severity=severity,
+            detail=detail, samples=samples,
         ))
 
     # 2. Slash-command invocations that returned ok=false.
@@ -237,7 +293,7 @@ def evaluate(agg: Aggregate) -> list[Finding]:
 def render(agg: Aggregate, findings: list[Finding], window: str = "") -> str:
     """Render the report as Markdown for Claude Code to act on."""
     lines: list[str] = []
-    lines.append("# Command eval report")
+    lines.append("# Ops monitor report")
     if window:
         lines.append(f"_Window: {window}_")
     lines.append(f"_{agg.total_events} events analyzed._")
@@ -337,7 +393,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
 
     if not os.environ.get("RAILWAY_API_TOKEN") or not os.environ.get("RAILWAY_SERVICE_ID"):
         report = (
-            "# Command eval report\n\n"
+            "# Ops monitor report\n\n"
             "**SETUP INCOMPLETE.** `RAILWAY_API_TOKEN` / `RAILWAY_SERVICE_ID` are not "
             "available to this run, so no production logs could be pulled. Add them as "
             "GitHub Actions secrets so the eval can read Railway logs. File ONE issue "
@@ -351,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
             report = render(agg, findings)
         except Exception as exc:
             report = (
-                "# Command eval report\n\n"
+                "# Ops monitor report\n\n"
                 f"**EVAL FAILED.** Could not complete the evaluation: `{exc}`. "
                 "File ONE issue (labeled `auto-eval`) if one isn't already open."
             )
