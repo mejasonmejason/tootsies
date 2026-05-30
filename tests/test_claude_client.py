@@ -166,6 +166,38 @@ async def test_call_attaches_system_prompt_with_cache_control() -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_skip_persona_drops_constitution_and_persona() -> None:
+    """skip_persona runs system_extra as the whole system prompt (no Toots),
+    so pure classifiers don't drift into persona instead of emitting a label."""
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=HAIKU,
+        user_message="x",
+        system_extra="TASK: reply ABUSE or OK",
+        purpose="classify_abuse",
+        skip_persona=True,
+    )
+    system = create.call_args.kwargs["system"]
+    assert system[0]["text"] == "TASK: reply ABUSE or OK"
+    assert "Toots" not in system[0]["text"]
+    # cache_control survives so repeat classifier calls still hit the cache
+    assert system[0].get("cache_control") == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_call_skip_persona_omits_time_context() -> None:
+    """A bare classifier judges the literal text; no date stapled to the front."""
+    client, create = _client_with_fake_anthropic()
+    await client._call(
+        model=HAIKU, user_message="kill yourself bot", purpose="classify_abuse",
+        skip_persona=True,
+    )
+    content = create.call_args.kwargs["messages"][0]["content"]
+    assert content == "kill yourself bot"
+    assert "[ctx" not in content
+
+
+@pytest.mark.asyncio
 async def test_call_emits_claude_api_event_on_success(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -696,6 +728,9 @@ async def test_classify_abuse_uses_haiku_with_tiny_budget() -> None:
     assert kwargs["model"] == HAIKU
     assert kwargs["max_tokens"] == 4
     assert kwargs["purpose"] == "classify_abuse"
+    # The fix for #136: bypass the persona so the classifier returns a label
+    # instead of answering in Toots's voice.
+    assert kwargs["skip_persona"] is True
 
 
 @pytest.mark.asyncio
