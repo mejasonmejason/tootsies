@@ -12,7 +12,8 @@ A Discord bot for the Tootsies server. The bot is "Toots", a hip city-girl barte
 
 - Python 3.11+, `discord.py` 2.4
 - Postgres on Railway (`asyncpg`)
-- Anthropic API: Haiku 4.5 for `/ask`, `/recap`, scheduler, chime-in scoring, deflections; Sonnet 4.6 for `/discourse`, chime-in posting, and `/order` pre-flight
+- Anthropic API: Haiku 4.5 for `/ask`, `/recap`, scheduler, chime-in scoring, market intent routing, deflections; Sonnet 4.6 for `/discourse`, chime-in posting, the long-term-memory write pipeline, and `/order` pre-flight
+- Live data: SportsGameOdds (sports lines), Polymarket + Kalshi (prediction markets), Perplexity (news/trends) — see env vars below
 - GitHub Actions running `claude-code-action` for the `/order` pipeline
 - Railway for hosting + auto-deploy on push to `main`
 
@@ -28,6 +29,8 @@ python bot.py
 
 You need a running Postgres reachable via `DATABASE_URL`. The bot bootstraps its own schema on startup.
 
+Required env vars: `DISCORD_TOKEN`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `DATABASE_URL`. Optional enrichers degrade gracefully when unset: `SPORTS_GAME_ODDS_API_KEY` (live sports lines), `PERPLEXITY_API_KEY` (news/trends; Polymarket + Kalshi need no key). See [.env.example](.env.example) for the full list.
+
 ### Checks (all enforced in CI)
 
 ```bash
@@ -35,6 +38,8 @@ ruff check .
 mypy .
 pytest        # includes --cov + --cov-fail-under=50
 ```
+
+Offline eval harnesses (not part of CI; run against the live API): `evals/eval_ask.py`, `evals/eval_kalshi_discovery.py`, `scripts/eval_commands.py`, `scripts/eval_memory_fence.py`, `scripts/eval_music_post.py`.
 
 ### Deployment
 
