@@ -499,6 +499,7 @@ class ClaudeClient:
         purpose: str = "unknown",
         image_urls: list[str] | None = None,
         thinking_enabled: bool = False,
+        tool_choice: dict[str, Any] | None = None,
     ) -> ClaudeResult:
         # System prompt is a list with a cache_control marker on the persona block so
         # repeat calls hit the prompt cache (the persona is ~1k tokens and stable).
@@ -544,6 +545,11 @@ class ClaudeClient:
             kwargs["output_config"] = {"effort": "medium"}
             if max_tokens < 4096:
                 kwargs["max_tokens"] = 4096
+        elif tool_choice:
+            # Forced tool use (e.g. mandatory web_search). The API rejects a
+            # non-auto tool_choice while adaptive thinking is on, so this only
+            # applies when thinking is off.
+            kwargs["tool_choice"] = tool_choice
 
         start = time.monotonic()
         # Client-side tool loop. When `tool_handlers` is set the model can emit a
@@ -1843,6 +1849,10 @@ class ClaudeClient:
             "to drop a take and walking off, not starting a 1-on-1 chat with "
             "one person.\n"
             "\n"
+            "SEARCH FIRST: web_search runs before you write (it's forced). "
+            "Read what comes back and ground the take in it, your training is "
+            "stale, don't answer from memory.\n"
+            "\n"
             f"WHAT CAUGHT YOUR EYE: {hook}\n"
             "\n"
             "AIM AT THE ROOM, NOT AT YOU:\n"
@@ -1954,13 +1964,19 @@ class ClaudeClient:
             f"Buffer (oldest first):\n{buffer_blob}"
             f"{enriched_block}{perplexity_block}{markets_block}{dedup_block}"
         )
+        # SEARCH IS MANDATORY. A chime-in is an uninvited take on a live room;
+        # it must be grounded in a fresh search, not pulled from stale memory
+        # (every "same lane / the receipts" misfire ran zero searches). Force
+        # the web_search tool so she can't skip it. tool_choice forcing is
+        # incompatible with adaptive thinking, so thinking is off here.
         result = await self._call(
             model=SONNET, user_message=user, system_extra=system_extra,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            tool_choice={"type": "tool", "name": "web_search"},
             max_tokens=MAX_TOKENS_POST,
             purpose="chimein_post",
             image_urls=image_urls,
-            thinking_enabled=True,
+            thinking_enabled=False,
         )
 
         feed_urls = (
