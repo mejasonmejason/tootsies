@@ -173,11 +173,19 @@ async def test_search_ask_has_no_recency_filter(client: PerplexityClient):
     assert "search_recency_filter" not in _posted_payload(client._session)
 
 
-async def test_search_music_and_discourse_use_week_recency(client: PerplexityClient):
-    for purpose in ("music", "discourse"):
-        client._session = _ok_session()
-        await client.search("q", purpose=purpose)
-        assert _posted_payload(client._session)["search_recency_filter"] == "week"
+async def test_search_discourse_uses_week_recency(client: PerplexityClient):
+    client._session = _ok_session()
+    await client.search("q", purpose="discourse")
+    assert _posted_payload(client._session)["search_recency_filter"] == "week"
+
+
+async def test_search_music_uses_month_recency(client: PerplexityClient):
+    """Music curation has a longer half-life than sports/pop discourse, so it
+    gets a wider month window (still excludes evergreen filler) rather than the
+    7-day novelty bias of week."""
+    client._session = _ok_session()
+    await client.search("q", purpose="music")
+    assert _posted_payload(client._session)["search_recency_filter"] == "month"
 
 
 async def test_search_recap_and_chimein_use_day_recency(client: PerplexityClient):
