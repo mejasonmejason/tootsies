@@ -131,10 +131,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `discourse_dedup` | cogs/discourse.py | guild_id, channel_id, decision (`similarity_gate`), post_preview |
 | `discourse_skipped` | cogs/discourse.py | guild_id, channel_id, reason (`rate_limited`/`compose_error`/`empty`) |
 | `link_enrich` | utils/link_enrich.py | platform, url_host, ok, duration_ms, cache_hit |
-| `pplx_ask` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
-| `pplx_discourse` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
-| `pplx_recap` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
-| `pplx_chimein` | utils/perplexity.py | ok, duration_ms, input_tokens, output_tokens, response_chars, error |
+| `pplx_<purpose>` (`pplx_ask`/`pplx_discourse`/`pplx_recap`/`pplx_chimein`/`pplx_music`) | utils/perplexity.py | ok, duration_ms; on success: input_tokens, output_tokens, response_chars, hedged, source_count, context_size, recency; on failure: error |
 | `link_stripped` | claude_client.py (`discourse`, `ask`, `recap`, `music_post`, `chimein_post`) | purpose, reason (`hallucinated` \| `redundant` \| `dead_link`), count, urls |
 | `market_fetch` | utils/markets.py | source (sgo/polymarket/kalshi), query, ok, duration_ms, cache_hit, result_count, error |
 | `music_fallback` | cogs/music.py | guild_id, channel_id, channel_name, reason |

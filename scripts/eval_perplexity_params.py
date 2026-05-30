@@ -23,7 +23,12 @@ import asyncio
 import os
 import time
 
-from utils.perplexity import _SEARCH_CONFIG, PerplexityClient, build_search_query
+from utils.perplexity import (
+    _SEARCH_CONFIG,
+    PerplexityClient,
+    build_search_query,
+    is_hedged,
+)
 
 # How many times to sample each grid cell. Hedging is intermittent, so a single
 # sample is a coin flip, not a rate. 3 keeps the live API spend bounded while
@@ -42,32 +47,10 @@ PROBES: list[dict[str, str]] = [
 
 CONTEXT_SIZES = ["low", "medium", "high"]
 
-# Phrases that signal Sonar punted instead of retrieving. Lowercased substring
-# match against the response body (the SOURCES block is excluded so a real URL
-# containing one of these words can't false-positive).
-HEDGE_MARKERS = (
-    "can't verify",
-    "cannot verify",
-    "couldn't find",
-    "could not find",
-    "do not have",
-    "don't have access",
-    "i'm not able to",
-    "unable to verify",
-    "no verifiable",
-    "mostly youtube mixes",
-    "playlist pages",
-)
-
 
 def _purpose_for(probe: dict[str, str]) -> str:
     # music rides discourse-shaped query text but its own search params.
     return "music" if probe["surface"] == "music" and probe["category"] else probe["surface"]
-
-
-def _is_hedged(text: str) -> bool:
-    body = text.split("SOURCES:")[0].lower()
-    return any(m in body for m in HEDGE_MARKERS)
 
 
 def _source_count(text: str) -> int:
@@ -118,7 +101,7 @@ async def main() -> None:
                         if text is None:
                             errors += 1
                             continue
-                        if _is_hedged(text):
+                        if is_hedged(text):
                             hedged += 1
                         sources.append(_source_count(text))
                     ok = REPEATS - errors

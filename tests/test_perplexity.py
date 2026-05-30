@@ -10,6 +10,7 @@ from utils.perplexity import (
     PerplexityClient,
     build_search_query,
     format_perplexity_for_prompt,
+    is_hedged,
 )
 
 # ---- build_search_query -------------------------------------------------------
@@ -106,6 +107,27 @@ def test_format_prompt_flags_block_as_fact_authoritative():
     assert any(s in lower for s in fact_signals), (
         f"format header should signal fact-authority over training memory, got: {result}"
     )
+
+
+# ---- is_hedged -----------------------------------------------------------------
+
+
+def test_is_hedged_detects_punt():
+    assert is_hedged("I can't verify live trends right now.")
+    assert is_hedged("Results are mostly youtube mixes and playlist pages.")
+
+
+def test_is_hedged_passes_real_answer():
+    assert not is_hedged("Chxrry22 dropped a new single this week and it's charting.")
+
+
+def test_is_hedged_ignores_sources_block():
+    """A marker word inside a citation URL must not trip the flag."""
+    text = (
+        "Drake has 13 number ones.\n\nSOURCES:\n"
+        "  [1] https://example.com/cannot-verify-this-slug"
+    )
+    assert not is_hedged(text)
 
 
 # ---- PerplexityClient ----------------------------------------------------------
