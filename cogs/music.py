@@ -57,6 +57,11 @@ MUSIC_SCORE_THRESHOLD = 0.6
 
 _MUSIC_LINK_HOSTS = ("music.apple.com", "open.spotify.com", "spotify.link")
 
+# Voiced non-answer for manual /music when nothing postable came up (EMPTY, or
+# no link after a retry). The links-only channel never gets a linkless post, so
+# the mod gets this instead of a bare take.
+_NOTHING_HITTING = "nothing's hitting right now. try again in a bit."
+
 # Rotate Perplexity search category so she doesn't default to hip-hop every time.
 _MUSIC_GENRES = ["hiphop", "rnb", "pop", "afrobeats", "neo-soul"]
 
@@ -65,6 +70,21 @@ def _has_music_link(text: str) -> bool:
     """Check if the text contains a valid Apple Music or Spotify link."""
     lowered = text.lower()
     return any(host in lowered for host in _MUSIC_LINK_HOSTS)
+
+
+def _resolve_linkless(line: str | None, line2: str | None, *, must_post: bool) -> str:
+    """Decide what to return when the first music_post had no link, after a retry.
+
+    Pure so the links-only invariant is testable without mocking the cog. The
+    rule: a linkless post NEVER reaches the channel.
+      - if the retry produced a real linked post, the caller already returned it
+        (this helper is only reached when it didn't);
+      - scheduled (must_post=False): skip the slot ("" -> caller posts nothing);
+      - manual (must_post=True): the voiced non-answer, never a linkless take.
+    """
+    if not must_post:
+        return ""
+    return _NOTHING_HITTING
 
 
 def _parse_retry_after_seconds(exc: anthropic.RateLimitError) -> float | None:
@@ -228,7 +248,7 @@ class Music(commands.Cog):
             # Skip the slot on scheduled posts; on manual /music,
             # tell the user nothing came up.
             if must_post:
-                return "nothing's hitting right now. try again in a bit."
+                return _NOTHING_HITTING
             return ""
 
         # Quality gate
@@ -283,10 +303,11 @@ class Music(commands.Cog):
                 guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
                 must_post=must_post, attempt=2, post_preview=(line2 or "")[:120],
             )
-            if not must_post:
-                log.info("music post still missing link after retry, skipping slot")
-                return ""
-            return line2 if line2 and line2.strip().upper() != "EMPTY" else line
+            log.info(
+                "music post still missing link after retry (must_post=%s)", must_post,
+            )
+            # Never post a linkless message into the links-only channel.
+            return _resolve_linkless(line, line2, must_post=must_post)
 
         return line
 
