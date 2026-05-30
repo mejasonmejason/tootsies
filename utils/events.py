@@ -76,10 +76,14 @@ Known kinds (keep this list in sync with what's emitted):
   - link_enrich        : per-URL social-link enrichment attempt (utils/link_enrich.py)
       platform (twitter|tiktok|youtube|reddit|bluesky), url_host, ok,
       duration_ms, cache_hit
-  - pplx_ask            : Perplexity Sonar call for /ask (utils/perplexity.py)
-  - pplx_discourse      : Perplexity Sonar call for /discourse (utils/perplexity.py)
-  - pplx_recap          : Perplexity Sonar call for /recap (utils/perplexity.py)
-  - pplx_chimein        : Perplexity Sonar call for chime-in (utils/perplexity.py)
+  - pplx_<purpose>      : Perplexity Sonar call (utils/perplexity.py). One event
+      per surface: pplx_ask, pplx_discourse, pplx_recap, pplx_chimein, pplx_music.
+      Always: ok, duration_ms.
+      On success: input_tokens, output_tokens, response_chars,
+        hedged (bool: response read as a non-answer / "can't verify" punt),
+        source_count (# citations in the SOURCES block),
+        context_size (low|medium|high), recency (hour|day|week|month|off).
+      On failure: error (HTTP <status> | no_choices | exception class).
       All four: ok, duration_ms, input_tokens, output_tokens,
       response_chars, error (on failure)
   - link_stripped      : guardrail removed a URL from the model's output.

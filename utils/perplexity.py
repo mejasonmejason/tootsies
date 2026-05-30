@@ -73,6 +73,35 @@ _SEARCH_CONFIG: dict[str, dict[str, Any]] = {
 # from omitting the arg (use the per-surface default).
 _UNSET: Any = object()
 
+# Phrases that mean Sonar punted instead of retrieving ("I can't verify live
+# trends", "results are mostly playlist pages"). This is the exact symptom the
+# per-surface search params exist to kill, so we tag each live response with a
+# `hedged` flag to track the rate on a dashboard (not just in the offline eval).
+# Single source of truth: scripts/eval_perplexity_params.py imports this.
+_HEDGE_MARKERS: tuple[str, ...] = (
+    "can't verify",
+    "cannot verify",
+    "couldn't find",
+    "could not find",
+    "do not have",
+    "don't have access",
+    "i'm not able to",
+    "unable to verify",
+    "no verifiable",
+    "mostly youtube mixes",
+    "playlist pages",
+)
+
+
+def is_hedged(text: str) -> bool:
+    """True if a Sonar response reads as a non-answer (hedge) rather than facts.
+
+    Substring match against `_HEDGE_MARKERS`, excluding the appended SOURCES
+    block so a real URL containing a marker word can't false-positive.
+    """
+    body = text.split("SOURCES:", 1)[0].lower()
+    return any(m in body for m in _HEDGE_MARKERS)
+
 
 class PerplexityClient:
     """Thin async wrapper around the Perplexity Sonar API."""
@@ -180,10 +209,13 @@ class PerplexityClient:
                         sr["url"] for sr in raw_results
                         if isinstance(sr, dict) and isinstance(sr.get("url"), str)
                     ]
+            source_count = 0
             if citation_urls and text:
                 citation_urls = [ensure_protocol(u) for u in citation_urls]
+                shown = citation_urls[:10]
+                source_count = len(shown)
                 sources_lines = "\n".join(
-                    f"  [{i + 1}] {url}" for i, url in enumerate(citation_urls[:10])
+                    f"  [{i + 1}] {url}" for i, url in enumerate(shown)
                 )
                 text = f"{text}\n\nSOURCES:\n{sources_lines}"
 
@@ -194,6 +226,10 @@ class PerplexityClient:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 response_chars=len(text),
+                hedged=is_hedged(text) if text else False,
+                source_count=source_count,
+                context_size=context_size,
+                recency=recency_filter or "off",
             )
             return text if text else None
 
