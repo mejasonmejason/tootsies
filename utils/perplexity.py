@@ -35,6 +35,36 @@ _MODEL = "sonar"
 # user-facing latency (the call runs in parallel with Claude, which dominates).
 _TIMEOUT_SECONDS = 8.0
 
+# Per-surface Sonar search controls. Without these the API inherits its defaults,
+# the worst of which is search_context_size="low" (shallowest retrieval), which
+# was producing low-signal evergreen filler and "I can't verify live trends"
+# hedging. We bump every surface to "medium" context (deeper retrieval, ~modest
+# cost bump vs the doubling that "high" would cost across all 5 callers) and add
+# a recency window where freshness is the whole point.
+#
+#   - music / discourse: trend surfaces, want THIS WEEK's drops, not evergreen.
+#   - recap / chimein:    breaking news / live events, want the last day.
+#   - ask:                NO recency filter. It leads with fact verification
+#                         (record counts, chart totals, "first since" claims)
+#                         that live on evergreen authoritative pages (Wikipedia,
+#                         Billboard discographies); a day/week window would hide
+#                         exactly the pages it needs.
+#
+# recency values: hour/day/week/month/year. Cannot combine with date filters.
+_DEFAULT_SEARCH_CONFIG: dict[str, Any] = {"context": "medium", "recency": None}
+_SEARCH_CONFIG: dict[str, dict[str, Any]] = {
+    "ask": {"context": "medium", "recency": None},
+    "discourse": {"context": "medium", "recency": "week"},
+    "recap": {"context": "medium", "recency": "day"},
+    "chimein": {"context": "medium", "recency": "day"},
+    "music": {"context": "medium", "recency": "week"},
+}
+
+# Sentinel so callers can explicitly pass recency=None to DISABLE the per-surface
+# recency default (used by the eval harness to A/B recency on vs off), distinct
+# from omitting the arg (use the per-surface default).
+_UNSET: Any = object()
+
 
 class PerplexityClient:
     """Thin async wrapper around the Perplexity Sonar API."""
@@ -59,8 +89,20 @@ class PerplexityClient:
             await self._session.close()
         self._session = None
 
-    async def search(self, query: str, *, purpose: str = "unknown") -> str | None:
+    async def search(
+        self,
+        query: str,
+        *,
+        purpose: str = "unknown",
+        search_context_size: str | None = None,
+        recency: Any = _UNSET,
+    ) -> str | None:
         """Run a search query through Perplexity Sonar.
+
+        Search controls (retrieval depth + recency window) are resolved
+        per-`purpose` from `_SEARCH_CONFIG`. Callers normally just pass
+        `purpose`; `search_context_size` and `recency` are explicit overrides
+        for the eval harness (pass `recency=None` to disable the window).
 
         Returns the text response (with citations baked in) or None on any
         failure. Emits a `pplx_<purpose>` event for dashboard tracking.
@@ -69,6 +111,9 @@ class PerplexityClient:
         ok = True
         input_tokens = 0
         output_tokens = 0
+        cfg = _SEARCH_CONFIG.get(purpose, _DEFAULT_SEARCH_CONFIG)
+        context_size = search_context_size or cfg["context"]
+        recency_filter = cfg["recency"] if recency is _UNSET else recency
         try:
             sess = await self._get_session()
             payload: dict[str, Any] = {
@@ -76,7 +121,10 @@ class PerplexityClient:
                 "messages": [
                     {"role": "user", "content": query},
                 ],
+                "web_search_options": {"search_context_size": context_size},
             }
+            if recency_filter:
+                payload["search_recency_filter"] = recency_filter
             async with sess.post(_API_URL, json=payload) as resp:
                 if resp.status != 200:
                     ok = False

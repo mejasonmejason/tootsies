@@ -1,5 +1,14 @@
 # Handoff: Perplexity Sonar API — search-control parameters not being used
 
+> **RESOLVED.** Per-surface search controls are now set in `utils/perplexity.py`
+> (`_SEARCH_CONFIG`): every surface gets `search_context_size="medium"` and the
+> trend/news surfaces get a recency window (music/discourse `week`, recap/chimein
+> `day`; `ask` stays unfiltered so evergreen fact-verification pages survive).
+> `search()` takes `search_context_size` / `recency` overrides for the eval
+> harness at `scripts/eval_perplexity_params.py`. `high` context was deliberately
+> NOT shipped by default (cost is cross-surface) — flip it via the eval if a
+> surface still hedges. The rest of this doc is the original investigation.
+
 ## TL;DR
 `utils/perplexity.py` calls Perplexity Sonar with **only `model` + `messages`**, so it inherits every default — including `search_context_size="low"` (shallowest retrieval). Result: low-signal, evergreen filler. Symptom (found while evaluating music posts): every Perplexity response opens with *"I can't verify live trends — results are mostly YouTube mixes / playlist pages."* We were encoding intent as **prose in the query string** ("last few hours", "check Twitter/X") and assuming the API acts on it; those are actually structured **API parameters** we never set. Fix = set the search-control params (per-surface), eval before/after, ship as its own PR.
 
