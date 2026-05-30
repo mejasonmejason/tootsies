@@ -144,7 +144,7 @@ Existing event kinds (keep [utils/events.py](utils/events.py) docstring in sync)
 | `abuse_warned` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `abuse_silenced` | utils/abuse_tracker.py | guild_id, user_id, violations |
 | `reaction_added` | utils/reactions.py | source, guild_id, channel_id, message_id, emoji |
-| `memory_write` | cogs/memory.py | guild_id, tier (hourly\|daily\|weekly), ok, chars\|skipped, message_count, channel_count, rolled_up, backfill |
+| `memory_write` | cogs/memory.py | guild_id, tier (hourly\|daily\|weekly), ok, chars\|skipped (low_activity\|empty\|truncated), message_count, channel_count, rolled_up, backfill |
 | `memory_forget` | cogs/memory.py | guild_id, user_id, notes_deleted |
 | `memory_search` | cogs/ask.py | guild_id, query, hits |
 

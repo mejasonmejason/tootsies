@@ -508,6 +508,19 @@ class ClaudeResult:
     web_search_urls: list[str] = field(default_factory=list)
 
 
+class MemoryRollupTruncated(Exception):
+    """A memory rollup hit max_tokens mid-synthesis. Raised so the caller can
+    refuse to persist the half-finished note AND keep its source notes intact.
+    The rollup is destructive (it deletes the tier below once written), so a
+    truncated synthesis written + sources deleted is silent data loss (#158):
+    the truncated note becomes the only record of an activity arc. Better to
+    skip the cycle and leave the lower tier uncompressed than to lose it."""
+
+    def __init__(self, period: str) -> None:
+        super().__init__(f"{period} rollup truncated at max_tokens")
+        self.period = period
+
+
 class ClaudeClient:
     def __init__(self, api_key: str | None = None) -> None:
         self.client = AsyncAnthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
@@ -1268,6 +1281,12 @@ class ClaudeClient:
             max_tokens=MAX_TOKENS_MEMORY_ROLLUP,
             purpose=f"memory_{period}",
         )
+        # A rollup that hit the token wall is half a synthesis. Persisting it
+        # while deleting the source notes is silent data loss (#158): the cap
+        # raise above makes this rare, but the caller still gets a hard signal
+        # so it can keep the lower tier instead of overwriting it with a stump.
+        if result.stop_reason == "max_tokens":
+            raise MemoryRollupTruncated(period)
         return result.text
 
     async def discourse(

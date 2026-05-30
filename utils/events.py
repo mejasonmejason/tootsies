@@ -119,7 +119,9 @@ Known kinds (keep this list in sync with what's emitted):
       guild_id, tier (hourly|daily|weekly), ok
       On a written note: chars, plus message_count + channel_count (hourly)
         or rolled_up (daily/weekly, # of lower-tier notes compacted).
-      On a skip: skipped (low_activity|empty) instead of chars.
+      On a skip: skipped (low_activity|empty|truncated) instead of chars.
+        truncated (ok=False) means a rollup hit max_tokens; the source notes
+        were kept (not deleted) so the next window can retry. See #158.
       backfill: True when written by the /remember one-time backfill (vs the
         live scheduler), so dashboards can tell seeded notes from live ones.
   - memory_search      : the search_memory tool ran during /ask (cogs/ask.py)
