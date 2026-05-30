@@ -12,9 +12,13 @@ Not a pytest test (makes live API + iTunes calls). Run:
 from __future__ import annotations
 
 import asyncio
+import os
+from unittest.mock import patch
 
-from claude_client import ClaudeClient, _extract_track_line
+import claude_client
+from claude_client import ClaudeClient
 from utils.music_links import resolve_music_url
+from utils.perplexity import PerplexityClient, build_search_query
 
 # Each scenario is a room state music_post would see (the sources_blob), plus a
 # genre_hint like the scheduler rotates. recent_posts seeds the dedup clause.
@@ -51,34 +55,63 @@ SCENARIOS: list[dict[str, str]] = [
 
 async def main() -> None:
     client = ClaudeClient()
-    for i, sc in enumerate(SCENARIOS, 1):
-        print(f"\n{'=' * 70}\n[{i}] {sc['name']}  (genre_hint={sc['genre'] or 'none'})\n{'=' * 70}")
-        raw = await client.music_post(
-            sources_blob=sc["blob"],
-            recent_posts=sc["recent"],
-            channel_name="music",
-            genre_hint=sc["genre"],
-        )
-        # music_post already strips TRACK + appends the resolved URL; show that
-        # rendered post, then separately re-derive the track + re-resolve so we
-        # can display what was named vs. what resolved.
-        print("\n--- rendered post (what the room sees) ---")
-        print(raw or "(empty)")
+    # Wire Perplexity exactly like cogs/music.py does, so the eval sees the real
+    # production input (current music news/trends shaping the pick). Skips
+    # cleanly if PERPLEXITY_API_KEY isn't set.
+    pplx_key = os.getenv("PERPLEXITY_API_KEY")
+    pplx = PerplexityClient(pplx_key) if pplx_key else None
+    print(f"Perplexity: {'ON' if pplx else 'OFF (no PERPLEXITY_API_KEY)'}")
 
-        body, track = _extract_track_line(
-            raw if "TRACK:" in raw else f"{raw}\nTRACK: "
-        )
-        # If music_post worked, raw has no TRACK line; recover the named track
-        # by asking the resolver what the trailing URL points to is moot — so
-        # instead just report whether a link landed.
-        last_line = raw.strip().splitlines()[-1] if raw.strip() else ""
-        has_link = "music.apple.com" in last_line
-        print("\n--- diagnostics ---")
-        print(f"link resolved + appended: {has_link}")
-        if has_link:
-            print(f"link: {last_line.strip()}")
-        else:
-            print("NO LINK — would hit the links-only retry/skip path")
+    try:
+        for i, sc in enumerate(SCENARIOS, 1):
+            print(f"\n{'=' * 70}\n[{i}] {sc['name']}  (genre_hint={sc['genre'] or 'none'})\n{'=' * 70}")
+            pplx_context = None
+            if pplx:
+                pplx_context = await pplx.search(
+                    build_search_query(
+                        "", surface="discourse",
+                        category=sc["genre"], channel_name="music",
+                    ),
+                    purpose="music",
+                )
+                print(f"\n--- perplexity context ({len(pplx_context or '')} chars) ---")
+                print((pplx_context or "(none)")[:600])
+            # Spy on the resolver so we can tell apart the two failure modes:
+            # the model emitted no TRACK line (resolver never called) vs. it
+            # named a track iTunes couldn't resolve (called, returned None).
+            seen: list[str] = []
+
+            async def _spy(query: str, _seen: list[str] = seen) -> str | None:
+                _seen.append(query)
+                return await resolve_music_url(query)
+
+            with patch.object(claude_client, "resolve_music_url", _spy):
+                raw = await client.music_post(
+                    sources_blob=sc["blob"],
+                    recent_posts=sc["recent"],
+                    channel_name="music",
+                    genre_hint=sc["genre"],
+                    perplexity_context=pplx_context,
+                )
+            # music_post already strips the TRACK line + appends the resolved
+            # URL, so `raw` is the rendered post. Report whether a link landed.
+            print("\n--- rendered post (what the room sees) ---")
+            print(raw or "(empty)")
+
+            last_line = raw.strip().splitlines()[-1] if raw.strip() else ""
+            has_link = "music.apple.com" in last_line
+            print("\n--- diagnostics ---")
+            print(f"TRACK line emitted: {bool(seen)}" + (f"  -> queried: {seen[0]!r}" if seen else ""))
+            print(f"link resolved + appended: {has_link}")
+            if has_link:
+                print(f"link: {last_line.strip()}")
+            elif seen:
+                print("MISS: model named a track but iTunes didn't resolve it")
+            else:
+                print("MISS: model emitted NO TRACK line (prompt-adherence failure)")
+    finally:
+        if pplx:
+            await pplx.close()
 
 
 if __name__ == "__main__":
