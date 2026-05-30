@@ -1445,7 +1445,6 @@ class ClaudeClient:
         enriched_links: list[EnrichedLink] | None = None,
         perplexity_context: str | None = None,
         genre_hint: str = "",
-        fresh_pick: bool = False,
     ) -> str:
         """Generate a music-lounge post: always a track + take + music link.
 
@@ -1454,12 +1453,6 @@ class ClaudeClient:
 
         `genre_hint` rotates each call (hiphop, rnb, pop, afrobeats, neo-soul)
         so the bot doesn't default to the same genre every time.
-
-        `fresh_pick`: when set, this is the day's first drop and should lead with
-        something that just came out (last few days) and fits her taste, with a
-        real take, instead of rouletting into a deep cut. Songs drop every day,
-        so this isn't a Friday-only mode. If nothing fresh genuinely fits, she
-        falls through to a normal pick rather than forcing a stale "new" release.
         """
         dedup_clause = (
             f"\n\nYOU ALREADY POSTED RECENTLY (don't repeat artists, songs, or angles):\n"
@@ -1506,18 +1499,6 @@ class ClaudeClient:
                 "for your pick this time. You don't have to stay strictly in it, "
                 "but it should be the starting point for your search. This rotates "
                 "each post so you naturally cover different sounds."
-            )
-
-        fresh_block = ""
-        if fresh_pick:
-            fresh_block = (
-                "\n\nTHIS IS THE DAY'S FIRST DROP: go fresh. Of the good-pick "
-                "options below, lead with 'a new drop the room might have "
-                "missed': something from the last few days that's in your lane, "
-                "with a real take. It does NOT have to be the #1 release, a "
-                "slept-on fresh drop counts. If nothing fresh genuinely fits, "
-                "fall through to a normal pick. Fresh is the preference here, "
-                "not a hard rule."
             )
 
         system_extra = (
@@ -1610,6 +1591,11 @@ class ClaudeClient:
             "  - A deep cut, a guilty pleasure, a sleeper from 5 years ago\n"
             "  - Something tied to current music news (new beef? post the diss "
             "track. new collab announced? post their best collab so far)\n"
+            "  FRESHNESS WEIGHT: if a recent drop (last week or so) in your lane "
+            "is a genuine must-listen, lean toward it, roughly 2:1 over a "
+            "back-catalog pick. This is a thumb on the scale, NOT a rule: a "
+            "middling new release does NOT beat a deep cut or favorite you'd "
+            "actually play. Only a fresh drop you'd truly co-sign gets the edge.\n"
             "\n"
             "MUSIC TASTE PROFILE:\n"
             "  - Home base: hip-hop, R&B, rap, neo-soul, afrobeats, dancehall, "
@@ -1631,7 +1617,7 @@ class ClaudeClient:
             "EMPTY: return literal EMPTY only when you've posted recently AND "
             "nothing fresh is on your mind. Never return EMPTY because you "
             "can't find a link, pick a different track instead.\n"
-            f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{fresh_block}{dedup_clause}"
+            f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{dedup_clause}"
             + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
         channel_line = f"Channel: #{channel_name}\n" if channel_name else ""

@@ -210,15 +210,6 @@ _CATEGORY_QUERIES: dict[str, str] = {
         "Complex, Pitchfork, Genius, Apple Music editorial, and TikTok "
         "trending sounds. " + _SOURCES
     ),
-    "new-releases": (
-        "What new music dropped in the LAST FEW DAYS across hip hop, R&B, rap, "
-        "neo-soul, afrobeats, amapiano, dancehall, and Latin? Include new "
-        "albums, EPs, singles, and surprise drops, not just the #1 chart "
-        "releases, surface slept-on and mid-tier drops too. For each, give the "
-        "artist, the project or track name, the release date, and the early "
-        "reaction or hottest take (is it good, what's the standout, how it "
-        "compares to their last one). " + _SOURCES
-    ),
     "pop": (
         "What's trending in pop culture right now? Celebrity news, viral "
         "moments, music drops, TV premieres, social media drama, memes, "

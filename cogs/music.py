@@ -138,7 +138,6 @@ class Music(commands.Cog):
         channel: discord.TextChannel | discord.Thread,
         *,
         must_post: bool = True,
-        fresh_pick: bool = False,
     ) -> str:
         me = guild.me
         assert me is not None
@@ -174,18 +173,7 @@ class Music(commands.Cog):
 
         feed_hot_urls = hot_urls(all_feed_msgs, limit=8)
 
-        # The first drop of the day is the "fresh pick": skip the genre
-        # roulette and point the search at recent drops that fit her taste, so
-        # she leads with something that actually just came out (any day, not
-        # just Friday). If nothing fresh genuinely lands, the prompt falls
-        # through to a normal pick, so variety is preserved. The later slot
-        # stays free-roam on the usual genre rotation.
-        if fresh_pick:
-            genre = ""
-            search_category = "new-releases"
-        else:
-            genre = "music" if local else random.choice(_MUSIC_GENRES)
-            search_category = genre
+        genre = "music" if local else random.choice(_MUSIC_GENRES)
 
         # Run enrichment, Perplexity, and DB history in parallel.
         coros: list[Any] = [enrich_batch([u for u, _, _, _ in feed_hot_urls])]
@@ -197,7 +185,7 @@ class Music(commands.Cog):
             coros.append(pplx.search(
                 build_search_query(
                     "", surface="discourse",
-                    category=search_category, channel_name=channel.name,
+                    category=genre, channel_name=channel.name,
                 ),
                 purpose="music",
             ))
@@ -228,14 +216,13 @@ class Music(commands.Cog):
             enriched_links=enriched,
             perplexity_context=pplx_result,
             genre_hint=genre,
-            fresh_pick=fresh_pick,
         )
 
         if not line or line.strip().upper() == "EMPTY":
             emit(
                 "music_fallback",
                 guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
-                reason="claude_returned_empty", fresh_pick=fresh_pick,
+                reason="claude_returned_empty",
             )
             # Links-only channel: don't post a linkless fallback quip.
             # Skip the slot on scheduled posts; on manual /music,
@@ -260,7 +247,7 @@ class Music(commands.Cog):
             "music_scored",
             guild_id=guild.id, channel_id=channel.id, channel_name=channel.name,
             score=score, reason=reason, must_post=must_post,
-            post_preview=line[:120], fresh_pick=fresh_pick,
+            post_preview=line[:120],
         )
 
         if score < MUSIC_SCORE_THRESHOLD and not must_post:
@@ -288,7 +275,6 @@ class Music(commands.Cog):
                 enriched_links=enriched,
                 perplexity_context=pplx_result,
                 genre_hint=genre,
-                fresh_pick=fresh_pick,
             )
             if line2 and line2.strip().upper() != "EMPTY" and _has_music_link(line2):
                 return line2
@@ -350,11 +336,9 @@ class Music(commands.Cog):
         guild: discord.Guild,
         channel: discord.TextChannel | discord.Thread,
         channel_id: int,
-        *,
-        fresh_pick: bool = False,
     ) -> str:
         try:
-            return await self._compose(guild, channel, must_post=False, fresh_pick=fresh_pick)
+            return await self._compose(guild, channel, must_post=False)
         except anthropic.RateLimitError as exc:
             retry_after = _parse_retry_after_seconds(exc)
             if retry_after is None:
@@ -368,7 +352,7 @@ class Music(commands.Cog):
             log.info("music scheduled 429 for channel %s, retrying in %.1fs", channel_id, wait)
             await asyncio.sleep(wait)
             try:
-                return await self._compose(guild, channel, must_post=False, fresh_pick=fresh_pick)
+                return await self._compose(guild, channel, must_post=False)
             except anthropic.RateLimitError as exc2:
                 log.info("music still 429 after %.1fs retry for channel %s", wait, channel_id)
                 emit_error(
@@ -416,20 +400,8 @@ class Music(commands.Cog):
         if me is None or not can_send_in(channel, me):
             return
 
-        # Fresh pick: the FIRST music drop of the day leads with something that
-        # actually just came out and fits her taste, instead of rouletting into
-        # a deep cut. Songs drop every day, so this isn't gated to Friday, the
-        # day's first slot just always favors fresh. If nothing fresh lands the
-        # prompt falls through to a normal pick. The later (yaps) slot stays
-        # free-roam. posts_today reflects today only when the last post was
-        # today; a stale (prior-day) row means 0 so far.
-        posts_made_today = posts_today if last_et.date() == now_et.date() else 0
-        fresh_pick = posts_made_today == 0
-
         try:
-            line = await self._compose_with_retry(
-                guild, channel, channel_id, fresh_pick=fresh_pick,
-            )
+            line = await self._compose_with_retry(guild, channel, channel_id)
         except Exception:
             log.exception("music scheduled compose failed for channel %s", channel_id)
             line = ""
