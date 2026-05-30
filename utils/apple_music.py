@@ -13,6 +13,17 @@ Apple Music rather than routing through the Store. The `i=` deep-link param
 
 Fail-open by design: any error, timeout, or miss returns None. We NEVER raise
 into a caller. No new dependency, just aiohttp which we already have.
+
+Why no extra artist/title verification: adversarial probing of the live API
+showed iTunes is robust where it matters. Misspellings fuzzy-match correctly
+("Kendrik Lamarr - Luthor" -> Kendrick Lamar "luther"); nonexistent tracks,
+fake artists, and garbled titles all return zero results (resolve to None, no
+hallucinated link); and the artist name genuinely anchors the match (Adele /
+Beyonce / Lionel Richie "Hello" each return the right artist's song). The only
+residual gap is wrong-artist ATTRIBUTION ("Drake - Sicko Mode" -> Travis
+Scott's "SICKO MODE"): the title wins, but the link still points at a real,
+correctly-titled song, only the model's prose had the wrong artist. Deemed not
+worth a verification layer that would risk rejecting legit fuzzy matches.
 """
 
 from __future__ import annotations
