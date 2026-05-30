@@ -210,11 +210,19 @@ async def test_search_music_uses_month_recency(client: PerplexityClient):
     assert _posted_payload(client._session)["search_recency_filter"] == "month"
 
 
-async def test_search_recap_and_chimein_use_day_recency(client: PerplexityClient):
-    for purpose in ("recap", "chimein"):
-        client._session = _ok_session()
-        await client.search("q", purpose=purpose)
-        assert _posted_payload(client._session)["search_recency_filter"] == "day"
+async def test_search_recap_uses_day_recency(client: PerplexityClient):
+    client._session = _ok_session()
+    await client.search("q", purpose="recap")
+    assert _posted_payload(client._session)["search_recency_filter"] == "day"
+
+
+async def test_search_chimein_uses_week_recency(client: PerplexityClient):
+    """chimein moved day->week: the live eval showed `day` starved it to ~1.3
+    sources/call, thin enough to risk a hedge. week restores depth while staying
+    fresh (the query text still biases toward the last few hours)."""
+    client._session = _ok_session()
+    await client.search("q", purpose="chimein")
+    assert _posted_payload(client._session)["search_recency_filter"] == "week"
 
 
 async def test_search_unknown_purpose_gets_default_config(client: PerplexityClient):

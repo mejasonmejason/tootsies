@@ -43,7 +43,13 @@ _TIMEOUT_SECONDS = 8.0
 # a recency window where freshness is the whole point.
 #
 #   - music / discourse: trend surfaces, want THIS WEEK's drops, not evergreen.
-#   - recap / chimein:    breaking news / live events, want the last day.
+#   - recap:              breaking news / live events, want the last day.
+#   - chimein:            breaking news too, but the live eval showed `day`
+#                         starved it to ~1.3 sources/call (vs 6+ unfiltered) --
+#                         thin enough to risk tipping into a "can't verify"
+#                         hedge on a quiet news day. `week` keeps it fresh while
+#                         restoring source depth; the query text already says
+#                         "last few hours" to bias toward the newest of those.
 #   - ask:                NO recency filter. It leads with fact verification
 #                         (record counts, chart totals, "first since" claims)
 #                         that live on evergreen authoritative pages (Wikipedia,
@@ -64,7 +70,7 @@ _SEARCH_CONFIG: dict[str, dict[str, Any]] = {
     "ask": {"context": "medium", "recency": None},
     "discourse": {"context": "medium", "recency": "week"},
     "recap": {"context": "medium", "recency": "day"},
-    "chimein": {"context": "medium", "recency": "day"},
+    "chimein": {"context": "medium", "recency": "week"},
     "music": {"context": "medium", "recency": "month"},
 }
 
