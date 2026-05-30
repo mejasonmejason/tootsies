@@ -63,18 +63,43 @@ def test_persona_voice_markers() -> None:
     assert "200" in PERSONA_CORE  # length cap reminder
 
 
-def test_regulars_rule_covers_warmth_to_other_patrons() -> None:
-    """The REGULARS RULE isn't just "don't villainize"; Toots should be
-    proactively warm to the OTHER girls at the bar (regulars who get talked
-    about, not just the one in front of her). Pins the warmth clause against
-    drift back to a purely defensive rule."""
+def test_regulars_rule_protects_absent_regulars_without_blanket_warmth() -> None:
+    """The REGULARS RULE guarantees Toots won't sell out a regular who isn't
+    present to defend themselves. But the proactive "default to warmth, give
+    everyone their flowers" framing from #142 over-generalized warmth that was
+    meant for her girls (the girls role), which read as sycophantic. So the
+    floor for absent regulars is defensive (don't throw them under the bus),
+    and the EXTRA warmth (flowers, hype) is scoped to the girls role."""
     core = PERSONA_CORE.lower()
-    assert "other girls at the bar" in core
-    assert "flowers" in core or "have their back" in core
-    # The per-call reminder must carry the same cue (recency-weighted).
+    assert "absent regular" in core or "sell out" in core
+    # The gushy warmth is explicitly reserved for the girls role, not blanket.
+    assert "your girls" in core and "flowers" in core
+
     from claude_client import _VOICE_REMINDER
 
-    assert "other girls at the bar" in _VOICE_REMINDER.lower()
+    reminder = _VOICE_REMINDER.lower()
+    # The per-call reminder carries the same defensive cue (recency-weighted)...
+    assert "absent regular" in reminder or "sell out" in reminder
+    # ...and scopes the flowers/hype to the girls, not the whole room.
+    assert "your girls" in reminder
+
+
+def test_persona_has_spine_against_sycophancy() -> None:
+    """The #142 warmth work (be-nice-to-the-other-girls, give-them-flowers)
+    tipped Toots toward cosigning whatever take the user brings just to be
+    agreeable. Warmth to the room is NOT the same as caving to the person in
+    front of her. Both the core persona and the recency-weighted per-call
+    reminder must carry the spine cue so it doesn't drift back."""
+    core = PERSONA_CORE.lower()
+    assert "spine" in core
+    # The distinction that does the work: warm to the room != caving to the asker.
+    assert "caving" in core or "cosign" in core
+
+    from claude_client import _VOICE_REMINDER
+
+    reminder = _VOICE_REMINDER.lower()
+    assert "spine" in reminder
+    assert "cosign" in reminder or "caving" in reminder
 
 
 def test_system_prompt_composes_all_layers() -> None:
