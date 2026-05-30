@@ -597,6 +597,66 @@ async def test_discourse_strips_hallucinated_urls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_room_facing_web_search_is_capped() -> None:
+    """The forced/encouraged searches on room-facing posts (chime-in, discourse)
+    must carry a max_uses cap so a server tool can't spiral into many serial
+    searches, the music-post latency bug. Pins the cap on every web_search the
+    two surfaces pass."""
+    from claude_client import _POST_WEB_SEARCH_MAX_USES
+
+    client = ClaudeClient(api_key="test")
+    seen: list[dict[str, Any]] = []
+
+    async def rec(**kwargs: Any) -> ClaudeResult:
+        seen.append(kwargs)
+        return ClaudeResult(
+            text="take", stop_reason="end_turn", input_tokens=1,
+            output_tokens=1, web_search_urls=["https://x"],  # grounded -> no forced retry
+        )
+
+    with patch.object(client, "_call", rec):
+        await client.chimein_post("buffer", hook="h")
+        await client.discourse("hiphop", "blob")
+
+    web_tools_seen = 0
+    for kw in seen:
+        web = next((t for t in (kw.get("tools") or []) if t.get("name") == "web_search"), None)
+        if web is not None:
+            web_tools_seen += 1
+            assert web["max_uses"] == _POST_WEB_SEARCH_MAX_USES
+    assert web_tools_seen == 2  # one chime-in call + one discourse call
+
+
+@pytest.mark.asyncio
+async def test_discourse_forces_search_when_she_skipped_it() -> None:
+    """Discourse hallucinated URLs in ~half of scheduled posts because the
+    model skipped the search and invented a link. Mirror the chime-in grounding
+    fallback: if the thinking-on call ran no search, force one (thinking off) so
+    the post is grounded in real sources with real URLs."""
+    client = ClaudeClient(api_key="test")
+    calls: list[dict[str, Any]] = []
+
+    async def fake_call(**kwargs: Any) -> ClaudeResult:
+        calls.append(kwargs)
+        searched = kwargs.get("tool_choice") is not None
+        return ClaudeResult(
+            text="grounded take" if searched else "ungrounded take",
+            stop_reason="end_turn", input_tokens=1, output_tokens=1,
+            web_search_urls=["https://x"] if searched else [],
+        )
+
+    with patch.object(client, "_call", fake_call):
+        out = await client.discourse("hiphop", "sources blob", must_post=False)
+    assert out == "grounded take"
+    assert len(calls) == 2
+    assert calls[0]["purpose"] == "discourse_scheduled"
+    assert calls[0]["thinking_enabled"] is True
+    assert calls[1]["purpose"] == "discourse_scheduled_forced"
+    assert calls[1]["tool_choice"] == {"type": "tool", "name": "web_search"}
+    assert calls[1]["thinking_enabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_discourse_keeps_url_from_allowlist() -> None:
     from claude_client import ClaudeResult
 

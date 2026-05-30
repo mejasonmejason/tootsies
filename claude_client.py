@@ -499,6 +499,13 @@ _TOOL_RESULT_MAX_CHARS = 4000
 # serial searches (the music-post latency bug), so bound the round-trips.
 _ASK_WEB_SEARCH_MAX_USES = 3
 
+# Server-side web_search cap for the room-facing post surfaces (chime-in,
+# discourse). These FORCE a search on the grounding fallback (tool_choice), and
+# an uncapped server tool can spiral into many serial searches, each a full
+# model turn (the music-post latency bug: 5-7 searches drove 25-73s calls). A
+# chime-in or discourse take needs at most a couple of lookups, so cap it.
+_POST_WEB_SEARCH_MAX_USES = 3
+
 # The one client-side tool: lets /ask reach past the fixed memory block that's
 # already injected and pull older specifics on demand. The handler (DB full-text
 # search) is supplied per-call by the cog, since claude_client has no DB access.
@@ -1524,20 +1531,46 @@ class ClaudeClient:
             f"{channel_line}{theme_line}{category_line}"
             f"Read the room.\n\nAvailable sources:\n{sources_blob}"
         )
+        purpose = "discourse_manual" if must_post else "discourse_scheduled"
+        web_tools = [{
+            "type": "web_search_20250305", "name": "web_search",
+            "max_uses": _POST_WEB_SEARCH_MAX_USES,
+        }]
         result = await self._call(
             model=SONNET,
             user_message=user,
             system_extra=system_extra,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            tools=web_tools,
             max_tokens=MAX_TOKENS_POST,
-            purpose="discourse_manual" if must_post else "discourse_scheduled",
+            purpose=purpose,
             image_urls=image_urls,
             thinking_enabled=True,
         )
+        # Grounding fallback (mirrors chimein_post). Scheduled discourse posts
+        # hallucinated URLs in ~half the sample because the model skipped the
+        # search, had no real link to cite, and invented one (despite an
+        # explicit 'NEVER invent a URL' rule it ignored). If no search ran,
+        # force one so the post is grounded in real sources with real URLs.
+        # Forced tool_choice can't run with adaptive thinking (API 400), so
+        # thinking is off for this retry only.
+        if not result.web_search_urls:
+            try:
+                forced = await self._call(
+                    model=SONNET, user_message=user, system_extra=system_extra,
+                    tools=web_tools,
+                    tool_choice={"type": "tool", "name": "web_search"},
+                    max_tokens=MAX_TOKENS_POST,
+                    purpose=f"{purpose}_forced",
+                    image_urls=image_urls,
+                    thinking_enabled=False,
+                )
+                if forced.text.strip():
+                    result = forced
+            except Exception:
+                log.exception("forced web_search discourse fallback failed")
 
         # URL guardrail: strip hallucinated URLs and dedup URLs already
         # visible in the destination channel's recent buffer.
-        purpose = "discourse_manual" if must_post else "discourse_scheduled"
         feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
         market_urls = (
             [snap.url for snap in markets_context if snap.url]
@@ -2131,7 +2164,10 @@ class ClaudeClient:
             f"Buffer (oldest first):\n{buffer_blob}"
             f"{enriched_block}{perplexity_block}{markets_block}{dedup_block}"
         )
-        web_tools = [{"type": "web_search_20250305", "name": "web_search"}]
+        web_tools = [{
+            "type": "web_search_20250305", "name": "web_search",
+            "max_uses": _POST_WEB_SEARCH_MAX_USES,
+        }]
         # Happy path: adaptive thinking ON, web_search available. She keeps
         # thinking and, ideally, searches (or grounds in the Perplexity block).
         result = await self._call(
