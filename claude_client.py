@@ -479,6 +479,13 @@ _TOOL_RESULT_MAX_CHARS = 4000
 # serial searches (the music-post latency bug), so bound the round-trips.
 _ASK_WEB_SEARCH_MAX_USES = 3
 
+# Server-side web_search cap for the room-facing post surfaces (chime-in,
+# discourse). These FORCE a search on the grounding fallback (tool_choice), and
+# an uncapped server tool can spiral into many serial searches, each a full
+# model turn (the music-post latency bug: 5-7 searches drove 25-73s calls). A
+# chime-in or discourse take needs at most a couple of lookups, so cap it.
+_POST_WEB_SEARCH_MAX_USES = 3
+
 # The one client-side tool: lets /ask reach past the fixed memory block that's
 # already injected and pull older specifics on demand. The handler (DB full-text
 # search) is supplied per-call by the cog, since claude_client has no DB access.
@@ -1505,7 +1512,10 @@ class ClaudeClient:
             f"Read the room.\n\nAvailable sources:\n{sources_blob}"
         )
         purpose = "discourse_manual" if must_post else "discourse_scheduled"
-        web_tools = [{"type": "web_search_20250305", "name": "web_search"}]
+        web_tools = [{
+            "type": "web_search_20250305", "name": "web_search",
+            "max_uses": _POST_WEB_SEARCH_MAX_USES,
+        }]
         result = await self._call(
             model=SONNET,
             user_message=user,
@@ -2103,7 +2113,10 @@ class ClaudeClient:
             f"Buffer (oldest first):\n{buffer_blob}"
             f"{enriched_block}{perplexity_block}{markets_block}{dedup_block}"
         )
-        web_tools = [{"type": "web_search_20250305", "name": "web_search"}]
+        web_tools = [{
+            "type": "web_search_20250305", "name": "web_search",
+            "max_uses": _POST_WEB_SEARCH_MAX_USES,
+        }]
         # Happy path: adaptive thinking ON, web_search available. She keeps
         # thinking and, ideally, searches (or grounds in the Perplexity block).
         result = await self._call(
