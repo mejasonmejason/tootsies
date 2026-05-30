@@ -888,6 +888,9 @@ async def test_classify_market_intent_uses_haiku():
     assert result == {"intent": "sports", "league": "NBA", "search_terms": "OKC Spurs"}
     assert fake.call_args.kwargs["model"] == HAIKU
     assert fake.call_args.kwargs["purpose"] == "market_intent"
+    # #78: pure JSON classifier must bypass the persona, or Haiku answers
+    # in-voice and the routing JSON never lands (same drift as #136).
+    assert fake.call_args.kwargs["skip_persona"] is True
 
 
 @pytest.mark.asyncio

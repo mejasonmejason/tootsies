@@ -2299,6 +2299,12 @@ class ClaudeClient:
                 model=HAIKU, user_message=query, system_extra=system_extra,
                 max_tokens=120,
                 purpose="market_intent",
+                # Pure JSON classifier: prepending the Toots persona makes Haiku
+                # answer in-voice ("I'm the bartender, drop a message...") instead
+                # of emitting the routing JSON, so _parse returns None and market
+                # enrichment silently no-ops every discourse cycle (#78). Same
+                # persona-drift failure mode fixed for classify_abuse (#136).
+                skip_persona=True,
             )
         except Exception:
             log.exception("classify_market_intent _call failed")
