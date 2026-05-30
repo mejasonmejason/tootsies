@@ -30,6 +30,7 @@ from persona import system_prompt
 from utils.events import emit
 from utils.link_enrich import EnrichedLink, format_enriched_for_prompt
 from utils.markets import MarketSnapshot, format_markets_for_prompt
+from utils.music_links import resolve_music_url
 from utils.perplexity import format_perplexity_for_prompt
 from utils.url_guardrail import enforce_source_links, verify_live_links
 
@@ -148,6 +149,25 @@ def _parse_chimein_score(text: str) -> tuple[float, str, str, str, int | None]:
     else:
         target_i = None
     return score_f, vibe, hook, reaction, target_i
+
+
+def _extract_track_line(text: str) -> tuple[str, str | None]:
+    """Split a music_post output into (post_body, track_query).
+
+    The model ends a music post with a line `TRACK: <artist> - <title>` that we
+    look up to attach the Apple Music link. This strips that line off (the room
+    never sees it) and returns the query, or None if there's no TRACK line.
+    """
+    if not text:
+        return text, None
+    lines = text.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped.lower().startswith("track:"):
+            query = stripped[len("track:"):].strip()
+            body = "\n".join(lines[:i] + lines[i + 1:]).strip()
+            return body, (query or None)
+    return text.strip(), None
 
 
 def _parse_discourse_score(text: str) -> tuple[float, str]:
@@ -1617,9 +1637,9 @@ class ClaudeClient:
             )
 
         system_extra = (
-            "TASK: Post a music recommendation in a LINKS-ONLY channel. Every "
-            "post MUST end with an Apple Music or Spotify link or it gets "
-            "deleted by mods.\n"
+            "TASK: Post a music recommendation in a LINKS-ONLY channel. The "
+            "Apple Music link is attached automatically AFTER you write, from "
+            "the track you name, so you do NOT search for or write a URL.\n"
             "\n"
             "FORMAT (non-negotiable):\n"
             "  1. ONE short sentence with your take. Tweet-length, not "
@@ -1627,9 +1647,19 @@ class ClaudeClient:
             "unless it's a question to the room.\n"
             "  2. Optionally one short question that gets the room posting "
             "their own links back.\n"
-            "  3. An Apple Music or Spotify link on its own line at the end. "
-            "Prefer Apple Music (music.apple.com). Spotify (open.spotify.com) "
-            "is also fine.\n"
+            "  3. A final line naming the exact track, EXACTLY this format:\n"
+            "       TRACK: <artist> - <song title>\n"
+            "     e.g. 'TRACK: Tems - Love Me JeJe'. Use the real artist and "
+            "song title (no album unless it's an album rec). This line is what "
+            "we look up to attach the Apple Music link, so get the names right; "
+            "it is stripped from the post the room sees.\n"
+            "\n"
+            "THE TRACK LINE IS MANDATORY: every single post ends with a "
+            "TRACK: line, no exceptions. If you wrote a take but no TRACK line, "
+            "you failed the task, the post has no link and gets discarded. "
+            "Naming a track in the take sentence is NOT enough; it must be on "
+            "its own TRACK: line. The only output without a TRACK line is the "
+            "literal word EMPTY (see below).\n"
             "\n"
             "HARD LENGTH CAP: 200 chars for the take + question. Past that "
             "you sound like a music journalist, not a bartender. Bartenders "
@@ -1694,7 +1724,7 @@ class ClaudeClient:
             "  The Perplexity context (if attached) has current music news and "
             "trends. The feed channels have tweets and social posts about music. "
             "Use what's happening in music media RIGHT NOW to inform your pick, "
-            "then web_search for the Apple Music link.\n"
+            "then just name it on the TRACK line.\n"
             "\n"
             "WHAT MAKES A GOOD PICK (variety is everything):\n"
             "  - NOT just what's #1 on the charts. The room already knows that.\n"
@@ -1722,17 +1752,17 @@ class ClaudeClient:
             "  - Miami bartender. STRONG opinions, not a snob. You'll put on a "
             "guilty pleasure and own it\n"
             "\n"
-            "FINDING THE LINK:\n"
-            "  web_search for 'site:music.apple.com [artist] [song title]' to "
-            "get the Apple Music URL. If Apple Music doesn't have it, try "
-            "'site:open.spotify.com [artist] [song title]'. If neither search "
-            "works, try artist + album name. If you genuinely can't find a "
-            "music link after searching, pick a different track you CAN find. "
-            "A post without a link WILL be deleted. NEVER invent a URL.\n"
+            "WEB_SEARCH IS FOR DISCOVERY:\n"
+            "  Use web_search freely to find what to recommend, new drops, "
+            "trending tracks, what the room's into. That's what it's for. The "
+            "LINK, though, is automatic: name the track on the TRACK line and "
+            "we resolve the Apple Music URL from Apple's catalog, so don't "
+            "search for or write the URL yourself. Just name a real, "
+            "correctly-spelled artist + song so the lookup lands.\n"
             "\n"
             "EMPTY: return literal EMPTY only when you've posted recently AND "
-            "nothing fresh is on your mind. Never return EMPTY because you "
-            "can't find a link, pick a different track instead.\n"
+            "nothing fresh is on your mind. Never return EMPTY because of the "
+            "link, naming the track is enough.\n"
             f"{hot_urls_block}{enriched_block}{perplexity_block}{genre_block}{dedup_clause}"
             + _POST_GROUNDING + _ROOM_DIRECTED + _VOICE_REMINDER + _LENGTH_RULES + _TOOL_DISCIPLINE
         )
@@ -1746,15 +1776,27 @@ class ClaudeClient:
             model=SONNET,
             user_message=user,
             system_extra=system_extra,
+            # web_search is for track DISCOVERY only (new drops, trending
+            # tracks). We no longer search for the LINK, resolve_music_url
+            # handles that deterministically after generation, so the cap that
+            # bounded the old link-chasing spiral is gone.
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             max_tokens=MAX_TOKENS_POST,
             purpose="music_post",
             thinking_enabled=True,
         )
 
+        # The model names the track on a trailing `TRACK: artist - title` line
+        # instead of writing/searching for a URL. Split it off (the room never
+        # sees it), guardrail the take, then attach the Apple Music link we
+        # resolve deterministically from Apple's catalog.
+        body, track_query = _extract_track_line(result.text)
+        if body.strip().upper() == "EMPTY":
+            return "EMPTY"
+
         feed_urls = [u for u, _, _, _ in hot_urls] if hot_urls else None
         cleaned, rejected, deduped = enforce_source_links(
-            result.text,
+            body,
             feed_urls=feed_urls,
             perplexity_context=perplexity_context,
             web_search_urls=result.web_search_urls,
@@ -1770,6 +1812,15 @@ class ClaudeClient:
                 "link_stripped", purpose="music_post", reason="dead_link",
                 count=len(dead), urls=dead[:5],
             )
+
+        # Resolve + append the streaming link from the named track, via the
+        # post-enrichment providers (Apple Music now, Spotify later). Fail-open
+        # (None on miss/error); the links-only gate in cogs/music.py handles a
+        # linkless post (retry / skip the slot).
+        if track_query:
+            url = await resolve_music_url(track_query)
+            if url:
+                cleaned = f"{cleaned}\n{url}" if cleaned else url
         return cleaned
 
     async def discourse_score(
