@@ -13,6 +13,7 @@ System prompt is cached (constitution + persona are stable across calls).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -506,6 +507,16 @@ _ASK_WEB_SEARCH_MAX_USES = 3
 # chime-in or discourse take needs at most a couple of lookups, so cap it.
 _POST_WEB_SEARCH_MAX_USES = 3
 
+# Transient-failure retry for the Anthropic API. A 529 (overloaded), 429 (rate
+# limit), 5xx, or connection/timeout blip is retried with bounded exponential
+# backoff before the call is allowed to fail; other 4xx errors (400/401/403/404)
+# raise immediately since retrying won't help. Without this, a single 529 -- a
+# routine event when Anthropic is busy -- failed whatever command was in flight
+# (#94). Every API call routes through _call, so retrying there covers them all.
+_MAX_API_RETRIES = 4
+_RETRY_BASE_DELAY = 1.0  # seconds; doubled each attempt (1, 2, 4, 8)
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504, 529})
+
 # The one client-side tool: lets /ask reach past the fixed memory block that's
 # already injected and pull older specifics on demand. The handler (DB full-text
 # search) is supplied per-call by the cog, since claude_client has no DB access.
@@ -560,6 +571,38 @@ class MemoryRollupTruncated(Exception):
 class ClaudeClient:
     def __init__(self, api_key: str | None = None) -> None:
         self.client = AsyncAnthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
+
+    async def _create_with_retry(self, *, purpose: str = "", **kwargs: Any) -> Any:
+        """messages.create with bounded retry on transient API failures.
+
+        529 (overloaded), 429, 5xx, and connection/timeout errors are retried
+        with exponential backoff; other 4xx errors raise immediately. After
+        _MAX_API_RETRIES retries the last error propagates to the caller (_call),
+        which emits the claude_api ok=False telemetry and handles the fallback,
+        so retries-exhausted failures stay visible rather than vanishing.
+        """
+        attempt = 0
+        while True:
+            try:
+                return await self.client.messages.create(**kwargs)
+            except (anthropic.APIConnectionError, anthropic.APITimeoutError) as exc:
+                last_exc: Exception = exc
+            except anthropic.APIStatusError as exc:
+                if exc.status_code not in _RETRYABLE_STATUS:
+                    raise
+                last_exc = exc
+
+            attempt += 1
+            if attempt > _MAX_API_RETRIES:
+                raise last_exc
+
+            delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            log.warning(
+                "Anthropic API transient error (attempt %d/%d, purpose=%s): %s; "
+                "retrying in %.1fs",
+                attempt, _MAX_API_RETRIES, purpose or "?", last_exc, delay,
+            )
+            await asyncio.sleep(delay)
 
     async def _call(
         self,
@@ -652,7 +695,7 @@ class ClaudeClient:
 
         for iteration in range(_MAX_TOOL_ITERS + 1):
             try:
-                resp = await self.client.messages.create(**kwargs)
+                resp = await self._create_with_retry(purpose=purpose, **kwargs)
             except anthropic.BadRequestError as exc:
                 # Anthropic couldn't fetch one of the image URLs we passed
                 # (expired Discord CDN signature, gated content, geo-restriction,
@@ -671,7 +714,7 @@ class ClaudeClient:
                         "content": [b for b in user_content if b.get("type") == "text"],
                     }
                     try:
-                        resp = await self.client.messages.create(**kwargs)
+                        resp = await self._create_with_retry(purpose=purpose, **kwargs)
                     except Exception as retry_exc:
                         emit(
                             "claude_api", model=model, purpose=purpose,
@@ -2300,8 +2343,9 @@ class ClaudeClient:
                 max_tokens=120,
                 purpose="market_intent",
             )
-        except Exception:
+        except Exception as exc:
             log.exception("classify_market_intent _call failed")
+            emit("error", source="classify_market_intent", error=type(exc).__name__)
             return None
         return _parse_market_intent(result.text)
 
